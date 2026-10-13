@@ -21,7 +21,7 @@ from quant_research.strategy.spec import StrategyError
 ENTRYPOINTS = ("generate_exposures", "target_positions", "generate_targets")
 
 
-def _environment_lock() -> dict[str, str | None]:
+def environment_lock() -> dict[str, str | None]:
     lock = Path(__file__).resolve().parents[3] / "uv.lock"
     versions = {}
     for pkg in ("numpy", "pandas", "pyarrow"):
@@ -50,7 +50,7 @@ def register_plugin(paths: Paths, source: Path) -> str:
         shutil.copyfile(source, dest)
         dest.chmod(0o444)
         meta = {"sha256": sha, "original_path": str(source.resolve()), "registered_at": time.time(),
-                "environment": _environment_lock()}
+                "environment": environment_lock()}
         (dest_dir / f"{sha}.json").write_text(json.dumps(meta, indent=2))
     return sha
 

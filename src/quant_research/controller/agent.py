@@ -25,6 +25,8 @@ class CandidateSubmission(BaseModel):
     plugin: str | None = None  # path relative to the round's candidate directory
     parameters: dict[str, Any] = Field(default_factory=dict)
     hypothesis: str = ""
+    plan_id: str | None = None  # preregistered plan (tool `plan`); without one a retrospective plan is recorded
+    parameter_grid: dict[str, list[Any]] | None = None  # selection grid for walk-forward mandates
 
 
 class TokenUsage(BaseModel):
@@ -80,13 +82,20 @@ Rules:
   detected and rejected. Results are compared with holding the asset at the same average exposure.
 - Templates:
 {templates}
-- Tools (each run counts against the experiment budget and is recorded):
-  `quant tool backtest --session {self.session_id} --spec <spec.json> --segment dev`
+- Tools (each experiment counts against the budget and is recorded, including failures):
+  `quant tool plan --session {self.session_id} --file plan.json` -> plan_id. Preregister before experimenting:
+    {{"hypothesis", "mechanism", "falsification", "artifact": template name or plugin file,
+     "parameter_ranges": {{"lookback": {{"values": [12, 24]}}}}, "planned_experiments": 4}}
+  `quant tool submit --session {self.session_id} --artifact <template or file.py> --params '{{...}}'
+    --plan <plan_id> --key <unique idempotency key>` (retry with the same key never runs twice)
+  `quant tool get --session {self.session_id} <experiment_id>`
+  `quant tool compare --session {self.session_id} <id1> <id2> ...` (same segment, data, costs and policy only)
+  `quant tool inspect --session {self.session_id}` (dataset schema, quality, dev window, costs)
   `quant tool history --session {self.session_id}`
-  spec.json: {{"template": "sma_cross", "parameters": {{...}}}} or {{"plugin": "my_strategy.py", "parameters": {{}}}}
+  Experiments outside a plan are flagged unplanned/out_of_plan in every report.
 - Exploration is limited to the dev segment. Validation is reserved for the controller: it evaluates every
-  candidate you submit on validation and reports the results to you next round.
-- Acceptance criteria applied by the controller on validation: {json.dumps(self.acceptance)}
+  candidate you submit under the research mandate and reports the results to you next round.
+- Mandate evaluation design and acceptance criteria: {json.dumps(self.acceptance)}
 - Every trial counts: {self.trials_on_split} research trials already exist on this split, and the Deflated Sharpe
   threshold gets stricter as trials grow. Identical experiments are reused, not re-run, but still count.
 - Remaining budget: {json.dumps(self.remaining)}
@@ -99,7 +108,7 @@ Previous candidates (controller-computed metrics and diagnosis labels):
 {history}
 
 Finish by writing `{self.candidate_dir}/{SUBMISSION_FILE}`:
-{{"candidates": [{{"template" or "plugin": ..., "parameters": {{...}}, "hypothesis": "..."}}],
+{{"candidates": [{{"template" or "plugin": ..., "parameters": {{...}}, "hypothesis": "...", "plan_id": "..."}}],
   "done": false, "report": "markdown notes"}}
 Token usage is measured by the controller; do not report it yourself.
 """

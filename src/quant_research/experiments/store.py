@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS experiments (
     created_at REAL NOT NULL,
     finished_at REAL,
     status TEXT NOT NULL,              -- running | completed | rejected | failed | aborted
-    kind TEXT NOT NULL,                -- backtest | robustness | walkforward | holdout | grid
+    kind TEXT NOT NULL,                -- backtest | robustness | sensitivity | walkforward | holdout | grid
     session_id TEXT,
     parent_id TEXT,
     strategy_ref TEXT NOT NULL,
@@ -63,13 +63,41 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS session_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, at REAL, event TEXT, data TEXT
 );
+CREATE TABLE IF NOT EXISTS mandates (
+    id TEXT PRIMARY KEY, created_at REAL, body TEXT
+);
+CREATE TABLE IF NOT EXISTS plans (
+    id TEXT PRIMARY KEY, created_at REAL, session_id TEXT, mandate_id TEXT, body TEXT, retrospective INTEGER,
+    supersedes TEXT, superseded_by TEXT
+);
+CREATE TABLE IF NOT EXISTS candidates (
+    id TEXT PRIMARY KEY, created_at REAL, updated_at REAL, state TEXT, mandate_id TEXT, session_id TEXT,
+    plan_id TEXT, strategy_ref TEXT, parameters TEXT, candidate_hash TEXT, identity TEXT, evidence TEXT,
+    artifact_dir TEXT
+);
+CREATE TABLE IF NOT EXISTS candidate_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, candidate_id TEXT, at REAL, from_state TEXT, to_state TEXT,
+    actor TEXT, evidence TEXT, note TEXT
+);
+CREATE TABLE IF NOT EXISTS tool_requests (
+    session_id TEXT, idempotency_key TEXT, request_hash TEXT, experiment_id TEXT, created_at REAL,
+    PRIMARY KEY (session_id, idempotency_key)
+);
 """
 
 JSON_FIELDS = {"parameters", "engine_config", "metrics", "benchmarks", "checks", "statistics", "diagnosis",
-               "llm_suggestion", "grid", "budget", "usage", "config", "data", "policy"}
-MIGRATIONS = {"experiments": {"statistics": "TEXT", "diagnosis": "TEXT", "policy_id": "TEXT", "policy": "TEXT"}}
+               "llm_suggestion", "grid", "budget", "usage", "config", "data", "policy", "body", "identity",
+               "evidence"}
+MIGRATIONS = {"experiments": {"statistics": "TEXT", "diagnosis": "TEXT", "policy_id": "TEXT", "policy": "TEXT",
+                              "plan_id": "TEXT", "plan_status": "TEXT", "plan_deviation": "TEXT",
+                              "artifact": "TEXT", "idempotency_key": "TEXT"}}
 # `blocked` = refused by the gatekeeper before any computation; not a trial and not budget usage.
 NOT_A_TRIAL = ("blocked",)
+# Kinds recorded in full but not counted as research selection trials: re-evaluations of an already selected
+# candidate (final test, cost/delay sensitivity, sub-periods) and the inner folds of a walk-forward procedure
+# (the procedure itself, kind `walkforward`, is one trial).
+NON_TRIAL_KINDS = ("holdout", "sensitivity", "walkforward_fold")
+_KIND_FILTER = f"kind NOT IN ({','.join(repr(k) for k in NON_TRIAL_KINDS)})"
 
 
 def new_id(prefix: str) -> str:
@@ -144,7 +172,7 @@ class ExperimentStore:
         """Cumulative attempts (all statuses, all sessions unless narrowed) used for multiple-testing context."""
         filters = {k: v for k, v in (("split_id", split_id), ("session_id", session_id)) if v}
         where = " AND ".join(f"{k}=?" for k in filters) or "1=1"
-        return self._exec(f"SELECT COUNT(*) FROM experiments WHERE {where} AND kind != 'holdout' "
+        return self._exec(f"SELECT COUNT(*) FROM experiments WHERE {where} AND {_KIND_FILTER} "
                           f"AND status NOT IN ({','.join('?' * len(NOT_A_TRIAL))})",
                           [*filters.values(), *NOT_A_TRIAL]).fetchone()[0]
 
@@ -157,7 +185,7 @@ class ExperimentStore:
     def strategy_trial_count(self, strategy_hash: str, session_id: str | None, split_id: str) -> int:
         scope, value = ("session_id", session_id) if session_id else ("split_id", split_id)
         return self._exec(f"SELECT COUNT(*) FROM experiments WHERE strategy_hash=? AND {scope}=? "
-                          f"AND kind != 'holdout' AND status NOT IN ({','.join('?' * len(NOT_A_TRIAL))})",
+                          f"AND {_KIND_FILTER} AND status NOT IN ({','.join('?' * len(NOT_A_TRIAL))})",
                           [strategy_hash, value, *NOT_A_TRIAL]).fetchone()[0]
 
     def find_completed(self, candidate_hash: str, data_hash: str, split_id: str, window: tuple[int, int],
@@ -172,8 +200,8 @@ class ExperimentStore:
 
     def research_sharpes(self, split_id: str) -> list[float]:
         """Annualised Sharpe of every completed dev/validation trial on a split (input to the DSR)."""
-        rows = self._exec("SELECT metrics FROM experiments WHERE split_id=? AND status='completed' "
-                          "AND kind != 'holdout' AND segment IN ('dev','validation')", (split_id,)).fetchall()
+        rows = self._exec(f"SELECT metrics FROM experiments WHERE split_id=? AND status='completed' "
+                          f"AND {_KIND_FILTER} AND segment IN ('dev','validation')", (split_id,)).fetchall()
         return [json.loads(r[0])["sharpe"] for r in rows if r[0]]
 
     def mark_interrupted(self) -> int:
@@ -232,3 +260,90 @@ class ExperimentStore:
     def session_events(self, sid: str) -> list[dict[str, Any]]:
         rows = self._exec("SELECT * FROM session_events WHERE session_id=? ORDER BY id", (sid,)).fetchall()
         return [self._row(r) for r in rows]
+
+    # -- mandates and plans (immutable records) --------------------------------------------------
+    def put_mandate(self, mandate_id: str, body: dict) -> bool:
+        """Insert once; returns False if the identical mandate already exists."""
+        if self.get_mandate(mandate_id) is not None:
+            return False
+        self._insert("mandates", {"id": mandate_id, "created_at": time.time(), "body": body})
+        return True
+
+    def get_mandate(self, mandate_id: str) -> dict[str, Any] | None:
+        return self._row(self._exec("SELECT * FROM mandates WHERE id=?", (mandate_id,)).fetchone())
+
+    def list_mandates(self) -> list[dict[str, Any]]:
+        return [self._row(r) for r in self._exec("SELECT * FROM mandates ORDER BY created_at DESC").fetchall()]
+
+    def put_plan(self, session_id: str | None, mandate_id: str | None, body: dict, retrospective: bool = False,
+                 supersedes: str | None = None) -> str:
+        plan_id = new_id("plan")
+        self._insert("plans", {"id": plan_id, "created_at": time.time(), "session_id": session_id,
+                               "mandate_id": mandate_id, "body": body, "retrospective": int(retrospective),
+                               "supersedes": supersedes})
+        if supersedes:
+            self._update("plans", "id", supersedes, {"superseded_by": plan_id})
+        return plan_id
+
+    def get_plan(self, plan_id: str) -> dict[str, Any] | None:
+        return self._row(self._exec("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchone())
+
+    def list_plans(self, session_id: str) -> list[dict[str, Any]]:
+        rows = self._exec("SELECT * FROM plans WHERE session_id=? ORDER BY created_at", (session_id,)).fetchall()
+        return [self._row(r) for r in rows]
+
+    def plan_usage(self, plan_id: str) -> int:
+        """Exploration experiments under the plan; controller evaluations on validation do not consume it."""
+        return self._exec(f"SELECT COUNT(*) FROM experiments WHERE plan_id=? AND segment='dev' AND {_KIND_FILTER} "
+                          f"AND status NOT IN ({','.join('?' * len(NOT_A_TRIAL))})",
+                          [plan_id, *NOT_A_TRIAL]).fetchone()[0]
+
+    # -- candidate registry ----------------------------------------------------------------------
+    def insert_candidate(self, row: dict[str, Any]) -> None:
+        now = time.time()
+        self._insert("candidates", {"created_at": now, "updated_at": now, **row})
+
+    def update_candidate(self, candidate_id: str, **fields: Any) -> None:
+        self._update("candidates", "id", candidate_id, {"updated_at": time.time(), **fields})
+
+    def get_candidate(self, candidate_id: str) -> dict[str, Any] | None:
+        return self._row(self._exec("SELECT * FROM candidates WHERE id=?", (candidate_id,)).fetchone())
+
+    def list_candidates(self, **filters: Any) -> list[dict[str, Any]]:
+        where = " AND ".join(f"{k}=?" for k in filters) or "1=1"
+        rows = self._exec(f"SELECT * FROM candidates WHERE {where} ORDER BY created_at", list(filters.values()))
+        return [self._row(r) for r in rows.fetchall()]
+
+    def log_candidate_event(self, candidate_id: str, from_state: str | None, to_state: str, actor: str,
+                            evidence: dict | None, note: str = "") -> None:
+        self._insert("candidate_events", {"candidate_id": candidate_id, "at": time.time(), "from_state": from_state,
+                                          "to_state": to_state, "actor": actor, "evidence": evidence, "note": note})
+
+    def candidate_events(self, candidate_id: str) -> list[dict[str, Any]]:
+        rows = self._exec("SELECT * FROM candidate_events WHERE candidate_id=? ORDER BY id", (candidate_id,))
+        return [self._row(r) for r in rows.fetchall()]
+
+    # -- idempotent tool submissions -------------------------------------------------------------
+    def claim_request(self, session_id: str, key: str, request_hash: str) -> dict[str, Any] | None:
+        """Atomically record a new idempotency key; returns the existing row if the key was already used."""
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM tool_requests WHERE session_id=? AND idempotency_key=?",
+                                     (session_id, key)).fetchone()
+            if row is not None:
+                return dict(row)
+            self._conn.execute("INSERT INTO tool_requests (session_id, idempotency_key, request_hash, created_at) "
+                               "VALUES (?,?,?,?)", (session_id, key, request_hash, time.time()))
+            return None
+
+    def bind_request(self, session_id: str, key: str, experiment_id: str) -> None:
+        self._exec("UPDATE tool_requests SET experiment_id=? WHERE session_id=? AND idempotency_key=?",
+                   (experiment_id, session_id, key))
+
+    def release_request(self, session_id: str, key: str) -> None:
+        self._exec("DELETE FROM tool_requests WHERE session_id=? AND idempotency_key=? AND experiment_id IS NULL",
+                   (session_id, key))
+
+    def experiment_for_key(self, session_id: str, key: str) -> str | None:
+        row = self._exec("SELECT id FROM experiments WHERE session_id=? AND idempotency_key=? ORDER BY created_at "
+                         "LIMIT 1", (session_id, key)).fetchone()
+        return row[0] if row else None

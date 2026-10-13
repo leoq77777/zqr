@@ -12,16 +12,22 @@ from pydantic import BaseModel, Field
 
 from quant_research.backtest.engine import EngineConfig
 from quant_research.controller.agent import AgentRoundResult, AgentRunner, CandidateSubmission, ResearchTask
-from quant_research.controller.budget import AcceptanceCriteria, Budget, ModelPricing, Usage, exhausted
+from quant_research.controller.budget import Budget, ModelPricing, Usage, exhausted
+from quant_research.data.snapshot import load_manifest
 from quant_research.evaluation.diagnosis import SUGGESTIONS
 from quant_research.experiments.gatekeeper import GateContext
-from quant_research.experiments.runner import ExperimentRequest, ExperimentResult, run_experiment
+from quant_research.experiments.runner import ExperimentRequest, run_experiment
 from quant_research.experiments.store import ExperimentStore
 from quant_research.paths import Paths
 from quant_research.portfolio.policy import PortfolioPolicy
 from quant_research.report.markdown import write_session_report
+from quant_research.research.evaluate import evaluate_candidate
+from quant_research.research.mandate import AcceptanceCriteria, Mandate
+from quant_research.research.plans import ResearchPlan, artifact_name, plan_status
+from quant_research.research.registry import candidate_identity, register_candidate, transition
 from quant_research.strategy.plugin import register_plugin
 from quant_research.strategy.sandbox import SandboxConfig
+from quant_research.strategy.spec import StrategySpec
 from quant_research.validation.splits import agent_data_path, load_split
 
 STOP_FILE = "STOP"
@@ -49,18 +55,48 @@ class SessionError(RuntimeError):
     pass
 
 
+def _primary(record: dict[str, Any] | None) -> float | None:
+    if not record:
+        return None
+    return record.get("validation_primary", record.get("validation_sharpe"))
+
+
 class SessionConfig(BaseModel):
-    question: str
-    dataset_id: str
-    split_id: str
-    budget: Budget = Field(default_factory=Budget)
-    acceptance: AcceptanceCriteria = Field(default_factory=AcceptanceCriteria)
-    engine_config: EngineConfig = Field(default_factory=EngineConfig)
-    policy: PortfolioPolicy = Field(default_factory=PortfolioPolicy)
+    """A session runs under exactly one immutable mandate; the rest is runtime configuration."""
+
+    mandate: Mandate
     sandbox: SandboxConfig = Field(default_factory=lambda: SandboxConfig(isolation="docker"))
     allow_weak_isolation: bool = False
     pricing: ModelPricing | None = None
     max_agent_retries: int = 1
+
+    @property
+    def question(self) -> str:
+        return self.mandate.question
+
+    @property
+    def dataset_id(self) -> str:
+        return self.mandate.dataset_id
+
+    @property
+    def split_id(self) -> str:
+        return self.mandate.split_id
+
+    @property
+    def budget(self) -> Budget:
+        return self.mandate.budget
+
+    @property
+    def acceptance(self) -> AcceptanceCriteria:
+        return self.mandate.acceptance
+
+    @property
+    def engine_config(self) -> EngineConfig:
+        return self.mandate.engine_config
+
+    @property
+    def policy(self) -> PortfolioPolicy:
+        return self.mandate.policy
 
 
 class ResearchController:
@@ -74,6 +110,7 @@ class ResearchController:
         split = load_split(self.paths, cfg.split_id)
         if split.dataset_id != cfg.dataset_id:
             raise SessionError("split does not belong to dataset")
+        self.store.put_mandate(cfg.mandate.mandate_id(), cfg.mandate.model_dump(mode="json"))
         sid = self.store.create_session(question=cfg.question, dataset_id=cfg.dataset_id, split_id=cfg.split_id,
                                         state=SessionState.CREATED, budget=cfg.budget.model_dump(),
                                         usage=Usage().model_dump(), config=cfg.model_dump(), workspace="")
@@ -206,7 +243,10 @@ class ResearchController:
             research_data_path=str(agent_data_path(self.paths, cfg.split_id)),
             candidate_dir=str(self.paths.sessions / sid / f"round_{usage.rounds + 1:03d}"),
             remaining=remaining, history=history, feedback=self._feedback(summary["candidates"]),
-            acceptance=cfg.acceptance.model_dump(), quant_home=str(self.paths.root),
+            acceptance={"primary_metric": cfg.mandate.primary_metric,
+                        "evaluation_design": cfg.mandate.evaluation_design.model_dump(),
+                        **cfg.acceptance.model_dump()},
+            quant_home=str(self.paths.root),
             trials_on_split=self.store.trial_count(split_id=cfg.split_id),
         )
 
@@ -262,7 +302,7 @@ class ResearchController:
         round_no = usage.rounds + 1
         if result.report:
             summary["agent_reports"].append({"round": round_no, "report": result.report})
-        best_before = summary["best"]["validation_sharpe"] if summary["best"] else None
+        best_before = _primary(summary["best"])
         candidate_dir = self.paths.sessions / sid / f"round_{round_no:03d}"
         for sub in result.candidates:
             usage = self._usage(sid)
@@ -276,12 +316,27 @@ class ResearchController:
             usage.candidates += 1
             self.store.update_session(sid, usage=usage.model_dump())
             summary["candidates"].append(record)
-            if record["verdict"] == "accepted" and (
-                    summary["best"] is None or record["validation_sharpe"] > summary["best"]["validation_sharpe"]):
+            if record["verdict"] == "accepted" and (summary["best"] is None
+                                                    or _primary(record) > _primary(summary["best"])):
                 summary["best"] = record
         self._save_summary(sid, summary)
-        best_after = summary["best"]["validation_sharpe"] if summary["best"] else None
+        best_after = _primary(summary["best"])
         return best_after is not None and (best_before is None or best_after > best_before)
+
+    def _plan(self, sid: str, cfg: SessionConfig, sub: CandidateSubmission, artifact: str) -> tuple[str, bool]:
+        """(plan_id, retrospective). A submission without a preregistered plan gets a retrospective plan record,
+        disclosed as such, because the agent may already have seen dev results for it."""
+        if sub.plan_id:
+            rec = self.store.get_plan(sub.plan_id)
+            if rec is None or rec["session_id"] != sid:
+                raise PermissionError(f"plan {sub.plan_id} does not belong to this session")
+            return sub.plan_id, bool(rec["retrospective"])
+        grid = sub.parameter_grid or {k: [v] for k, v in sub.parameters.items()}
+        plan = ResearchPlan(hypothesis=sub.hypothesis or "(no hypothesis stated)", mechanism="not stated",
+                            falsification="not stated", artifact=artifact,
+                            parameter_ranges={k: {"values": v} for k, v in grid.items()}, planned_experiments=1,
+                            primary_metric=cfg.mandate.primary_metric)
+        return self.store.put_plan(sid, cfg.mandate.mandate_id(), plan.model_dump(), retrospective=True), True
 
     def _evaluate(self, sid: str, cfg: SessionConfig, round_no: int, candidate_dir: Path,
                   sub: CandidateSubmission, result: AgentRoundResult) -> dict[str, Any]:
@@ -289,76 +344,66 @@ class ResearchController:
                                   "reasons": []}
         try:
             if sub.template:
-                strategy_ref = f"template:{sub.template}"
+                strategy_ref, artifact = f"template:{sub.template}", sub.template
             elif sub.plugin:
                 code = (candidate_dir / sub.plugin).resolve()
                 if candidate_dir.resolve() not in code.parents:
                     raise PermissionError("plugin path escapes the candidate directory")
-                strategy_ref = f"plugin:{register_plugin(self.paths, code)}"
+                strategy_ref, artifact = f"plugin:{register_plugin(self.paths, code)}", sub.plugin
             else:
                 raise ValueError("candidate needs 'template' or 'plugin'")
+            plan_id, retrospective = self._plan(sid, cfg, sub, artifact)
         except Exception as exc:
             record.update(strategy_ref=sub.template or sub.plugin or "?", verdict="rejected",
                           reasons=[f"{type(exc).__name__}: {exc}"])
             return record
-        record["strategy_ref"] = strategy_ref
+        plan = ResearchPlan.model_validate(self.store.get_plan(plan_id)["body"])
+        status, deviation = plan_status(plan, artifact_name(strategy_ref, artifact), sub.parameters,
+                                        self.store.plan_usage(plan_id))
+        record.update(strategy_ref=strategy_ref, plan_id=plan_id, plan_retrospective=retrospective,
+                      plan_status=status, plan_deviation=deviation)
+        ledger = {"plan_id": plan_id, "plan_status": status, "plan_deviation": deviation, "artifact": artifact}
         llm = {"hypothesis": sub.hypothesis, "submission": sub.model_dump(), "round": round_no}
         base = ExperimentRequest(strategy_ref=strategy_ref, parameters=sub.parameters, dataset_id=cfg.dataset_id,
                                  split_id=cfg.split_id, engine_config=cfg.engine_config, policy=cfg.policy)
-        kw = {"session_id": sid, "sandbox": cfg.sandbox, "llm_suggestion": llm, "gate": self._gate(sid, cfg)}
-        dev = run_experiment(self.paths, self.store, base, **kw)
+        gate = self._gate(sid, cfg)
+        dev = run_experiment(self.paths, self.store, base, session_id=sid, sandbox=cfg.sandbox, llm_suggestion=llm,
+                             gate=gate, record=ledger)
         record["dev_experiment"] = dev.experiment_id
         if not dev.has_result:
             record.update(verdict=dev.status, reasons=[dev.failure_reason or dev.status])
             return record
         record["dev_sharpe"] = dev.metrics["sharpe"]
         record["labels"] = dev.labels
-        val = run_experiment(self.paths, self.store, base.model_copy(update={"segment": "validation"}),
-                             parent_id=dev.experiment_id, **kw)
-        record["validation_experiment"] = val.experiment_id
-        if not val.has_result:
-            record.update(verdict=val.status, reasons=[val.failure_reason or val.status])
+        spec = StrategySpec(strategy_ref=strategy_ref, parameters=sub.parameters).normalized()
+        identity = candidate_identity(spec, load_manifest(self.paths, cfg.dataset_id)["data_hash"], cfg.split_id,
+                                      cfg.engine_config.config_id(), cfg.policy.policy_id(), cfg.mandate.mandate_id())
+        cid = register_candidate(self.store, identity, session_id=sid, plan_id=plan_id, actor="controller",
+                                 evidence={"dev_experiment": dev.experiment_id})
+        record["candidate_id"] = cid
+        grid = sub.parameter_grid or (plan.parameter_grid() if plan.parameter_ranges else None)
+        ev = evaluate_candidate(self.paths, self.store, cfg.mandate, base, gate=gate, sandbox=cfg.sandbox,
+                                session_id=sid, parent_id=dev.experiment_id, grid=grid, llm_suggestion=llm,
+                                record=ledger)
+        record["evaluation_experiments"] = ev.experiments
+        record["validation_experiment"] = ev.experiments.get("validation") or ev.experiments.get("walk_forward")
+        open_ = self.store.get_candidate(cid)["state"] == "development"  # resubmissions keep their first verdict
+        if ev.metrics is None:
+            if open_:
+                transition(self.store, cid, "rejected", "controller", ev.evidence(), "evaluation did not complete")
+            record.update(verdict=ev.verdict, reasons=ev.reasons)
             return record
-        attribution = val.diagnosis["attribution"]
-        labels = val.labels
-        if dev.metrics["sharpe"] > 0 and val.metrics["sharpe"] < 0.5 * dev.metrics["sharpe"]:
+        labels = list(dev.labels) + [x["label"] for x in (ev.diagnosis or {}).get("labels", [])
+                                     if x["label"] not in dev.labels]
+        if dev.metrics["sharpe"] > 0 and ev.metrics["sharpe"] < 0.5 * dev.metrics["sharpe"]:
             labels.append("dev_validation_degradation")
-        record.update(validation_sharpe=val.metrics["sharpe"], validation_return=val.metrics["total_return"],
-                      validation_dsr=val.statistics.get("dsr"), gross_return=attribution["gross_total_return"],
-                      cost_drag=attribution["cost_drag"], labels=labels)
-        sensitivity: dict[str, ExperimentResult] = {}
-        for case, required in (("costs_x2", cfg.acceptance.require_positive_after_cost_doubling),
-                               ("delay_1_adverse", cfg.acceptance.require_positive_after_delay)):
-            if required:
-                req = base.model_copy(update={"segment": "validation",
-                                              "engine_config": cfg.engine_config.sensitivity(case)})
-                sensitivity[case] = run_experiment(self.paths, self.store, req, kind="robustness",
-                                                   parent_id=val.experiment_id, **kw)
-        reasons = self._acceptance(cfg.acceptance, val, sensitivity)
-        record.update(verdict="accepted" if not reasons else "rejected", reasons=reasons)
+        attribution = (ev.diagnosis or {}).get("attribution", {})
+        record.update(validation_sharpe=ev.metrics["sharpe"], validation_primary=ev.primary,
+                      validation_return=ev.metrics["total_return"],
+                      validation_dsr=(ev.statistics or {}).get("dsr"),
+                      gross_return=attribution.get("gross_total_return"), cost_drag=attribution.get("cost_drag"),
+                      labels=labels, verdict=ev.verdict, reasons=ev.reasons)
+        if open_:
+            transition(self.store, cid, "validated" if ev.verdict == "accepted" else "rejected", "controller",
+                       ev.evidence())
         return record
-
-    @staticmethod
-    def _acceptance(acc: AcceptanceCriteria, val: ExperimentResult,
-                    sensitivity: dict[str, ExperimentResult]) -> list[str]:
-        m, b, s = val.metrics, val.benchmarks, val.statistics or {}
-        reasons = []
-        if acc.min_validation_dsr is not None and s.get("dsr", 0.0) < acc.min_validation_dsr:
-            reasons.append(f"deflated sharpe {s.get('dsr', 0.0):.2f} < {acc.min_validation_dsr} "
-                           f"({s.get('n_trials')} trials on split)")
-        if acc.require_bootstrap_sharpe_lower_positive and s.get("sharpe_ci_05", -1.0) <= 0:
-            reasons.append(f"bootstrap 5th-percentile sharpe {s.get('sharpe_ci_05', float('nan')):.2f} <= 0")
-        if m["sharpe"] < acc.min_validation_sharpe:
-            reasons.append(f"validation sharpe {m['sharpe']:.2f} < {acc.min_validation_sharpe}")
-        if m["n_round_trips"] < acc.min_validation_round_trips:
-            reasons.append(f"{m['n_round_trips']} round trips < {acc.min_validation_round_trips}")
-        if m["max_drawdown"] < acc.max_validation_drawdown:
-            reasons.append(f"drawdown {m['max_drawdown']:.1%} worse than {acc.max_validation_drawdown:.0%}")
-        if acc.require_beats_buy_and_hold_sharpe and m["sharpe"] <= b["buy_and_hold"]["sharpe"]:
-            reasons.append("does not beat buy-and-hold sharpe")
-        for case, message in (("costs_x2", "not profitable with doubled costs"),
-                              ("delay_1_adverse", "not profitable with a one-bar delay and adverse fills")):
-            res = sensitivity.get(case)
-            if res is not None and (not res.has_result or res.metrics["total_return"] <= 0):
-                reasons.append(message)
-        return reasons

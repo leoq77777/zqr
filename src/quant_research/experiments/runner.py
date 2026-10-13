@@ -22,7 +22,7 @@ from quant_research.evaluation.diagnosis import attribute, diagnose, significanc
 from quant_research.evaluation.metrics import compute_metrics
 from quant_research.evaluation.statistics import deflate, sharpe_statistics
 from quant_research.experiments.gatekeeper import GateContext, GateDecision, check, gaps_in_range
-from quant_research.experiments.store import ExperimentStore, new_id
+from quant_research.experiments.store import NON_TRIAL_KINDS, ExperimentStore, new_id
 from quant_research.paths import Paths
 from quant_research.portfolio.policy import PortfolioPolicy
 from quant_research.strategy.compute import TargetResult, check_positions, compute_targets, strategy_weights
@@ -262,10 +262,14 @@ def run_experiment(
     sandbox: SandboxConfig | None = None,
     data: SegmentData | None = None,
     gate: GateContext | None = None,
+    record: dict[str, Any] | None = None,
 ) -> ExperimentResult:
+    """`record`: extra ledger fields (plan_id, plan_status, plan_deviation, artifact, idempotency_key)."""
     segment = data.segment if data is not None else request.segment
-    base = _base_fields(request, kind, segment, session_id, parent_id, llm_suggestion)
+    base = _base_fields(request, kind, segment, session_id, parent_id, llm_suggestion) | (record or {})
     gate = gate or GateContext(session_id=session_id)
+    if kind in NON_TRIAL_KINDS:  # re-tests of a selected candidate do not consume the per-strategy trial cap
+        gate = gate.model_copy(update={"max_trials_per_strategy": None})
     decision = check(paths, store, request, gate, sandbox, data.window if data is not None else None,
                      "holdout" if segment == "holdout" else segment.split(":")[0])
     if not decision.allowed:

@@ -232,6 +232,10 @@ def cmd_holdout(args) -> None:
     from quant_research.report.markdown import write_experiment_report
     from quant_research.validation.holdout import run_holdout
 
+    if args.candidate:
+        return _candidate_call(_cand_holdout)(args)
+    if not (args.dataset and args.split):
+        raise SystemExit("give --candidate (mandate-governed) or --dataset/--split with a frozen strategy")
     paths, store = _ctx(args)
     res, prior = run_holdout(paths, store, _request(args, paths), sandbox=_sandbox(args))
     out = _summ(res) | {"prior_holdout_runs_on_split": prior}
@@ -282,12 +286,71 @@ def _runner(spec: dict[str, Any]):
     return ManualRunner()
 
 
+def _load_mandate(store: ExperimentStore, ref: str):
+    from quant_research.research.mandate import Mandate
+
+    if Path(ref).is_file():
+        mandate = Mandate.model_validate_json(Path(ref).read_text())
+        store.put_mandate(mandate.mandate_id(), mandate.model_dump(mode="json"))
+        return mandate
+    rec = store.get_mandate(ref)
+    if rec is None:
+        raise SystemExit(f"unknown mandate {ref} (give a mandate id or a mandate JSON file)")
+    return Mandate.model_validate(rec["body"])
+
+
+def cmd_mandate_template(args) -> None:
+    from quant_research.controller.budget import Budget
+    from quant_research.research.mandate import AcceptanceCriteria, HoldoutPolicy, Mandate, SingleValidation
+
+    tmpl = Mandate(
+        question=args.question, dataset_id=args.dataset, split_id=args.split, engine_config=_engine(args),
+        policy=_policy(args), evaluation_design=SingleValidation(), primary_metric="sharpe",
+        acceptance=AcceptanceCriteria(min_primary=0.5, min_dsr=0.9, min_round_trips=4, max_drawdown=-0.5,
+                                      require_costs_x2=True, require_delay=True),
+        budget=Budget(max_rounds=5, max_candidates=20, max_experiments=300, max_wall_seconds=4 * 3600,
+                      max_trials_per_strategy=50),
+        holdout=HoldoutPolicy(max_viewings=1, min_primary=0.0, min_total_return=0.0),
+        notes="TEMPLATE: review every threshold before `quant mandate create`",
+    )
+    _out(tmpl.model_dump(mode="json"))
+
+
+def cmd_mandate_create(args) -> None:
+    from pydantic import ValidationError
+
+    from quant_research.research.mandate import Mandate
+
+    _, store = _ctx(args)
+    try:
+        mandate = Mandate.model_validate_json(Path(args.file).read_text())
+    except ValidationError as exc:
+        raise SystemExit(f"invalid mandate:\n{exc}") from None
+    new = store.put_mandate(mandate.mandate_id(), mandate.model_dump(mode="json"))
+    _out({"mandate_id": mandate.mandate_id(), "created": new})
+
+
+def cmd_mandate_show(args) -> None:
+    _, store = _ctx(args)
+    rec = store.get_mandate(args.mandate_id)
+    if rec is None:
+        raise SystemExit(f"unknown mandate {args.mandate_id}")
+    _out(rec)
+
+
+def cmd_mandate_list(args) -> None:
+    _, store = _ctx(args)
+    _out([{"mandate_id": r["id"], "question": r["body"]["question"], "split_id": r["body"]["split_id"],
+           "design": r["body"]["evaluation_design"]["kind"]} for r in store.list_mandates()])
+
+
 def cmd_research_start(args) -> None:
     from quant_research.controller.agent import CLAUDE_PASS_ENV, claude_command
-    from quant_research.controller.budget import AcceptanceCriteria, Budget, ModelPricing, pricing_preset
+    from quant_research.controller.budget import ModelPricing, pricing_preset
     from quant_research.controller.controller import ResearchController, SessionConfig
 
     paths, store = _ctx(args)
+    mandate = _load_mandate(store, args.mandate)
     runner_spec: dict[str, Any] = {"type": args.runner}
     extra_env = args.pass_env.split(",") if args.pass_env else []
     if args.runner == "command":
@@ -306,18 +369,8 @@ def cmd_research_start(args) -> None:
                                cache_read_per_mtok=args.cache_read_price, source="command line")
     else:
         pricing = None
-    cfg = SessionConfig(
-        question=args.question, dataset_id=args.dataset, split_id=args.split,
-        budget=Budget(max_rounds=args.max_rounds, max_candidates=args.max_candidates,
-                      max_experiments=args.max_experiments, max_wall_seconds=args.max_hours * 3600,
-                      max_model_cost_usd=args.max_cost, patience_rounds=args.patience,
-                      max_trials_per_strategy=args.max_trials_per_strategy or None),
-        acceptance=AcceptanceCriteria(min_validation_sharpe=args.min_sharpe,
-                                      min_validation_round_trips=args.min_trips,
-                                      min_validation_dsr=None if args.min_dsr <= 0 else args.min_dsr),
-        engine_config=_engine(args), policy=_policy(args), sandbox=SandboxConfig(isolation=args.isolation),
-        allow_weak_isolation=args.allow_weak_isolation, pricing=pricing,
-    )
+    cfg = SessionConfig(mandate=mandate, sandbox=SandboxConfig(isolation=args.isolation),
+                        allow_weak_isolation=args.allow_weak_isolation, pricing=pricing)
     ctl = ResearchController(paths, store, _runner(runner_spec))
     sid = ctl.create_session(cfg)
     (paths.sessions / sid / "runner.json").write_text(json.dumps(runner_spec))
@@ -359,18 +412,119 @@ def cmd_research_status(args) -> None:
         _out([{k: s[k] for k in ("id", "state", "question", "stop_reason")} for s in store.list_sessions()])
 
 
-def cmd_tool_backtest(args) -> None:
+def _tool(fn):
+    """Run a gateway call; refusals print as JSON errors with exit code 2 so agents can read them."""
+    from quant_research.controller.controller import SessionError
+    from quant_research.gateway import GatewayError
+
+    def run(args) -> None:
+        paths, store = _ctx(args)
+        try:
+            _out(fn(args, paths, store))
+        except (GatewayError, SessionError, PermissionError) as exc:
+            _out({"error": str(exc)})
+            sys.exit(2)
+    return run
+
+
+def _gw(paths, store, args):
+    from quant_research.controller.tools import gateway
+
+    return gateway(paths, store, args.session)
+
+
+def _tool_backtest(args, paths, store):
     from quant_research.controller.tools import tool_backtest
 
-    paths, store = _ctx(args)
-    _out(tool_backtest(paths, store, args.session, Path(args.spec), args.segment))
+    return tool_backtest(paths, store, args.session, Path(args.spec), args.segment, args.key)
 
 
-def cmd_tool_history(args) -> None:
-    from quant_research.controller.tools import tool_history
+def _tool_submit(args, paths, store):
+    from quant_research.controller.tools import tool_submit
 
-    _, store = _ctx(args)
-    _out(tool_history(store, args.session))
+    return tool_submit(paths, store, args.session, args.artifact, json.loads(args.params or "{}"), args.plan,
+                       args.key)
+
+
+def _json_arg(text: str) -> Any:
+    return json.loads(Path(text).read_text() if Path(text).is_file() else text)
+
+
+TOOL_CALLS = {
+    "backtest": _tool_backtest,
+    "submit": _tool_submit,
+    "plan": lambda a, p, s: _gw(p, s, a).submit_plan(_json_arg(a.file), a.supersedes),
+    "get": lambda a, p, s: _gw(p, s, a).get_experiment(a.experiment_id),
+    "compare": lambda a, p, s: _gw(p, s, a).compare_experiments(a.experiment_ids),
+    "report": lambda a, p, s: _gw(p, s, a).build_report(a.file),
+    "inspect": lambda a, p, s: _gw(p, s, a).inspect_dataset(),
+    "source": lambda a, p, s: _gw(p, s, a).read_source(a.source_id),
+    "history": lambda a, p, s: _gw(p, s, a).history(),
+}
+
+
+# -- candidate registry --------------------------------------------------------------------------------
+def _candidate_call(fn):
+    from quant_research.research.registry import RegistryError
+    from quant_research.validation.holdout import HoldoutError
+
+    def run(args) -> None:
+        paths, store = _ctx(args)
+        try:
+            _out(fn(args, paths, store))
+        except (RegistryError, HoldoutError) as exc:
+            raise SystemExit(str(exc)) from None
+    return run
+
+
+def _cand_list(args, paths, store):
+    filters = {k: v for k, v in (("session_id", args.session), ("state", args.state)) if v}
+    return [{k: c[k] for k in ("id", "state", "strategy_ref", "parameters", "mandate_id", "session_id", "plan_id")}
+            for c in store.list_candidates(**filters)]
+
+
+def _cand_show(args, paths, store):
+    cand = store.get_candidate(args.candidate_id)
+    if cand is None:
+        raise SystemExit(f"unknown candidate {args.candidate_id}")
+    return cand | {"events": store.candidate_events(args.candidate_id)}
+
+
+def _cand_freeze(args, paths, store):
+    from quant_research.research.registry import freeze
+
+    return freeze(paths, store, args.candidate_id, args.note or "")
+
+
+def _cand_transition(to: str):
+    def run(args, paths, store):
+        from quant_research.research.registry import transition
+
+        return transition(store, args.candidate_id, to, "human", None, args.note or "")
+    return run
+
+
+def _cand_holdout(args, paths, store):
+    from quant_research.report.markdown import write_experiment_report
+    from quant_research.validation.holdout import run_candidate_holdout
+
+    out = run_candidate_holdout(paths, store, args.candidate, sandbox=_sandbox(args))
+    res = out["result"]
+    summary = {"candidate_id": args.candidate, "state": out["candidate"]["state"], "passed": out["passed"],
+               "prior_holdout_runs_on_split": out["prior"], "result": _summ(res)}
+    if res.has_result:
+        summary["report"] = str(write_experiment_report(paths, store, res.experiment_id))
+    return summary
+
+
+CANDIDATE_CALLS = {
+    "list": _cand_list,
+    "show": _cand_show,
+    "freeze": _cand_freeze,
+    "approve-paper": _cand_transition("paper_approved"),
+    "reject": _cand_transition("rejected"),
+    "retire": _cand_transition("retired"),
+}
 
 
 # -- paper ---------------------------------------------------------------------------------------------
@@ -533,10 +687,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_split)
     sub.add_parser("splits").set_defaults(fn=cmd_splits)
 
-    def research_cmd(name, fn, help_, segment=True):
+    def research_cmd(name, fn, help_, segment=True, required=True):
         p = sub.add_parser(name, help=help_)
-        p.add_argument("--dataset", required=True)
-        p.add_argument("--split", required=True)
+        p.add_argument("--dataset", required=required)
+        p.add_argument("--split", required=required)
         _add_strategy(p)
         _add_engine(p)
         p.add_argument("--allow-gaps", action="store_true")
@@ -558,7 +712,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--test-bars", type=int, required=True)
     p.add_argument("--through", choices=["dev", "validation"], default="dev")
     p.add_argument("--metric", default="sharpe")
-    research_cmd("holdout-test", cmd_holdout, "final test on holdout (frozen candidates only)", segment=False)
+    p = research_cmd("holdout-test", cmd_holdout, "final test on holdout (frozen candidates only)", segment=False,
+                     required=False)
+    p.add_argument("--candidate", help="registry candidate id (frozen); uses its mandate's viewing limit and rule")
 
     p = sub.add_parser("freeze-strategy", help="freeze a candidate before the holdout test")
     _add_strategy(p)
@@ -577,22 +733,30 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--isolation", choices=["subprocess", "docker"], default="subprocess")
         p.set_defaults(fn=fn)
 
-    research = sub.add_parser("research", help="agent research sessions").add_subparsers(dest="rcmd", required=True)
-    p = research.add_parser("start")
+    mandate = sub.add_parser("mandate", help="research mandates (immutable)").add_subparsers(dest="mcmd", required=True)
+    p = mandate.add_parser("template", help="print a mandate JSON to edit")
     p.add_argument("--dataset", required=True)
     p.add_argument("--split", required=True)
     p.add_argument("--question", required=True)
+    _add_engine(p)
+    p.set_defaults(fn=cmd_mandate_template)
+    p = mandate.add_parser("create")
+    p.add_argument("--file", required=True)
+    p.set_defaults(fn=cmd_mandate_create)
+    p = mandate.add_parser("show")
+    p.add_argument("mandate_id")
+    p.set_defaults(fn=cmd_mandate_show)
+    mandate.add_parser("list").set_defaults(fn=cmd_mandate_list)
+
+    research = sub.add_parser("research", help="agent research sessions").add_subparsers(dest="rcmd", required=True)
+    p = research.add_parser("start")
+    p.add_argument("--mandate", required=True, help="mandate id or mandate JSON file")
     p.add_argument("--runner", choices=["manual", "command", "claude"], default="manual",
                    help="claude: Claude Code preset (passes ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN, measures tokens)")
     p.add_argument("--command", help="agent CLI; placeholders {task_file} {workdir} {session}")
     p.add_argument("--agent-model", help="model passed to the claude preset (default: claude's own setting)")
     p.add_argument("--agent-timeout", type=float, default=3600)
     p.add_argument("--pass-env", help="comma-separated env vars the agent needs (e.g. its own API key)")
-    p.add_argument("--max-rounds", type=int, default=5)
-    p.add_argument("--max-candidates", type=int, default=20)
-    p.add_argument("--max-experiments", type=int, default=300)
-    p.add_argument("--max-hours", type=float, default=4)
-    p.add_argument("--max-cost", type=float, help="USD model budget (needs --pricing or --model with prices)")
     p.add_argument("--pricing", choices=["deepseek-flash", "deepseek-v4-pro"],
                    help="vendor price preset (CNY, cache-hit price, DeepSeek peak/off-peak schedule)")
     p.add_argument("--cny-per-usd", type=float, default=7.1, help="FX for CNY presets")
@@ -600,18 +764,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--input-price", type=float, default=0.0, help="USD per 1M uncached input tokens")
     p.add_argument("--cache-read-price", type=float, help="USD per 1M cache-hit input tokens (default: input price)")
     p.add_argument("--output-price", type=float, default=0.0, help="USD per 1M output tokens")
-    p.add_argument("--patience", type=int, default=2)
-    p.add_argument("--min-sharpe", type=float, default=0.5)
-    p.add_argument("--min-trips", type=int, default=4)
-    p.add_argument("--min-dsr", type=float, default=0.9,
-                   help="minimum Deflated Sharpe on validation given all trials on the split (0 disables)")
-    p.add_argument("--max-trials-per-strategy", type=int, default=50,
-                   help="per template/plugin trial cap within the session (0 disables)")
     p.add_argument("--allow-weak-isolation", action="store_true",
                    help="allow plugin candidates with subprocess isolation (trusted code only)")
-    _add_engine(p)
+    p.add_argument("--isolation", choices=["subprocess", "docker"], default="docker")
     p.set_defaults(fn=cmd_research_start)
-    p.set_defaults(isolation="docker")
     for name, fn in (("resume", cmd_research_resume), ("stop", cmd_research_stop)):
         p = research.add_parser(name)
         p.add_argument("session")
@@ -620,15 +776,40 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("session", nargs="?")
     p.set_defaults(fn=cmd_research_status)
 
-    tool = sub.add_parser("tool", help="fixed tools for the coding agent").add_subparsers(dest="tcmd", required=True)
-    p = tool.add_parser("backtest")
-    p.add_argument("--session", required=True)
-    p.add_argument("--spec", required=True)
-    p.add_argument("--segment", choices=["dev", "validation"], default="dev")
-    p.set_defaults(fn=cmd_tool_backtest)
-    p = tool.add_parser("history")
-    p.add_argument("--session", required=True)
-    p.set_defaults(fn=cmd_tool_history)
+    tool = sub.add_parser("tool", help="research tool gateway (agents)").add_subparsers(dest="tcmd", required=True)
+    tool_args: dict[str, list[tuple[tuple[str, ...], dict[str, Any]]]] = {
+        "backtest": [(("--spec",), {"required": True}),
+                     (("--segment",), {"choices": ["dev", "validation"], "default": "dev"}), (("--key",), {})],
+        "submit": [(("--artifact",), {"required": True, "help": "template name or a .py file in the workspace"}),
+                   (("--params",), {"help": "JSON object"}), (("--plan",), {}),
+                   (("--key",), {"required": True, "help": "idempotency key; reuse it when retrying"})],
+        "plan": [(("--file",), {"required": True, "help": "plan JSON file or inline JSON"}),
+                 (("--supersedes",), {})],
+        "get": [(("experiment_id",), {})],
+        "compare": [(("experiment_ids",), {"nargs": "+"})],
+        "report": [(("--file",), {"default": "research.json"})],
+        "inspect": [],
+        "source": [(("source_id",), {})],
+        "history": [],
+    }
+    for name, extra in tool_args.items():
+        p = tool.add_parser(name)
+        p.add_argument("--session", required=True)
+        for flags, kw in extra:
+            p.add_argument(*flags, **kw)
+        p.set_defaults(fn=_tool(TOOL_CALLS[name]))
+
+    cand = sub.add_parser("candidate", help="candidate registry lifecycle").add_subparsers(dest="ccmd", required=True)
+    p = cand.add_parser("list")
+    p.add_argument("--session")
+    p.add_argument("--state")
+    p.set_defaults(fn=_candidate_call(CANDIDATE_CALLS["list"]))
+    for name in ("show", "freeze", "approve-paper", "reject", "retire"):
+        p = cand.add_parser(name)
+        p.add_argument("candidate_id")
+        if name != "show":
+            p.add_argument("--note")
+        p.set_defaults(fn=_candidate_call(CANDIDATE_CALLS[name]))
 
     paper = sub.add_parser("paper", help="paper trading (separate process)").add_subparsers(dest="pcmd", required=True)
 

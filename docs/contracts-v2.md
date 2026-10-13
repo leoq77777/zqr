@@ -236,8 +236,14 @@ gateway for development.
 ## 11. Changes to current code
 
 Done in M2 (engine 1.1.0): strategy contract, portfolio policy, policy-matched baseline, engine options,
-sensitivity cases in robustness and controller acceptance, paper using the same policy. The remaining rows are
-M3-M4.
+sensitivity cases in robustness and controller acceptance, paper using the same policy.
+
+Done in M3: mandates (`quant mandate`), preregistered plans with planned/unplanned/out_of_plan status (a plan's
+experiment count covers dev exploration only), candidate registry and lifecycle (`quant candidate`,
+`holdout-test --candidate` with the mandate's viewing limit and pass rule), `walk_forward_oos` evaluation
+(one trial per procedure; folds and sensitivity reruns are recorded but not trials), and the tool gateway
+(`quant_research.gateway`, `quant tool plan/submit/get/compare/report/inspect/source/history`). Holdout of a
+walk-forward procedure is refused until re-selection through the holdout is implemented. Isolation remains M4.
 
 | Area | Current (engine 1.0.0) | Change |
 |---|---|---|

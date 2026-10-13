@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from quant_research.controller.agent import AgentRoundResult, CandidateSubmission, ScriptedRunner
-from quant_research.controller.budget import AcceptanceCriteria, Budget
+from quant_research.controller.budget import Budget
 from quant_research.controller.controller import ResearchController, SessionConfig
 from quant_research.data.snapshot import freeze_dataset
 from quant_research.data.validate import validate_bars
@@ -15,7 +15,7 @@ from quant_research.experiments.runner import ExperimentRequest, run_experiment
 from quant_research.strategy.plugin import register_plugin
 from quant_research.strategy.sandbox import SandboxConfig
 from quant_research.validation.splits import create_split
-from tests.conftest import HOUR, T0, make_raw
+from tests.conftest import HOUR, T0, make_mandate, make_raw
 
 PPY = 24 * 365
 
@@ -181,12 +181,9 @@ def test_controller_feeds_back_diagnosis_and_applies_dsr(paths, store, dataset):
         return AgentRoundResult(candidates=[CandidateSubmission(template="sma_cross",
                                                                 parameters={"fast": 2 + task.round, "slow": 6})])
 
-    cfg = SessionConfig(question="q", dataset_id=manifest["dataset_id"], split_id=split.split_id,
-                        sandbox=SandboxConfig(isolation="subprocess"),
-                        budget=Budget(max_rounds=2, max_candidates=10, patience_rounds=5),
-                        acceptance=AcceptanceCriteria(min_validation_sharpe=-100, min_validation_round_trips=0,
-                                                      max_validation_drawdown=-1, min_validation_dsr=0.999,
-                                                      require_positive_after_cost_doubling=False))
+    mandate = make_mandate(dataset, {"min_dsr": 0.999, "dsr_waiver": None},
+                           budget=Budget(max_rounds=2, max_candidates=10, patience_rounds=5))
+    cfg = SessionConfig(mandate=mandate, sandbox=SandboxConfig(isolation="subprocess"))
     ctl = ResearchController(paths, store, ScriptedRunner(agent))
     summary = ctl.run(ctl.create_session(cfg))
     first = summary["candidates"][0]

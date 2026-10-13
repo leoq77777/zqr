@@ -27,6 +27,24 @@ def make_raw(n: int, step: int = HOUR, start: int = T0, seed: int = 0, drift: fl
                          "fetched_at": float(starts[-1] + 10 * step)})
 
 
+LENIENT = {"min_primary": -100.0, "min_dsr": None, "dsr_waiver": "test", "min_round_trips": 0,
+           "max_drawdown": -1.0, "require_costs_x2": False, "require_delay": False}
+
+
+def make_mandate(dataset, acceptance: dict | None = None, **kw):
+    from quant_research.controller.budget import Budget
+    from quant_research.research.mandate import Mandate
+
+    manifest, split = dataset
+    body = {"question": "Does trend following work on BTC hourly?", "dataset_id": manifest["dataset_id"],
+            "split_id": split.split_id, "engine_config": {}, "policy": {},
+            "evaluation_design": {"kind": "single_validation"}, "primary_metric": "sharpe",
+            "acceptance": {**LENIENT, **(acceptance or {})},
+            "budget": Budget(max_rounds=3, max_candidates=10, patience_rounds=5),
+            "holdout": {"max_viewings": 1, "min_primary": 0.0, "min_total_return": 0.0}}
+    return Mandate.model_validate({**body, **kw})
+
+
 @pytest.fixture
 def paths(tmp_path):
     return get_paths(tmp_path / "var")

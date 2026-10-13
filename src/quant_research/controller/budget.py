@@ -98,13 +98,3 @@ def exhausted(budget: Budget, usage: Usage) -> str | None:
             return f"model cost budget reached (${budget.max_model_cost_usd:.2f})"
     return None
 
-
-class AcceptanceCriteria(BaseModel):
-    min_validation_sharpe: float = 0.5
-    min_validation_dsr: float | None = 0.9  # Deflated Sharpe given all research trials on the split
-    require_bootstrap_sharpe_lower_positive: bool = False  # 5th percentile of bootstrap Sharpe > 0
-    min_validation_round_trips: int = 4
-    max_validation_drawdown: float = -0.5  # reject if drawdown is worse (more negative)
-    require_positive_after_cost_doubling: bool = True
-    require_positive_after_delay: bool = True  # sensitivity case delay_1_adverse
-    require_beats_buy_and_hold_sharpe: bool = False

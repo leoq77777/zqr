@@ -15,19 +15,18 @@ from quant_research.controller.agent import (
     claude_command,
     usage_from_output,
 )
-from quant_research.controller.budget import BEIJING, AcceptanceCriteria, Budget, ModelPricing, pricing_preset
+from quant_research.controller.budget import BEIJING, Budget, ModelPricing, pricing_preset
 from quant_research.controller.controller import ResearchController, SessionConfig, SessionState
 from quant_research.controller.tools import tool_backtest
 from quant_research.data.bars import to_epoch
 from quant_research.strategy.sandbox import SandboxConfig
+from tests.conftest import make_mandate
 
 
-def _cfg(dataset, **kw):
-    manifest, split = dataset
-    base = {"question": "Does trend following work on BTC hourly?", "dataset_id": manifest["dataset_id"],
-            "split_id": split.split_id, "sandbox": SandboxConfig(isolation="subprocess"),
-            "budget": Budget(max_rounds=3, max_candidates=10, patience_rounds=5)}
-    return SessionConfig(**{**base, **kw})
+def _cfg(dataset, acceptance=None, budget=None, **kw):
+    mandate_kw = {"budget": budget} if budget else {}
+    return SessionConfig(mandate=make_mandate(dataset, acceptance, **mandate_kw),
+                         sandbox=SandboxConfig(isolation="subprocess"), **kw)
 
 
 def test_session_runs_rounds_records_everything_and_allows_no_strategy(paths, store, dataset):
@@ -43,7 +42,7 @@ def test_session_runs_rounds_records_everything_and_allows_no_strategy(paths, st
         ], report=f"round {task.round} notes", usage=TokenUsage(input_tokens=1000, output_tokens=200))
 
     ctl = ResearchController(paths, store, ScriptedRunner(agent))
-    sid = ctl.create_session(_cfg(dataset, acceptance=AcceptanceCriteria(min_validation_sharpe=99)))
+    sid = ctl.create_session(_cfg(dataset, acceptance={"min_primary": 99}))
     summary = ctl.run(sid)
     sess = store.get_session(sid)
     assert sess["state"] == SessionState.BUDGET_EXHAUSTED and "round budget" in sess["stop_reason"]
@@ -66,12 +65,14 @@ def test_accepts_candidate_and_stops_when_agent_done(paths, store, dataset):
         return AgentRoundResult(candidates=[CandidateSubmission(template="buy_and_hold")], done=True)
 
     ctl = ResearchController(paths, store, ScriptedRunner(agent))
-    acc = AcceptanceCriteria(min_validation_sharpe=-100, min_validation_round_trips=0, min_validation_dsr=None,
-                             max_validation_drawdown=-1, require_positive_after_cost_doubling=False)
-    sid = ctl.create_session(_cfg(dataset, acceptance=acc))
+    sid = ctl.create_session(_cfg(dataset))
     summary = ctl.run(sid)
     assert store.get_session(sid)["state"] == SessionState.COMPLETED
-    assert summary["best"]["strategy_ref"] == "template:buy_and_hold"
+    best = summary["best"]
+    assert best["strategy_ref"] == "template:buy_and_hold" and best["plan_retrospective"]
+    cand = store.get_candidate(best["candidate_id"])
+    assert cand["state"] == "validated" and cand["mandate_id"].startswith("mandate-")
+    assert [e["to_state"] for e in store.candidate_events(cand["id"])] == ["draft", "development", "validated"]
 
 
 def test_plugin_candidates_require_docker_unless_allowed(paths, store, dataset):
@@ -158,7 +159,7 @@ def test_agent_sees_only_dev_data(paths, store, dataset):
     ctl = ResearchController(paths, store, ScriptedRunner(lambda t: tasks.append(t) or AgentRoundResult(done=True)))
     ctl.run(ctl.create_session(_cfg(dataset)))
     task = tasks[0]
-    assert task.allowed_segments == ["dev"] and "--segment dev`" in task.prompt()
+    assert task.allowed_segments == ["dev"] and "limited to the dev segment" in task.prompt()
     bars = pd.read_parquet(task.research_data_path)
     assert to_epoch(bars["bar_open_time"]).max() < split.dev[1]
 

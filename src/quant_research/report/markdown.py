@@ -173,8 +173,13 @@ def write_session_report(paths: Paths, store: ExperimentStore, session_id: str, 
     out_dir = paths.reports / session_id
     out_dir.mkdir(parents=True, exist_ok=True)
     exps = store.list_experiments(limit=10_000, session_id=session_id)
+    from quant_research.research.mandate import Mandate
+
+    mandate = Mandate.model_validate(sess["config"]["mandate"])
     lines = [f"# Research session {session_id}", "", f"- Question: {sess['question']}",
              f"- Dataset `{sess['dataset_id']}`, split `{sess['split_id']}`",
+             f"- Mandate `{mandate.mandate_id()}`: design `{mandate.evaluation_design.model_dump_json()}`, "
+             f"primary metric `{mandate.primary_metric}`, acceptance `{mandate.acceptance.model_dump_json()}`",
              f"- Final state: **{sess['state']}** ({sess['stop_reason']})",
              f"- Budget: `{json.dumps(sess['budget'])}`", f"- Usage: `{json.dumps(sess['usage'])}`",
              _pricing_line(sess),
@@ -182,19 +187,24 @@ def write_session_report(paths: Paths, store: ExperimentStore, session_id: str, 
              f"{store.trial_count(split_id=sess['split_id'])}", ""]
     best = summary.get("best")
     if best:
+        plan_note = ("retrospective: written by the controller after the submission"
+                     if best.get("plan_retrospective") else best.get("plan_status"))
         lines += ["## Best accepted candidate", "", f"- `{best['strategy_ref']}` `{json.dumps(best['parameters'])}`",
+                  f"- candidate `{best.get('candidate_id')}`, plan `{best.get('plan_id')}` ({plan_note})",
                   f"- validation experiment `{best['validation_experiment']}`, sharpe {best['validation_sharpe']:.3f}",
-                  "- Next step (human): `quant freeze-strategy` then `quant holdout-test`; the agent cannot "
-                  "access holdout data.", ""]
+                  f"- Next step (human): `quant candidate freeze {best.get('candidate_id')}` then "
+                  f"`quant holdout-test --candidate {best.get('candidate_id')}`; the agent cannot access holdout "
+                  "data.", ""]
     else:
         lines += ["## Outcome", "", "No candidate met the acceptance criteria. This is a valid research result.", ""]
     candidates = summary.get("candidates", [])
     lines += ["## Candidates", "",
-              "| round | strategy | params | dev sharpe | val sharpe | val DSR | cost drag | labels | verdict | "
-              "reasons |", "|---|---|---|---|---|---|---|---|---|---|"]
+              "| round | strategy | params | plan | dev sharpe | val sharpe | val DSR | cost drag | labels | verdict | "
+              "reasons |", "|---|---|---|---|---|---|---|---|---|---|---|"]
     for c in candidates:
         drag = f"{c['cost_drag']:.1%}" if c.get("cost_drag") is not None else "-"
-        lines.append(f"| {c['round']} | `{c['strategy_ref'][:24]}` | `{json.dumps(c['parameters'])}` | "
+        plan = "retrospective" if c.get("plan_retrospective") else (c.get("plan_status") or "-")
+        lines.append(f"| {c['round']} | `{c['strategy_ref'][:24]}` | `{json.dumps(c['parameters'])}` | {plan} | "
                      f"{_fmt('sharpe', c.get('dev_sharpe'))} | {_fmt('sharpe', c.get('validation_sharpe'))} | "
                      f"{_fmt('dsr', c.get('validation_dsr'))} | {drag} | {', '.join(c.get('labels') or [])} | "
                      f"{c['verdict']} | {'; '.join(c.get('reasons', []))} |")
@@ -206,8 +216,22 @@ def write_session_report(paths: Paths, store: ExperimentStore, session_id: str, 
         lines += ["", "## Failure patterns", ""]
         lines += [f"- `{k}` in {v} candidate(s)" for k, v in sorted(counts.items(), key=lambda kv: -kv[1])]
     statuses: dict[str, int] = {}
+    plan_counts: dict[str, int] = {}
+    sensitivity = 0
     for e in exps:
         statuses[e["status"]] = statuses.get(e["status"], 0) + 1
+        if e["kind"] in ("sensitivity", "walkforward_fold"):
+            sensitivity += e["kind"] == "sensitivity"
+            continue
+        key = e.get("plan_status") or "unplanned"
+        plan_counts[key] = plan_counts.get(key, 0) + 1
+    plans = store.list_plans(session_id)
+    lines += ["", "## Plans", "",
+              f"- {sum(not p['retrospective'] for p in plans)} preregistered plan(s), "
+              f"{sum(bool(p['retrospective']) for p in plans)} retrospective plan(s) written by the controller for "
+              "candidates submitted without one",
+              f"- Experiments by plan status: `{json.dumps(plan_counts)}`",
+              f"- Sensitivity reruns (recorded, not counted as trials): {sensitivity}"]
     lines += ["", f"Experiment outcomes in this session: `{json.dumps(statuses)}` (blocked attempts are not "
               "counted as trials; duplicates reuse an earlier result and are counted)."]
     for r in summary.get("agent_reports", []):

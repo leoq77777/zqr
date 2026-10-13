@@ -56,7 +56,7 @@ def run_robustness(
     sensitivity = {}
     for case in ("costs_x2", "delay_1", "delay_1_adverse"):
         res = run_experiment(paths, store, request.model_copy(
-            update={"engine_config": request.engine_config.sensitivity(case)}), **kw)
+            update={"engine_config": request.engine_config.sensitivity(case)}), **{**kw, "kind": "sensitivity"})
         sensitivity[case] = {"status": res.status, "metrics": res.metrics, "experiment_id": res.experiment_id}
     cost2 = sensitivity["costs_x2"]
 
@@ -77,7 +77,7 @@ def run_robustness(
             continue
         window = (int(chunk[0]), int(chunk[-1]) + 1)
         data = SegmentData(seg.bars[opens < window[1]].reset_index(drop=True), window, f"{request.segment}:sub{i}")
-        res = run_experiment(paths, store, request, data=data, **kw)
+        res = run_experiment(paths, store, request, data=data, **{**kw, "kind": "sensitivity"})
         subs.append({"window": window, "status": res.status,
                      "total_return": res.metrics["total_return"] if res.metrics else None,
                      "sharpe": res.metrics["sharpe"] if res.metrics else None,
