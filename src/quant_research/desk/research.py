@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import time
 import traceback
@@ -23,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from quant_research.bench.adapter import AgentRun
+from quant_research.bench.adapter import MODEL_ENV, AgentRun
 from quant_research.bench.audit import audit_session, recover_session
 from quant_research.bench.egress import GATEWAY_PORT, PROXY_ALIAS, EgressNetwork, cleanup_run, model_endpoint, summarize
 from quant_research.bench.runner import TRANSCRIPT_DIR, _pricing, freeze_submission
@@ -33,6 +34,7 @@ from quant_research.controller.controller import ResearchController, SessionConf
 from quant_research.data.snapshot import load_manifest
 from quant_research.desk.config import DeskConfig, load_check
 from quant_research.desk.promotion import promote
+from quant_research.desk.supervisor import CREDENTIAL_FILE, read_env_file
 from quant_research.experiments.gatekeeper import GateContext
 from quant_research.experiments.runner import ExperimentRequest
 from quant_research.experiments.store import ExperimentStore
@@ -75,6 +77,15 @@ def ledger_path(paths: Paths) -> Path:
 
 def state_path(paths: Paths) -> Path:
     return paths.desk / "research_state.json"
+
+
+def _have_credentials() -> bool:
+    """The research child is the only process allowed model credentials, so it may pick up a key entered after it
+    started (`quant desk setup --rekey`) without a restart."""
+    names = ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY")
+    if not any(os.environ.get(n) for n in names):
+        os.environ.update({k: v for k, v in read_env_file(CREDENTIAL_FILE).items() if k in MODEL_ENV and v})
+    return any(os.environ.get(n) for n in names)
 
 
 def utc_day(ts: float) -> str:
@@ -204,6 +215,9 @@ class ResearchLoop:
             return self._wait("blocked", "no desk mandates; run `quant desk setup`", 600)
         if self.require_check and not load_check(self.paths).get("isolation_ok"):
             return self._wait("blocked", "isolation probe has not passed; run `quant desk check`", 600)
+        if self.require_check and not _have_credentials():
+            return self._wait("blocked", f"no model credential; run `quant desk setup --rekey` ({CREDENTIAL_FILE})",
+                              60)
         resume_at = self.state.get("resume_at") or 0
         if self.state.get("status") in ("paused", "backoff") and now < resume_at:
             return {"ran": False, "status": self.state["status"], "reason": self.state.get("reason"),

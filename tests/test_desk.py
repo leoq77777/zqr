@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -192,14 +193,22 @@ def test_research_session_validates_and_promotes_to_the_roster(paths, store, dat
     assert out2["result"]["verdict"].startswith("resubmission")
 
 
-def test_null_submission_and_missing_check(paths, store, dataset):
+def test_null_submission_missing_check_and_credentials(paths, store, dataset, monkeypatch, tmp_path):
+    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY")}
+    monkeypatch.setattr(os, "environ", env)
+    creds = tmp_path / "desk.env"
+    monkeypatch.setattr(rl, "CREDENTIAL_FILE", creds)
     loop, _ = _loop(paths, store, dataset, FakeAgent(paths, store, "null"))
     assert loop.step()["result"]["verdict"] == "no_candidate"
     loop.require_check = True
     out = loop.step()
     assert not out["ran"] and "desk check" in out["reason"]
     check_path(paths).write_text(json.dumps({"isolation_ok": True}))
+    out = loop.step()
+    assert not out["ran"] and "no model credential" in out["reason"]
+    creds.write_text("ANTHROPIC_AUTH_TOKEN=test-token\nUNRELATED=x\n")
     assert loop.step()["ran"]
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "test-token" and "UNRELATED" not in env
 
 
 def test_environment_failures_pause_with_exponential_backoff(paths, store, dataset):
