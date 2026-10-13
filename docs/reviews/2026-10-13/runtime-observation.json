@@ -1,0 +1,26 @@
+{
+  "observed_at_utc": "2026-10-13T07:27:35.256469+00:00",
+  "observed_at_new_york": "2026-10-13T03:27:35-04:00",
+  "method": "SSH read-only status and sqlite URI mode=ro; no holdout prices or credentials read",
+  "version": "0.1.0-870d7dfd",
+  "reviewed_commit": "a28d9b2a223d6870742d36c9c55ea8179f575a32",
+  "difference_from_runtime_commit": "docs/development.md only",
+  "completed_session_records": 4,
+  "verdicts": {"no_candidate": 4},
+  "failure_classes": {"none": 4},
+  "recorded_model_cost_usd": 0.203596,
+  "experiments_by_status": [["completed", 43]],
+  "candidates_by_state": [],
+  "holdout_viewings": 0,
+  "earlier_status_snapshot": {
+    "fleet_strategies": 16,
+    "stale": "none",
+    "halted": "none",
+    "fleet_errors": "none",
+    "supervisor": "RUNNING",
+    "research": "running",
+    "authorization": "valid",
+    "isolation_check": "OK"
+  },
+  "limitation": "Live state changes during review; this is one observation of the current volume, not a merger with the old 26-session history."
+}
