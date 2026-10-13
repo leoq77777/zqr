@@ -364,7 +364,11 @@ instance).
 - Docker objects: volumes `zqr-data` (all research data) and `zqr-secrets` (`desk.env`), network `zqr-control`.
 - `zqr` inside WSL: `~/.local/bin/zqr`, linked as `/usr/local/bin/zqr`. Windows: `%LOCALAPPDATA%\ZQR\bin\zqr.cmd`
   on the user PATH.
-- Sleep and hibernate timeouts on AC power are 0.
+- Sleep and hibernate timeouts on AC power are 0. `powercfg /hibernate off` is not applied yet (needs an
+  elevated shell: re-run `setup.ps1` as administrator).
+- The pre-container installation (source checkout, `var/` with its research history from the first deployment
+  day) is archived at `~/Quant-legacy` inside WSL; the release deployment started with fresh data and mandates
+  on 2026-10-13.
 - Fresh machine: `scripts/windows/setup.ps1` (Docker check, power settings, `zqr.cmd`), then from the Mac
   `zqr release`, then on the host `zqr secrets set` (or pipe them with `zqr secrets import`), `zqr setup --yes`,
   `zqr desk check`, `zqr up`.
