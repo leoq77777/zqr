@@ -62,3 +62,28 @@ def test_report_without_any_activity(tmp_path):
     text = write_daily_report(paths, store, day).read_text()
     assert "no paper strategies" in text and "Sessions: 0" in text
     store.close()
+
+
+def test_report_day_return_comes_from_marks(tmp_path):
+    from quant_research.desk import promotion
+    from quant_research.desk.report import paper_section
+    from quant_research.paper.fleet import Roster, RosterEntry, save_roster
+    from quant_research.paper.runner import run_replay
+    from quant_research.paths import get_paths
+    from quant_research.portfolio.policy import PortfolioPolicy
+    from tests.conftest import T0
+    from tests.test_paper import PRODUCT, _bars, _cfg
+
+    paths = get_paths(tmp_path / "home")
+    policy = PortfolioPolicy(rebalance_every=24)
+    entry = RosterEntry(name="btc-sma", product="BTC-USD", strategy_ref="template:sma_cross",
+                        parameters={"fast": 5, "slow": 20}, policy=policy)
+    save_roster(promotion.roster_path(paths), Roster(fee_rate=0.001, slippage_bps=2, entries=[entry]))
+    trader = run_replay(_cfg(name="btc-sma", policy=policy), _bars(72), paths.paper / "btc-sma", PRODUCT)
+    marks = trader.ledger.marks()
+    trader.ledger.close()
+    lines, summary = paper_section(paths, "2024-01-02")
+    start = marks[marks["at"] <= T0 + 24 * HOUR].iloc[-1]
+    end = marks[marks["at"] <= T0 + 48 * HOUR].iloc[-1]
+    assert summary["strategies"] == 1
+    assert f"{end['equity'] / start['equity'] - 1:+.2%}" in "\n".join(lines)

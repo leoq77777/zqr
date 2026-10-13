@@ -20,7 +20,7 @@ from quant_research.desk.config import load_config
 from quant_research.desk.promotion import roster_path
 from quant_research.desk.supervisor import state_file
 from quant_research.experiments.store import ExperimentStore
-from quant_research.paper.fleet import RosterEntry, load_roster
+from quant_research.paper.fleet import Roster, RosterEntry, entry_costs, load_roster
 from quant_research.paper.ledger import Ledger
 from quant_research.paper.trader import target_fraction
 from quant_research.paths import Paths
@@ -66,20 +66,18 @@ def parity(entry: RosterEntry, ledger: Ledger, decisions: list[dict[str, Any]], 
 def paper_section(paths: Paths, day: str) -> tuple[list[str], dict[str, Any]]:
     t0, t1 = _window(day)
     rp = roster_path(paths)
-    entries = {e.name: e for e in load_roster(rp).entries} if rp.exists() else {}
+    roster = load_roster(rp) if rp.exists() else Roster()
     rows, details, summary = [], [], {"strategies": 0, "parity_mismatches": 0, "alerts": 0}
-    for name, entry in sorted(entries.items()):
+    for entry in sorted(roster.entries, key=lambda e: e.name):
+        name = entry.name
         db = paths.paper / name / "paper.db"
         if not db.exists():
             continue
         ledger = Ledger(db)
         try:
+            marks = ledger.marks()
             all_dec = ledger.decisions()
             day_dec = [d for d in all_dec if t0 <= d["at"] < t1]
-            before = [d for d in all_dec if d["at"] < t0 and d.get("equity")]
-            priced = [d for d in all_dec if d.get("equity") and d["at"] < t1]
-            start = before[-1] if before else next((d for d in day_dec if d.get("equity")), None)
-            end = next((d for d in reversed(day_dec) if d.get("equity")), None)
             fills = [f for f in ledger.fills() if t0 <= f.ts < t1]
             par = parity(entry, ledger, day_dec, paths)
         finally:
@@ -95,22 +93,26 @@ def paper_section(paths: Paths, day: str) -> tuple[list[str], dict[str, Any]]:
                 if t0 <= ev.get("ts", 0) < t1 and ev.get("level") in ("WARN", "ALERT"):
                     alerts[ev["event"]] += 1
         day_ret = bh_ret = total_ret = bh_total = None
-        if start and end:
-            day_ret = float(end["equity"]) / float(start["equity"]) - 1
-            bh_ret = float(end["price"]) / float(start["price"]) - 1
-        if end:
-            total_ret = float(end["equity"]) / entry.initial_cash - 1
-            if priced:
-                bh_total = float(end["price"]) / float(priced[0]["price"]) - 1
+        upto = marks[marks["at"] <= t1]
+        end = upto.iloc[-1] if len(upto) and upto.iloc[-1]["at"] > t0 else None
+        if end is not None:
+            before = marks[marks["at"] <= t0]
+            start = before.iloc[-1] if len(before) else marks[marks["at"] > t0].iloc[0]
+            fee, slip, _ = entry_costs(entry, roster)
+            day_ret = end["equity"] / start["equity"] - 1
+            bh_ret = end["price"] / start["price"] - 1
+            total_ret = end["equity"] / entry.initial_cash - 1
+            p0 = float(all_dec[0]["price"]) if all_dec else marks.iloc[0]["price"]
+            bh_total = end["price"] / (p0 * (1 + slip / 10_000) * (1 + fee)) - 1
         fees = sum(float(f.fee) for f in fills)
         summary["strategies"] += 1
         summary["parity_mismatches"] += len(par["mismatches"])
         summary["alerts"] += sum(alerts.values())
         rows.append(f"| {name} | {entry.strategy_ref.split(':')[-1][:16]} | {entry.product} | "
-                    f"{float(end['equity']):,.2f} | {_pct(day_ret)} | {_pct(bh_ret)} | {_pct(total_ret)} | "
+                    f"{end['equity']:,.2f} | {_pct(day_ret)} | {_pct(bh_ret)} | {_pct(total_ret)} | "
                     f"{_pct(bh_total)} | {len(fills)} | {fees:.2f} | {sum(alerts.values())} | "
                     f"{par['checked'] - len(par['mismatches'])}/{par['checked']} |"
-                    if end else
+                    if end is not None else
                     f"| {name} | {entry.strategy_ref.split(':')[-1][:16]} | {entry.product} | - | - | - | - | - | "
                     f"{len(fills)} | {fees:.2f} | {sum(alerts.values())} | {par['checked']} |")
         if alerts or par["mismatches"] or not entry.enabled:
@@ -118,8 +120,8 @@ def paper_section(paths: Paths, day: str) -> tuple[list[str], dict[str, Any]]:
                            + ", ".join(f"{k}×{v}" for k, v in alerts.items())
                            + "".join(f"\n  - parity: {m}" for m in par["mismatches"][:5]))
     lines = ["## Paper fleet", "",
-             "Simulated fills at the mid price plus slippage and fees on live Coinbase public data. Day return and "
-             "buy & hold use the same decision bars; totals run from each strategy's first decision.", "",
+             "Simulated fills at the mid price plus slippage and fees on live Coinbase public data. Returns use "
+             "the equity marked at every bar close; total buy & hold includes the entry fee and slippage.", "",
              "| strategy | rule | product | equity | day | day B&H | total | total B&H | fills | fees | alerts | "
              "parity |", "|---|---|---|---|---|---|---|---|---|---|---|---|", *rows]
     if not rows:

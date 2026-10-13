@@ -242,7 +242,13 @@ class PaperTrader:
         self.ledger.record_bar(bar)
         self.ledger.put("last_bar_open", str(bar["bar_open_time"]))
         self.ledger.put("last_data_time", _close_epoch(bar))
+        self._mark(bar, D(bar["close"]))
         return True
+
+    def _mark(self, bar: dict[str, Any], price: Decimal) -> None:
+        b = self.balances()
+        self.ledger.record_mark(str(bar["bar_open_time"]), _close_epoch(bar), price,
+                                b[self.product.base_currency], b[self.product.quote_currency])
 
     def on_bar(self, bar: dict[str, Any]) -> dict[str, Any] | None:
         """Handle one completed bar: resolve orders, reconcile, decide, risk-check, send."""
@@ -259,6 +265,7 @@ class PaperTrader:
         self.last_price = close
         self.resolve_orders()
         self.reconcile()
+        self._mark(bar, close)
 
         fraction = target_fraction(self.spec, self.cfg.policy, self.history, self.cfg.granularity, self.paths,
                                    self.cfg.sandbox)

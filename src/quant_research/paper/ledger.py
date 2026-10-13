@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS decisions (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL, data TEXT);
 CREATE TABLE IF NOT EXISTS bars (bar_open TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS marks (bar_open TEXT PRIMARY KEY, at REAL, price TEXT, base TEXT, quote TEXT,
+                                  equity TEXT);
 """
 TIME_COLUMNS = ("bar_open_time", "bar_close_time", "available_at")
 
@@ -130,4 +132,17 @@ class Ledger:
         for col in TIME_COLUMNS:
             if col in df:
                 df[col] = pd.to_datetime(df[col], utc=True)
+        return df
+
+    def record_mark(self, bar_open: str, at: float, price: Decimal, base: Decimal, quote: Decimal) -> None:
+        """Mark-to-market at a bar's close, whether or not the trader rebalanced."""
+        self._conn.execute("INSERT OR REPLACE INTO marks VALUES (?,?,?,?,?,?)",
+                           (bar_open, at, str(price), str(base), str(quote), str(quote + base * price)))
+
+    def marks(self) -> pd.DataFrame:
+        df = pd.DataFrame(self._conn.execute("SELECT bar_open, at, price, base, quote, equity FROM marks "
+                                             "ORDER BY at").fetchall(),
+                          columns=["bar_open", "at", "price", "base", "quote", "equity"])
+        for col in ("price", "base", "quote", "equity"):
+            df[col] = df[col].astype(float)
         return df

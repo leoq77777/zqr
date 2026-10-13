@@ -214,3 +214,12 @@ def test_an_old_bar_fetched_now_is_stale(tmp_path):
     assert not record["decision"]["approved"] and record["intent"] is None
     health = trader.write_health()
     assert health["data_age_seconds"] == 4 * HOUR and health["stale"]
+
+
+def test_every_bar_is_marked_even_without_a_rebalance(tmp_path):
+    bars = _bars(60)
+    trader = run_replay(_cfg(policy=PortfolioPolicy(rebalance_every=24)), bars, tmp_path / "m", PRODUCT)
+    marks = trader.ledger.marks()
+    assert len(marks) == len(bars) and len(trader.ledger.decisions()) < len(bars)
+    final_close = Decimal(str(bars["close"].iloc[-1]))
+    assert marks.iloc[-1]["equity"] == pytest.approx(float(trader.equity(final_close)))
