@@ -48,6 +48,10 @@ def target_fraction(spec: StrategySpec, policy: PortfolioPolicy, history: pd.Dat
     return None if pd.isna(targets[-1]) else float(targets[-1])
 
 
+def _close_epoch(bar: dict[str, Any]) -> float:
+    return float(to_epoch(pd.Series([bar["bar_close_time"]]))[0])
+
+
 class PaperConfig(BaseModel):
     name: str
     instrument: str
@@ -113,7 +117,8 @@ class PaperTrader:
         stale = last_avail is None or now - last_avail > self.cfg.risk.stale_after_seconds
         health = {
             "ts": now, "name": self.cfg.name, "last_bar_open": self.ledger.get("last_bar_open"),
-            "data_age_seconds": None if last_avail is None else now - last_avail, "stale": stale,
+            "data_age_seconds": None if last_avail is None else now - last_avail,
+            "last_seen": self.ledger.get("last_seen_time"), "stale": stale,
             "halted_reason": self.halted_reason, "kill_switch": self.risk.kill_switch_on(),
             "live_orders": len(self.live_orders()),
             "unknown_orders": sum(o.state == OrderState.UNKNOWN for o in self.orders.values()),
@@ -215,9 +220,9 @@ class PaperTrader:
             if self.cfg.history_bars:
                 self.history = self.history.tail(self.cfg.history_bars).reset_index(drop=True)
             self.ledger.record_bars(new)
-        avail = float(to_epoch(bars["available_at"])[-1])
-        if avail > (self.ledger.get("last_data_time") or 0):
-            self.ledger.put("last_data_time", avail)
+        close = float(to_epoch(bars["bar_close_time"])[-1])
+        if close > (self.ledger.get("last_data_time") or 0):
+            self.ledger.put("last_data_time", close)
 
     def ingest(self, bar: dict[str, Any]) -> bool:
         """Add a bar without deciding: catch-up bars after an outage rebuild state but never trade."""
@@ -225,6 +230,7 @@ class PaperTrader:
             return False
         self.ledger.record_bar(bar)
         self.ledger.put("last_bar_open", str(bar["bar_open_time"]))
+        self.ledger.put("last_data_time", _close_epoch(bar))
         return True
 
     def on_bar(self, bar: dict[str, Any]) -> dict[str, Any] | None:
@@ -236,7 +242,8 @@ class PaperTrader:
         now = self.clock()
         avail = to_epoch(pd.Series([bar["available_at"]]))[0]
         self.ledger.put("last_bar_open", str(bar["bar_open_time"]))
-        self.ledger.put("last_data_time", float(avail))
+        self.ledger.put("last_data_time", _close_epoch(bar))
+        self.ledger.put("last_seen_time", float(avail))
         close = D(bar["close"])
         self.last_price = close
         self.resolve_orders()
@@ -255,8 +262,8 @@ class PaperTrader:
         if self.ledger.get("day") != day:
             self.ledger.put("day", day)
             self.ledger.put("day_start_equity", str(equity))
-        ctx = RiskContext(now=now, last_data_time=float(avail), equity=float(equity), current_fraction=current_frac,
-                          day_start_equity=float(self.ledger.get("day_start_equity")),
+        ctx = RiskContext(now=now, last_data_time=_close_epoch(bar), equity=float(equity),
+                          current_fraction=current_frac, day_start_equity=float(self.ledger.get("day_start_equity")),
                           live_orders=len(self.live_orders()), orders_last_hour=self.ledger.orders_since(now - 3600),
                           halted_reason=self.halted_reason)
         decision = self.risk.evaluate(target, ctx)

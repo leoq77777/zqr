@@ -1,4 +1,5 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from quant_research.backtest.engine import CostConfig, EngineConfig, run_backtest
 from quant_research.data.validate import validate_bars
 from quant_research.paper.broker import SimulatedBroker
+from quant_research.paper.feeds import CoinbaseCandlePoller
 from quant_research.paper.models import BrokerEvent, BrokerEventType, OrderIntent, ProductSpec, Side
 from quant_research.paper.orders import Order, OrderError, OrderState
 from quant_research.paper.risk import RiskLimits
@@ -178,3 +180,20 @@ def test_breakout_position_survives_long_history_and_restart(tmp_path):
     t2.warm_up(bars)
     assert len(t2.history) == 4000
     assert target_fraction(t2.spec, cfg.policy, t2.history, cfg.granularity) == 1.0
+
+
+def test_an_old_bar_fetched_now_is_stale(tmp_path):
+    now = T0 + 10 * HOUR
+
+    class OldCandles:
+        def candles(self, *_):
+            return SimpleNamespace(body={"candles": [{"start": now - 5 * HOUR, "open": 100, "high": 100,
+                                                      "low": 100, "close": 100, "volume": 10}]})
+
+    bar = CoinbaseCandlePoller(OldCandles(), "BTC-USD", "ONE_HOUR", clock=lambda: now).poll()[0]
+    trader = make_trader(_cfg(strategy_ref="template:buy_and_hold", parameters={}), tmp_path / "stale", PRODUCT,
+                         clock=lambda: now)
+    record = trader.on_bar(bar)
+    assert not record["decision"]["approved"] and record["intent"] is None
+    health = trader.write_health()
+    assert health["data_age_seconds"] == 4 * HOUR and health["stale"]
