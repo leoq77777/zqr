@@ -1,11 +1,11 @@
 """Desk supervisor: keeps the paper fleet and the research loop running as child processes.
 
 - Children restart with exponential backoff (reset after a long healthy run).
-- Only the research child gets model credentials (`~/.config/quant/desk.env` plus the supervisor's own
+- Only the research child gets model credentials (the credentials file, `ZQR_CREDENTIALS`, plus the supervisor's own
   environment); the fleet child's environment has every model variable removed.
 - The daily report is written once per UTC day after the configured time.
 - SIGTERM/SIGINT: stop research first (its running session is ended and recorded), then the fleet.
-- `desk/state.json` holds pids, restarts and last errors for `quant desk status`.
+- `desk/state.json` holds pids, restarts and last errors for `zqr desk status`.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 HEALTHY_AFTER_S = 600
 STOP_ORDER = ("research", "fleet")
 STOP_GRACE = {"research": 180.0, "fleet": 30.0}
-CREDENTIAL_FILE = Path.home() / ".config" / "quant" / "desk.env"
+CREDENTIAL_FILE = Path(os.environ.get("ZQR_CREDENTIALS") or Path.home() / ".config" / "zqr" / "desk.env")
 
 
 def state_file(paths: Paths) -> Path:

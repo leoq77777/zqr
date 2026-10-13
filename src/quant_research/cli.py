@@ -311,7 +311,7 @@ def cmd_mandate_template(args) -> None:
         budget=Budget(max_rounds=5, max_candidates=20, max_experiments=300, max_wall_seconds=4 * 3600,
                       max_trials_per_strategy=50),
         holdout=HoldoutPolicy(max_viewings=1, min_primary=0.0, min_total_return=0.0),
-        notes="TEMPLATE: review every threshold before `quant mandate create`",
+        notes="TEMPLATE: review every threshold before `zqr mandate create`",
     )
     _out(tmpl.model_dump(mode="json"))
 
@@ -738,8 +738,8 @@ def _add_data_range(p) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="quant", description=__doc__)
-    ap.add_argument("--home", help="runtime directory (default $QUANT_HOME or ./var)")
+    ap = argparse.ArgumentParser(prog="zqr", description=__doc__)
+    ap.add_argument("--home", help="runtime directory (default $ZQR_HOME or ./var)")
     ap.add_argument("--rps", type=float, default=5.0, help="shared request rate limit for public APIs")
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -955,7 +955,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--name", required=True)
     p.set_defaults(fn=cmd_paper_status)
     p = paper.add_parser("fleet", help="run every enabled roster strategy in one process (hot-reloads the roster)")
-    p.add_argument("--roster", help="default: QUANT_HOME/desk/roster.json (created from presets if missing)")
+    p.add_argument("--roster", help="default: ZQR_HOME/desk/roster.json (created from presets if missing)")
     p.add_argument("--poll-seconds", type=float, default=30)
     p.add_argument("--max-iterations", type=int)
     p.set_defaults(fn=cmd_paper_fleet)
@@ -963,6 +963,10 @@ def build_parser() -> argparse.ArgumentParser:
     from quant_research.desk.commands import register as register_desk
 
     register_desk(sub)
+
+    from quant_research.release import register as register_release
+
+    register_release(sub)
 
     p = sub.add_parser("observe-ws", help="observe Coinbase WebSocket heartbeats/disconnects")
     p.add_argument("--products", default="BTC-USD,ETH-USD")

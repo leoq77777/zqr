@@ -16,13 +16,14 @@ from pathlib import Path
 
 from quant_research.hashing import sha256_file
 from quant_research.paths import Paths
+from quant_research.runtime import lockfile
 from quant_research.strategy.spec import StrategyError
 
 ENTRYPOINTS = ("generate_exposures", "target_positions", "generate_targets")
 
 
 def environment_lock() -> dict[str, str | None]:
-    lock = Path(__file__).resolve().parents[3] / "uv.lock"
+    lock = lockfile()
     versions = {}
     for pkg in ("numpy", "pandas", "pyarrow"):
         try:

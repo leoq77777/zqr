@@ -141,7 +141,7 @@ def test_command_runner_scrubs_secrets(paths, store, dataset, monkeypatch):
         "import json, os, pathlib; d = pathlib.Path('.');"
         "json.dump({'candidates': [], 'done': True, 'report': json.dumps("
         "{'secret': os.environ.get('EXCHANGE_API_SECRET'), 'agent': os.environ.get('AGENT_API_KEY'),"
-        " 'session': os.environ.get('QUANT_SESSION')})}, open(d / 'submission.json', 'w'))"
+        " 'session': os.environ.get('ZQR_SESSION')})}, open(d / 'submission.json', 'w'))"
     )
     import sys
 

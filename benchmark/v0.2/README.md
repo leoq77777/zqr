@@ -37,15 +37,14 @@ model ranking and not evidence of profitability.
 ## Running
 
 ```bash
-docker build -f Dockerfile.sandbox -t quant-research-sandbox:latest .
-docker build -f Dockerfile.agent -t quant-research-agent:latest .
-quant --home var/bench bench prepare --task B02          # workspace only, no model call
-quant --home var/bench bench run --task B02              # one run; model settings from the environment
-quant --home var/bench bench run --task B02 --fault sandbox_crash     # fault injection (repeatable flag)
-quant --home var/bench bench screen --tasks B02,B03,B05,B07 --repeats 3 --max-cost 3
-quant --home var/bench bench grade --run <run_id>     # regrade the frozen submission; must match result.json
-quant --home var/bench bench recover                  # finalise runs whose harness process died
-quant --home var/bench bench ledger --repeats         # ledger.csv/md + repeat analysis over all v0.2 runs
+docker build -t zqr:dev . && docker build -f Dockerfile.agent -t zqr-agent:dev .   # development checkout only
+zqr --home var/bench bench prepare --task B02          # workspace only, no model call
+zqr --home var/bench bench run --task B02              # one run; model settings from the environment
+zqr --home var/bench bench run --task B02 --fault sandbox_crash     # fault injection (repeatable flag)
+zqr --home var/bench bench screen --tasks B02,B03,B05,B07 --repeats 3 --max-cost 3
+zqr --home var/bench bench grade --run <run_id>     # regrade the frozen submission; must match result.json
+zqr --home var/bench bench recover                  # finalise runs whose harness process died
+zqr --home var/bench bench ledger --repeats         # ledger.csv/md + repeat analysis over all v0.2 runs
 ```
 
 Each run writes `bench_runs/<run_id>/` with `run.json`, `result.json` (`benchmark/v0.2/result.schema.json`),

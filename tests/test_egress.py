@@ -1,8 +1,8 @@
 """The agent container cannot reach anything except the model host (through the proxy) and the tool gateway.
 
 Parametrized over every gateway network mode available on this machine (Docker Desktop alias, eth0, docker0);
-`quant desk check` runs the same probe and the research loop only starts when one mode passes.
-Needs Docker and the agent/sandbox images; the allowed-tunnel case also needs internet access.
+`zqr desk check` runs the same probe and the research loop only starts when one mode passes.
+Needs Docker and the agent/runtime images; the allowed-tunnel case also needs internet access.
 """
 
 import json
@@ -11,15 +11,16 @@ import subprocess
 
 import pytest
 
-from quant_research.bench.adapter import AGENT_IMAGE
 from quant_research.bench.isolation import candidate_networks, run_probe
+from quant_research.runtime import agent_image, runtime_image
 from tests.test_mcp_gateway import _session
 
 
 def _docker_ready() -> bool:
     if not shutil.which("docker"):
         return False
-    ok = subprocess.run(["docker", "image", "inspect", AGENT_IMAGE], capture_output=True).returncode == 0
+    ok = all(subprocess.run(["docker", "image", "inspect", i], capture_output=True).returncode == 0
+             for i in (agent_image(), runtime_image()))
     return ok and subprocess.run(["docker", "info"], capture_output=True).returncode == 0
 
 

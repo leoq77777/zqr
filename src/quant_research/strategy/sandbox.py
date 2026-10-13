@@ -13,7 +13,6 @@ import json
 import shutil
 import subprocess
 import sys
-import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Literal
@@ -22,7 +21,9 @@ import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field
 
-PACKAGE_SRC = Path(__file__).resolve().parents[2]
+from quant_research.runtime import mount, runtime_image, scratch_dir
+
+SANDBOX_USER = "10001:10001"
 
 
 class SandboxConfig(BaseModel):
@@ -30,7 +31,7 @@ class SandboxConfig(BaseModel):
     cpu_seconds: int = 120
     memory_mb: int = 4096
     wall_seconds: int = 300
-    docker_image: str = "quant-research-sandbox:latest"
+    docker_image: str | None = None  # default: the release image, which carries the worker of this version
     run_label: str | None = Field(None, exclude=True)  # runtime only: lets a crashed harness's containers be found
 
 
@@ -60,10 +61,9 @@ def _command(cfg: SandboxConfig, workdir: Path, name: str) -> tuple[list[str], d
             *(["--label", f"quant-research.run={cfg.run_label}"] if cfg.run_label else []),
             "--network", "none", "--read-only", "--pids-limit", "256",
             "--memory", f"{cfg.memory_mb}m", "--cpus", "1", "--tmpfs", "/tmp:size=256m",
-            "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-            "-v", f"{workdir}:/work", "-v", f"{PACKAGE_SRC}:/app/src:ro",
-            "-e", "PYTHONPATH=/app/src", "-e", "PYTHONDONTWRITEBYTECODE=1",
-            cfg.docker_image, "python", "-m", "quant_research.strategy.worker", "/work",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", SANDBOX_USER,
+            *mount(workdir, "/work"), "-e", "PYTHONDONTWRITEBYTECODE=1", "--entrypoint", "python",
+            cfg.docker_image or runtime_image(), "-m", "quant_research.strategy.worker", "/work",
         ]
         return cmd, {"PATH": "/usr/local/bin:/usr/bin:/bin"}
     env = {"PATH": "/usr/bin:/bin", "HOME": str(workdir), "PYTHONHASHSEED": "0",
@@ -79,8 +79,7 @@ def run_plugin(
     prefix_lengths: list[int] | None = None,
 ) -> tuple[np.ndarray, dict[int, float], str]:
     """Returns (values, prefix values, contract) where contract is `exposures` or `legacy_targets`."""
-    with tempfile.TemporaryDirectory(prefix="qr-sandbox-") as tmp:
-        workdir = Path(tmp)
+    with scratch_dir("qr-sandbox-") as workdir:
         shutil.copyfile(code_path, workdir / "strategy.py")
         bars.to_parquet(workdir / "bars.parquet", index=False)
         (workdir / "request.json").write_text(json.dumps({"parameters": params,

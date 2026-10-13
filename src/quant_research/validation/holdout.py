@@ -34,7 +34,7 @@ def run_holdout(
     """Returns the result and how many holdout runs had already been made on this split."""
     spec = request.spec.normalized()
     if not store.is_frozen(spec.candidate_hash()):
-        raise HoldoutError("candidate is not frozen; run `quant freeze-strategy` before the holdout test")
+        raise HoldoutError("candidate is not frozen; run `zqr freeze-strategy` before the holdout test")
     data = load_holdout_data(paths, request.split_id)
     result = run_experiment(paths, store, request.model_copy(update={"parameters": spec.parameters}),
                             kind="holdout", data=data, sandbox=sandbox, gate=GateContext(caller="holdout"))

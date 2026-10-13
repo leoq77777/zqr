@@ -32,7 +32,7 @@ from quant_research.bench.tasks import CONTRACT_V02, benchmark_dir
 from quant_research.controller.agent import ManualRunner, usage_from_transcripts
 from quant_research.controller.controller import ResearchController, SessionConfig, SessionState
 from quant_research.data.snapshot import load_manifest
-from quant_research.desk.config import DeskConfig, load_check
+from quant_research.desk.config import DeskConfig, effective_network, load_check
 from quant_research.desk.promotion import promote
 from quant_research.desk.supervisor import CREDENTIAL_FILE, read_env_file
 from quant_research.experiments.gatekeeper import GateContext
@@ -45,6 +45,7 @@ from quant_research.research.evaluate import evaluate_candidate
 from quant_research.research.mandate import Mandate
 from quant_research.research.plans import ResearchPlan
 from quant_research.research.registry import candidate_identity, register_candidate, transition
+from quant_research.runtime import version
 from quant_research.strategy.sandbox import SandboxConfig
 from quant_research.strategy.spec import StrategySpec
 
@@ -81,7 +82,7 @@ def state_path(paths: Paths) -> Path:
 
 def _have_credentials() -> bool:
     """The research child is the only process allowed model credentials, so it may pick up a key entered after it
-    started (`quant desk setup --rekey`) without a restart."""
+    started (`zqr desk setup --rekey`) without a restart."""
     names = ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY")
     if not any(os.environ.get(n) for n in names):
         os.environ.update({k: v for k, v in read_env_file(CREDENTIAL_FILE).items() if k in MODEL_ENV and v})
@@ -212,12 +213,11 @@ class ResearchLoop:
         if not self.cfg.research_enabled:
             return self._wait("disabled", "research_enabled is false in desk/config.json", 600)
         if not [p for p in self.cfg.products if p in self.cfg.mandates]:
-            return self._wait("blocked", "no desk mandates; run `quant desk setup`", 600)
+            return self._wait("blocked", "no desk mandates; run `zqr desk setup`", 600)
         if self.require_check and not load_check(self.paths).get("isolation_ok"):
-            return self._wait("blocked", "isolation probe has not passed; run `quant desk check`", 600)
+            return self._wait("blocked", "isolation probe has not passed; run `zqr desk check`", 600)
         if self.require_check and not _have_credentials():
-            return self._wait("blocked", f"no model credential; run `quant desk setup --rekey` ({CREDENTIAL_FILE})",
-                              60)
+            return self._wait("blocked", f"no model credential; run `zqr secrets set` ({CREDENTIAL_FILE})", 60)
         resume_at = self.state.get("resume_at") or 0
         if self.state.get("status") in ("paused", "backoff") and now < resume_at:
             return {"ran": False, "status": self.state["status"], "reason": self.state.get("reason"),
@@ -299,14 +299,14 @@ class ResearchLoop:
         allow = [model_endpoint()]
         run: AgentRun | None = None
         harness_error, egress_records = None, []
-        net_cfg = self.cfg.network
+        net_cfg = effective_network(self.cfg)
         try:
             self.store.update_session(sid, state=SessionState.RUNNING)
             with GatewayHTTPServer(self.paths, self.store, sid, host=net_cfg.gateway_bind,
                                    extra_hosts=(f"{PROXY_ALIAS}:{GATEWAY_PORT}",), run_label=run_id) as srv:
                 if self.isolate_network:
-                    with EgressNetwork(run_dir, allow, srv.port, label=run_id,
-                                       forward_host=net_cfg.forward_host) as net:
+                    with EgressNetwork(run_dir, allow, srv.port, label=run_id, forward_host=net_cfg.forward_host,
+                                       control_network=net_cfg.control_network) as net:
                         run = self.adapter.run(ws, srv.client_config(url=net.gateway_url()),
                                                self.cfg.session_wall_seconds, network=net, label=run_id,
                                                transcript_dir=run_dir / TRANSCRIPT_DIR)
@@ -365,6 +365,8 @@ class ResearchLoop:
             "status": "ok" if failure == "none" else "failed", "failure_class": failure,
             "failure_details": [str(d) for d in details if d][:5],
             "cost_usd": cost, "cost_source": cost_source, "usage": u.model_dump() if u else None,
+            "zqr_version": version(), "harness": run.harness_version if run else None,
+            "model": (", ".join(run.extra.get("models") or []) if run else None) or (u.model if u else None),
             "experiments": sum(e["status"] != "blocked" for e in exps
                                if e["kind"] not in ("sensitivity",) and e["segment"] == "dev"),
             "audit_ok": audit["ok"], "audit_problems": audit["problems"], "violations": violations,
@@ -374,7 +376,8 @@ class ResearchLoop:
         with open(ledger_path(self.paths), "a") as f:
             f.write(json.dumps({k: result.get(k) for k in (
                 "run_id", "day", "product", "topic", "status", "failure_class", "cost_usd", "cost_source",
-                "experiments", "audit_ok", "verdict", "candidate_id", "session_id")}
+                "experiments", "audit_ok", "verdict", "candidate_id", "session_id", "zqr_version", "harness",
+                "model")}
                 | {"violations": len(violations),
                    "promotion": (result.get("promotion") or {}).get("stopped")}, default=str) + "\n")
         self.state = _save_state(self.paths, self.state, current_run=None, last_run_id=meta["run_id"])

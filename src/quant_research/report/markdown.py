@@ -192,8 +192,8 @@ def write_session_report(paths: Paths, store: ExperimentStore, session_id: str, 
         lines += ["## Best accepted candidate", "", f"- `{best['strategy_ref']}` `{json.dumps(best['parameters'])}`",
                   f"- candidate `{best.get('candidate_id')}`, plan `{best.get('plan_id')}` ({plan_note})",
                   f"- validation experiment `{best['validation_experiment']}`, sharpe {best['validation_sharpe']:.3f}",
-                  f"- Next step (human): `quant candidate freeze {best.get('candidate_id')}` then "
-                  f"`quant holdout-test --candidate {best.get('candidate_id')}`; the agent cannot access holdout "
+                  f"- Next step (human): `zqr candidate freeze {best.get('candidate_id')}` then "
+                  f"`zqr holdout-test --candidate {best.get('candidate_id')}`; the agent cannot access holdout "
                   "data.", ""]
     else:
         lines += ["## Outcome", "", "No candidate met the acceptance criteria. This is a valid research result.", ""]

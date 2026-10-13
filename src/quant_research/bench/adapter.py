@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -17,8 +16,8 @@ from typing import Any
 
 from quant_research.bench.egress import EgressNetwork
 from quant_research.controller.agent import TokenUsage, usage_from_output, usage_from_transcripts
+from quant_research.runtime import AGENT_UID, agent_image, hand_over, mount, scratch_dir
 
-AGENT_IMAGE = "quant-research-agent:latest"
 MODEL_ENV = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
              "ANTHROPIC_SMALL_FAST_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
              "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL", "API_TIMEOUT_MS"]
@@ -49,9 +48,10 @@ class AgentRun:
 class ClaudeContainerAdapter:
     name = "claude_code_container"
 
-    def __init__(self, image: str = AGENT_IMAGE, model: str | None = None, memory: str = "2g", cpus: str = "2",
+    def __init__(self, image: str | None = None, model: str | None = None, memory: str = "2g", cpus: str = "2",
                  prompt: str = PROMPT):
-        self.image, self.model, self.memory, self.cpus, self.prompt = image, model, memory, cpus, prompt
+        self.image, self.model, self.memory, self.cpus, self.prompt = image or agent_image(), model, memory, cpus, \
+            prompt
         self._version: str | None = None
 
     def image_digest(self) -> str | None:
@@ -66,15 +66,16 @@ class ClaudeContainerAdapter:
             self._version = f"claude-code {out.stdout.strip().split()[0] if out.stdout.strip() else 'unknown'}"
         return self._version
 
-    def command(self, name: str, workspace: Path, mcp_file: Path, network: EgressNetwork | None = None,
+    def command(self, name: str, workspace: Path, mcp_dir: Path, network: EgressNetwork | None = None,
                 label: str | None = None, transcript_dir: Path | None = None) -> list[str]:
+        """`mcp_dir` holds `mcp.json` (a directory, because data-volume sub-paths cannot be single files)."""
         cmd = ["docker", "run", "--rm", "--name", name, "--init", "--label", f"quant-research.run={label or name}",
                "--memory", self.memory, "--cpus", self.cpus, "--pids-limit", "512",
                "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
                "--tmpfs", "/tmp:size=256m", "--tmpfs", "/home/node:size=256m,uid=1000,gid=1000",
-               "-v", f"{workspace.resolve()}:/workspace", "-v", f"{mcp_file}:/etc/quant/mcp.json:ro"]
+               *mount(workspace, "/workspace"), *mount(mcp_dir, "/etc/quant", readonly=True)]
         if transcript_dir is not None:
-            cmd += ["-v", f"{transcript_dir.resolve()}:/home/node/.claude/projects"]
+            cmd += mount(transcript_dir, "/home/node/.claude/projects")
         if network is None:
             cmd += ["--add-host", "host.docker.internal:host-gateway"]
         else:
@@ -96,14 +97,14 @@ class ClaudeContainerAdapter:
         if transcript_dir is not None:
             transcript_dir.mkdir(parents=True, exist_ok=True)
             transcript_dir.chmod(0o777)
-        with tempfile.TemporaryDirectory(prefix="qr-mcp-") as tmp:
-            mcp_file = Path(tmp) / "mcp.json"
-            mcp_file.write_text(json.dumps(mcp_config))
-            mcp_file.chmod(0o644)
+        hand_over(workspace, AGENT_UID)
+        with scratch_dir("qr-mcp-") as mcp_dir:
+            (mcp_dir / "mcp.json").write_text(json.dumps(mcp_config))
+            (mcp_dir / "mcp.json").chmod(0o644)
             t0 = time.time()
             timed_out = False
             try:
-                proc = subprocess.run(self.command(name, workspace, mcp_file, network, label, transcript_dir),
+                proc = subprocess.run(self.command(name, workspace, mcp_dir, network, label, transcript_dir),
                                       capture_output=True, text=True, timeout=timeout_s)
                 stdout, stderr, code = proc.stdout, proc.stderr, proc.returncode
             except subprocess.TimeoutExpired as exc:

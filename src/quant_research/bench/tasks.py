@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from quant_research.runtime import benchmark_dir
 
 SCREEN = ("B02", "B03", "B05", "B07")
 CONTRACT_V02 = "v0.2/strategy_contract.md"
@@ -14,11 +15,6 @@ TASK_DATA = {"B02": "synthetic_development", "B03": "synthetic_development", "B0
              "B07": "synthetic_development", "B08": "synthetic_development"}
 AGENT_SEGMENTS = {"B05": ("dev", "validation")}
 FAULTS = {"B08": ["timeout_after_commit"]}
-
-
-def benchmark_dir() -> Path:
-    env = os.environ.get("QUANT_BENCHMARK_DIR")
-    return Path(env) if env else Path(__file__).resolve().parents[3] / "benchmark"
 
 
 @dataclass(frozen=True)

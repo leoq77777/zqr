@@ -1,7 +1,7 @@
 """Standing authorization: a human pre-approves the desk to freeze validated candidates and put holdout-passing
 ones on paper. It never covers live trading.
 
-`desk/authorization.json` is written only by `quant desk setup` / `quant desk authorize` after an interactive
+`desk/authorization.json` is written only by `zqr desk setup` / `zqr desk authorize` after an interactive
 confirmation. Every desk transition records the file's hash as evidence.
 """
 
@@ -42,9 +42,9 @@ class Authorization(BaseModel):
               product: str | None = None) -> None:
         now = time.time() if now is None else now
         if not self.hash or self.hash != self.body_hash():
-            raise AuthorizationError("authorization hash does not match its content; re-run `quant desk authorize`")
+            raise AuthorizationError("authorization hash does not match its content; re-run `zqr desk authorize`")
         if now >= self.expires_at:
-            raise AuthorizationError("standing authorization has expired; renew with `quant desk authorize`")
+            raise AuthorizationError("standing authorization has expired; renew with `zqr desk authorize`")
         if transition is not None and f"{transition[0]}->{transition[1]}" not in self.scope:
             raise AuthorizationError(f"{transition[0]} -> {transition[1]} is outside the authorization scope")
         if product is not None and product not in self.products:

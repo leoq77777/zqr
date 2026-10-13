@@ -83,15 +83,15 @@ Rules:
 - Templates:
 {templates}
 - Tools (each experiment counts against the budget and is recorded, including failures):
-  `quant tool plan --session {self.session_id} --file plan.json` -> plan_id. Preregister before experimenting:
+  `zqr tool plan --session {self.session_id} --file plan.json` -> plan_id. Preregister before experimenting:
     {{"hypothesis", "mechanism", "falsification", "artifact": template name or plugin file,
      "parameter_ranges": {{"lookback": {{"values": [12, 24]}}}}, "planned_experiments": 4}}
-  `quant tool submit --session {self.session_id} --artifact <template or file.py> --params '{{...}}'
+  `zqr tool submit --session {self.session_id} --artifact <template or file.py> --params '{{...}}'
     --plan <plan_id> --key <unique idempotency key>` (retry with the same key never runs twice)
-  `quant tool get --session {self.session_id} <experiment_id>`
-  `quant tool compare --session {self.session_id} <id1> <id2> ...` (same segment, data, costs and policy only)
-  `quant tool inspect --session {self.session_id}` (dataset schema, quality, dev window, costs)
-  `quant tool history --session {self.session_id}`
+  `zqr tool get --session {self.session_id} <experiment_id>`
+  `zqr tool compare --session {self.session_id} <id1> <id2> ...` (same segment, data, costs and policy only)
+  `zqr tool inspect --session {self.session_id}` (dataset schema, quality, dev window, costs)
+  `zqr tool history --session {self.session_id}`
   Experiments outside a plan are flagged unplanned/out_of_plan in every report.
 - Exploration is limited to the dev segment. Validation is reserved for the controller: it evaluates every
   candidate you submit under the research mandate and reports the results to you next round.
@@ -217,9 +217,9 @@ class CommandRunner:
 
     def _env(self, task: ResearchTask) -> dict[str, str]:
         env = {k: v for k, v in os.environ.items() if k in self.pass_env or not SECRET_ENV.search(k)}
-        # The agent calls `quant tool ...`; make the running interpreter's scripts resolvable.
+        # The agent calls `zqr tool ...`; make the running interpreter's scripts resolvable.
         env["PATH"] = os.pathsep.join([str(Path(sys.executable).parent), env.get("PATH", "")])
-        env.update(QUANT_SESSION=task.session_id, QUANT_HOME=task.quant_home)
+        env.update(ZQR_SESSION=task.session_id, ZQR_HOME=task.quant_home)
         return env
 
     def run_round(self, task: ResearchTask) -> AgentRoundResult | None:

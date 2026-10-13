@@ -2,7 +2,7 @@
 
 Passing means: no direct internet, no DNS, no route to the host or the gateway's bind address, the proxy refuses
 everything but the model host, and the gateway answers only through the proxy and only with its bearer token.
-Used by `quant desk check` (the research loop does not start until it passes) and by tests/test_egress.py.
+Used by `zqr desk check` (the research loop does not start until it passes) and by tests/test_egress.py.
 """
 
 from __future__ import annotations
@@ -14,12 +14,12 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from quant_research.bench.adapter import AGENT_IMAGE
 from quant_research.bench.egress import GATEWAY_PORT, PROXY_ALIAS, EgressNetwork, summarize
-from quant_research.desk.config import NetworkConfig
+from quant_research.desk.config import NetworkConfig, container_network
 from quant_research.experiments.store import ExperimentStore
 from quant_research.gateway.mcp_server import GatewayHTTPServer
 from quant_research.paths import Paths
+from quant_research.runtime import agent_image
 
 PROBE = r"""
 const net = require("net"), dns = require("dns").promises;
@@ -68,7 +68,11 @@ def _iface_ipv4(name: str) -> str | None:
 
 
 def candidate_networks() -> list[NetworkConfig]:
-    """In order of preference: Docker Desktop host alias; WSL/host eth0; native Docker Engine's docker0."""
+    """Release container: the control network only. Development, in order of preference: Docker Desktop host
+    alias; WSL/host eth0; native Docker Engine's docker0."""
+    container = container_network()
+    if container:
+        return [container]
     out = [NetworkConfig()]
     eth0 = _iface_ipv4("eth0")
     if eth0:
@@ -102,21 +106,21 @@ def problems(res: dict[str, Any], egress: dict[str, Any]) -> list[str]:
 
 
 def run_probe(paths: Paths, store: ExperimentStore, session_id: str, network: NetworkConfig,
-              model: tuple[str, int], workdir: Path, image: str = AGENT_IMAGE) -> dict[str, Any]:
+              model: tuple[str, int], workdir: Path, image: str | None = None) -> dict[str, Any]:
     workdir.mkdir(parents=True, exist_ok=True)
-    probe = workdir / "probe.js"
-    probe.write_text(PROBE)
-    probe.chmod(0o644)
+    target = network.forward_host if network.gateway_bind == "0.0.0.0" else network.gateway_bind
     try:
         with GatewayHTTPServer(paths, store, session_id, host=network.gateway_bind,
                                extra_hosts=(f"{PROXY_ALIAS}:{GATEWAY_PORT}",)) as srv, \
-                EgressNetwork(workdir / "egress", [model], srv.port, forward_host=network.forward_host) as net:
-            env = {**net.env(), "GW_PORT": str(srv.port), "GW_TOKEN": srv.token, "GW_HOST": network.gateway_bind,
+                EgressNetwork(workdir / "egress", [model], srv.port, forward_host=network.forward_host,
+                              control_network=network.control_network) as net:
+            env = {**net.env(), "GW_PORT": str(srv.port), "GW_TOKEN": srv.token, "GW_HOST": target,
                    "MODEL_HOST": model[0], "MODEL_PORT": str(model[1])}
-            cmd = ["docker", "run", "--rm", *net.docker_args(), "-v", f"{probe}:/probe.js:ro"]
+            cmd = ["docker", "run", "--rm", "-i", *net.docker_args()]
             for k, v in env.items():
                 cmd += ["-e", f"{k}={v}"]
-            out = subprocess.run([*cmd, image, "node", "/probe.js"], capture_output=True, text=True, timeout=180)
+            out = subprocess.run([*cmd, image or agent_image(), "node", "-"], input=PROBE, capture_output=True,
+                                 text=True, timeout=180)
             records = net.records()
     except Exception as exc:  # noqa: BLE001
         return {"network": network.model_dump(), "ok": False, "problems": [f"{type(exc).__name__}: {exc}"]}

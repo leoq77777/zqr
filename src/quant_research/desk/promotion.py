@@ -53,7 +53,7 @@ def promote(paths: Paths, store: ExperimentStore, candidate_id: str, sandbox: Sa
         return stop(f"not validated (state {cand['state'] if cand else 'unknown'})")
     auth = auth_mod.load(authorization_path(paths))
     if auth is None:
-        return stop("no standing authorization; waiting for a human (`quant candidate freeze`)")
+        return stop("no standing authorization; waiting for a human (`zqr candidate freeze`)")
     mandate = Mandate.model_validate(store.get_mandate(cand["mandate_id"])["body"])
     manifest = load_manifest(paths, mandate.dataset_id)
     try:

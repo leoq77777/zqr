@@ -2,7 +2,7 @@
 
 prepare -> gateway + egress network -> agent container -> freeze submission -> recover -> grade -> audit ->
 classify -> result.json (benchmark/v0.2/result.schema.json). Any exception still ends in a terminal session, an
-audit and a result with `failure_class`; `quant bench recover` finalises runs whose harness process died.
+audit and a result with `failure_class`; `zqr bench recover` finalises runs whose harness process died.
 """
 
 from __future__ import annotations
@@ -137,7 +137,7 @@ def run_task(paths: Paths, store: ExperimentStore, task_id: str, adapter, *, rep
              isolate_network: bool = True) -> dict[str, Any]:
     task = load_tasks()[task_id]
     faults = sorted(set(task.faults) | set(faults or []))
-    injectable = set(FAULTS) - {"harness_crash"}  # drilled by killing the harness, then `quant bench recover`
+    injectable = set(FAULTS) - {"harness_crash"}  # drilled by killing the harness, then `zqr bench recover`
     unknown = set(faults) - injectable
     if unknown:
         raise ValueError(f"unknown faults {sorted(unknown)}; injectable: {sorted(injectable)}")
@@ -271,7 +271,7 @@ def recover_runs(paths: Paths, store: ExperimentStore, adapter) -> list[dict[str
             continue  # prepared only (bench prepare), never run
         removed = cleanup_run(meta["run_id"])
         leftover = cleanup_run(meta["run_id"])
-        recover_session(store, meta["session_id"], "harness process died; recovered by `quant bench recover`")
+        recover_session(store, meta["session_id"], "harness process died; recovered by `zqr bench recover`")
         sess = store.get_session(meta["session_id"])
         ws = Path(sess["workspace"])
         sha = freeze_submission(ws, run_dir / "submission") if ws.exists() else None

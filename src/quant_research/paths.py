@@ -82,5 +82,5 @@ class Paths:
 
 
 def get_paths(root: str | Path | None = None) -> Paths:
-    base = Path(root or os.environ.get("QUANT_HOME", "var")).resolve()
+    base = Path(root or os.environ.get("ZQR_HOME", "var")).resolve()
     return Paths(base).ensure()

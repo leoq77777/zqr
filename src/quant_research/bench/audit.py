@@ -19,7 +19,7 @@ FAULTS = {
     "sandbox_crash": "the first submitted plugin backtest's strategy process is killed right after it starts",
     "agent_killed": "the agent container is killed mid-run",
     "model_unreachable": "the egress proxy does not allow the model host",
-    "harness_crash": "the harness process dies mid-run (kill -9); finalised later by `quant bench recover`",
+    "harness_crash": "the harness process dies mid-run (kill -9); finalised later by `zqr bench recover`",
 }
 
 

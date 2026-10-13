@@ -1,4 +1,4 @@
-"""Desk configuration (`desk/config.json`, written by `quant desk setup`, safe to hand-edit) and check results."""
+"""Desk configuration (`desk/config.json`, written by `zqr desk setup`, safe to hand-edit) and check results."""
 
 from __future__ import annotations
 
@@ -11,11 +11,27 @@ from quant_research.paths import Paths
 
 
 class NetworkConfig(BaseModel):
-    """How the egress proxy (in Docker) reaches the tool gateway (on the host / in WSL)."""
+    """How the egress proxy (in Docker) reaches the tool gateway (on the host, in WSL, or in the desk container)."""
 
     mode: str = "docker_desktop"
     gateway_bind: str = "127.0.0.1"
     forward_host: str = "host.docker.internal"
+    control_network: str | None = None
+
+
+def container_network() -> NetworkConfig | None:
+    """Release layout: the gateway listens in the desk container; each run's proxy joins the control network.
+    Computed per use because the desk container's address changes when it is recreated."""
+    from quant_research.runtime import control_network, own_address
+
+    net = control_network()
+    if not net:
+        return None
+    return NetworkConfig(mode="container", gateway_bind="0.0.0.0", forward_host=own_address(), control_network=net)
+
+
+def effective_network(cfg: DeskConfig) -> NetworkConfig:
+    return container_network() or cfg.network
 
 
 class DeskConfig(BaseModel):

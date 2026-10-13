@@ -1,4 +1,4 @@
-"""`quant desk setup` (one-time preparation, idempotent) and `quant desk check` (environment + isolation probe)."""
+"""`zqr desk setup` (one-time preparation, idempotent) and `zqr desk check` (environment + isolation probe)."""
 
 from __future__ import annotations
 
@@ -14,8 +14,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from quant_research.bench.adapter import AGENT_IMAGE
-from quant_research.bench.egress import PROXY_IMAGE, model_endpoint
+from quant_research.bench.egress import model_endpoint
 from quant_research.controller.budget import Budget
 from quant_research.desk.config import DeskConfig, check_path, load_config, save_config
 from quant_research.desk.presets import preset_roster
@@ -26,9 +25,8 @@ from quant_research.paper.fleet import save_roster
 from quant_research.paths import Paths
 from quant_research.research import authorization as auth_mod
 from quant_research.research.mandate import Mandate
+from quant_research.runtime import agent_image, in_release_container, root, runtime_image, version
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-IMAGES = {AGENT_IMAGE: "Dockerfile.agent", PROXY_IMAGE: "Dockerfile.sandbox"}
 GRANULARITY = "ONE_HOUR"
 DEFAULT_ACCEPTANCE = {"min_primary": 1.0, "min_dsr": 0.9, "min_round_trips": 10, "max_drawdown": -0.25,
                       "require_costs_x2": True, "require_delay": True}
@@ -49,14 +47,25 @@ def _image_exists(image: str) -> bool:
     return subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode == 0
 
 
+def images() -> dict[str, str]:
+    """image -> Dockerfile in the repository."""
+    return {agent_image(): "Dockerfile.agent", runtime_image(): "Dockerfile"}
+
+
 def build_images(rebuild: bool = False) -> dict[str, str]:
+    """Development: build the local images from the checkout. A release container never builds; `zqr release`
+    ships its images."""
     out = {}
-    for image, dockerfile in IMAGES.items():
+    for image, dockerfile in images().items():
         if _image_exists(image) and not rebuild:
             out[image] = "present"
             continue
+        if in_release_container():
+            out[image] = "missing (ship it with `zqr release`)"
+            continue
         say(f"building {image} from {dockerfile} ...")
-        res = subprocess.run(["docker", "build", "-f", dockerfile, "-t", image, "."], cwd=REPO_ROOT)
+        res = subprocess.run(["docker", "build", "-f", dockerfile, "-t", image, "--build-arg",
+                              f"ZQR_VERSION={version()}", "."], cwd=root())
         out[image] = "built" if res.returncode == 0 else f"build failed ({res.returncode})"
     return out
 
@@ -88,7 +97,7 @@ def desk_mandate(product: str, dataset_id: str, split_id: str, cfg: DeskConfig) 
         "budget": Budget(max_rounds=1, max_candidates=1, max_experiments=12,
                          max_wall_seconds=cfg.session_wall_seconds, max_trials_per_strategy=None),
         "holdout": DEFAULT_HOLDOUT, "agent_segments": ["dev"],
-        "notes": "written by `quant desk setup`; thresholds confirmed by the human at setup"})
+        "notes": "written by `zqr desk setup`; thresholds confirmed by the human at setup"})
 
 
 def _confirm(prompt: str, assume_yes: bool) -> bool:
@@ -182,7 +191,7 @@ def run_setup(paths: Paths, *, start: int, skip_images: bool = False, rebuild: b
     else:
         report["authorization"] = "kept (valid)"
     save_config(paths, cfg)
-    report["next"] = ["quant desk check", "quant desk up"]
+    report["next"] = ["zqr desk check", "zqr up" if in_release_container() else "zqr desk up"]
     return report
 
 
@@ -219,8 +228,9 @@ def run_check(paths: Paths, *, skip_isolation: bool = False) -> dict[str, Any]:
     if not docker:
         problems.append("docker daemon not reachable")
     else:
-        checks["images"] = {img: _image_exists(img) for img in IMAGES}
-        problems += [f"image {i} missing (quant desk setup)" for i, ok in checks["images"].items() if not ok]
+        checks["images"] = {img: _image_exists(img) for img in images()}
+        fix = "zqr release" if in_release_container() else "zqr desk setup"
+        problems += [f"image {i} missing ({fix})" for i, ok in checks["images"].items() if not ok]
     try:
         skew = _coinbase_time_skew()
         checks["coinbase"] = "reachable"
@@ -245,7 +255,7 @@ def run_check(paths: Paths, *, skip_isolation: bool = False) -> dict[str, Any]:
         mandates = {p: bool(store.get_mandate(mid)) for p, mid in cfg.mandates.items()}
         checks["mandates"] = mandates
         if not mandates or not all(mandates.values()):
-            problems.append("desk mandates missing (quant desk setup)")
+            problems.append("desk mandates missing (zqr desk setup)")
         auth = auth_mod.load(authorization_path(paths))
         try:
             if auth is None:
@@ -275,8 +285,9 @@ def run_check(paths: Paths, *, skip_isolation: bool = False) -> dict[str, Any]:
     finally:
         store.close()
     if chosen is not None:
-        cfg.network = chosen
-        save_config(paths, cfg)
+        if chosen.mode != "container":  # the container mode is derived at run time, never stored
+            cfg.network = chosen
+            save_config(paths, cfg)
     elif not skip_isolation:
         problems.append("isolation probe did not pass in any network mode; research stays off (paper still runs)")
     result = {"ok": not problems, "isolation_ok": chosen is not None, "network": chosen.mode if chosen else None,

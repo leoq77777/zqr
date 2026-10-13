@@ -16,9 +16,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-PROXY_IMAGE = "quant-research-sandbox:latest"
+from quant_research.runtime import mount, runtime_image
+
 PROXY_ALIAS, PROXY_PORT, GATEWAY_PORT = "egress", 3128, 8080
-SCRIPT = Path(__file__).with_name("egress_proxy.py")
+PROXY_USER = "10001:10001"
 
 
 class EgressError(RuntimeError):
@@ -40,14 +41,17 @@ def _docker(*args: str, check: bool = True, timeout: float = 60) -> subprocess.C
 
 class EgressNetwork:
     def __init__(self, log_dir: Path, allow: list[tuple[str, int]], gateway_port: int | None,
-                 image: str = PROXY_IMAGE, label: str | None = None, forward_host: str = "host.docker.internal"):
-        """`forward_host` is where the proxy reaches the gateway: Docker Desktop's host alias, or an address the
-        gateway binds on (WSL eth0, docker0) when that alias does not lead to it."""
-        self.forward_host = forward_host
+                 image: str | None = None, label: str | None = None, forward_host: str = "host.docker.internal",
+                 control_network: str | None = None):
+        """`forward_host` is where the proxy reaches the gateway: Docker Desktop's host alias, an address the
+        gateway binds on (WSL eth0, docker0), or the desk container's address on `control_network`, which the
+        proxy (never the agent) joins."""
+        self.forward_host, self.control_network = forward_host, control_network
         self.id = uuid.uuid4().hex[:10]
         self.label = f"quant-research.run={label or self.id}"
         self.network, self.container = f"qr-net-{self.id}", f"qr-egress-{self.id}"
-        self.log_dir, self.allow, self.gateway_port, self.image = log_dir, allow, gateway_port, image
+        self.log_dir, self.allow, self.gateway_port = log_dir, allow, gateway_port
+        self.image = image or runtime_image()
         self.log_path = log_dir / "egress.jsonl"
 
     # what the agent container needs
@@ -69,8 +73,9 @@ class EgressNetwork:
         cmd = ["run", "-d", "--rm", "--name", self.container, "--label", self.label,
                "--add-host", "host.docker.internal:host-gateway",
                "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "256m",
-               "--pids-limit", "128", "-v", f"{SCRIPT}:/egress.py:ro", "-v", f"{self.log_dir.resolve()}:/log",
-               self.image, "python", "/egress.py", "--listen", str(PROXY_PORT), "--log", "/log/egress.jsonl"]
+               "--pids-limit", "128", "--user", PROXY_USER, *mount(self.log_dir, "/log"), "--entrypoint", "python",
+               self.image, "-m", "quant_research.bench.egress_proxy", "--listen", str(PROXY_PORT),
+               "--log", "/log/egress.jsonl"]
         for host, port in self.allow:
             cmd += ["--allow", f"{host}:{port}"]
         if self.gateway_port:
@@ -79,6 +84,8 @@ class EgressNetwork:
             _docker("network", "create", "--internal", "--label", self.label, self.network)
             _docker(*cmd)
             _docker("network", "connect", "--alias", PROXY_ALIAS, self.network, self.container)
+            if self.control_network:
+                _docker("network", "connect", self.control_network, self.container)
             deadline = time.time() + 20
             while "egress ready" not in _docker("logs", self.container, check=False).stdout:
                 if time.time() > deadline:

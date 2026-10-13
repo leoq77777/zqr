@@ -81,7 +81,7 @@ class ToolGateway:
     def _sanitize(self, text: str | None) -> str | None:
         if text is None:
             return None
-        for root, label in ((str(self.workspace), "/workspace"), (str(self.paths.root.resolve()), "$QUANT_HOME"),
+        for root, label in ((str(self.workspace), "/workspace"), (str(self.paths.root.resolve()), "$ZQR_HOME"),
                             (str(Path.home()), "~")):
             text = text.replace(root, label)
         return re.sub(r"/(?:private/)?(?:var|tmp)/folders/[^\s'\"]+", "<tmp>", text)

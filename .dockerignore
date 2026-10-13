@@ -1,2 +1,11 @@
-# Images copy nothing from the build context; never send runtime data (var/) or benchmark answers to the daemon.
+# Allowlist: only what the runtime image needs. Never send research data (var/) or benchmark answers to the daemon.
 *
+!pyproject.toml
+!uv.lock
+!src
+!benchmark
+!scripts/zqr-host.sh
+benchmark/evaluator_private
+benchmark/v0.2/results
+**/__pycache__
+**/*.pyc

@@ -1,4 +1,4 @@
-"""`quant desk ...` subcommands."""
+"""`zqr desk ...` subcommands."""
 
 from __future__ import annotations
 
@@ -129,9 +129,17 @@ def _supervisor_pid(paths) -> int | None:
     return pid if st.get("status") != "stopped" and pid_alive(pid) else None
 
 
+def _not_in_release_container(what: str) -> None:
+    from quant_research.runtime import in_release_container
+
+    if in_release_container():
+        raise SystemExit(f"this container is the supervisor; use `zqr {what}` on the host")
+
+
 def cmd_up(args) -> None:
     from quant_research.desk.supervisor import logs_dir, quant_argv
 
+    _not_in_release_container("up")
     paths = get_paths(args.home)
     pid = _supervisor_pid(paths)
     if pid:
@@ -143,12 +151,13 @@ def cmd_up(args) -> None:
                             stdin=subprocess.DEVNULL, start_new_session=True)
     time.sleep(3)
     _out({"status": "started" if proc.poll() is None else f"exited {proc.returncode}", "supervisor_pid": proc.pid,
-          "logs": str(logs_dir(paths)), "next": "quant desk status"})
+          "logs": str(logs_dir(paths)), "next": "zqr desk status"})
 
 
 def cmd_down(args) -> None:
     from quant_research.desk.supervisor import pid_alive
 
+    _not_in_release_container("down")
     paths = get_paths(args.home)
     pid = _supervisor_pid(paths)
     if not pid:
@@ -172,6 +181,7 @@ def desk_status(paths) -> dict:
     from quant_research.desk import research as rl
     from quant_research.desk.config import load_check, load_config
     from quant_research.desk.supervisor import state_file
+    from quant_research.runtime import version
 
     cfg = load_config(paths)
     sup = json.loads(state_file(paths).read_text()) if state_file(paths).exists() else {}
@@ -181,6 +191,7 @@ def desk_status(paths) -> dict:
     ledger = [r for r in rl.read_ledger(paths) if r.get("day") == today]
     check = load_check(paths)
     return {
+        "version": version(),
         "supervisor": {"running": bool(_supervisor_pid(paths)), "pid": sup.get("supervisor_pid"),
                        "status": sup.get("status"), "updated": _age(sup.get("updated_at")),
                        "components": sup.get("components", {}), "last_report_day": sup.get("last_report_day"),
@@ -206,6 +217,7 @@ def cmd_status(args) -> None:
         _out(st)
         return
     s, r, f = st["supervisor"], st["research"], st["fleet"]
+    print(f"version:    {st['version']}")
     print(f"supervisor: {'RUNNING' if s['running'] else 'STOPPED'} (pid {s['pid']}, updated {s['updated']})")
     for name, c in s["components"].items():
         line = f"  {name:9s} {c['status']:8s} pid {c['pid']} restarts {c['restarts']}"
@@ -278,6 +290,34 @@ def cmd_setup(args) -> None:
                    auth_days=args.auth_days, auth_max_paper=args.auth_max_paper))
 
 
+def cmd_secrets(args) -> None:
+    """Model credentials for the research child: `--stdin` takes KEY=VALUE lines (only model variables are kept),
+    otherwise hidden interactive input. Values are never printed."""
+    from quant_research.bench.adapter import MODEL_ENV
+    from quant_research.desk.setup import enter_credentials
+    from quant_research.desk.supervisor import CREDENTIAL_FILE, read_env_file
+
+    path = CREDENTIAL_FILE
+    if args.status:
+        _out({"file": str(path), "names": sorted(read_env_file(path))})
+        return
+    if not args.stdin:
+        _out({"credentials": enter_credentials(path), "file": str(path)})
+        return
+    pairs = {}
+    for line in sys.stdin.read().splitlines():
+        k, sep, v = line.strip().removeprefix("export ").partition("=")
+        if sep and k.strip() in MODEL_ENV and v.strip():
+            pairs[k.strip()] = v.strip().strip("'\"")
+    if not pairs:
+        raise SystemExit("no model variables on stdin")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("".join(f"{k}={v}\n" for k, v in pairs.items()))
+    _out({"file": str(path), "names": sorted(pairs)})
+
+
 def cmd_check(args) -> None:
     from quant_research.desk.setup import run_check
 
@@ -319,7 +359,11 @@ def register(sub) -> None:
     p.add_argument("--skip-isolation", action="store_true")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_check)
-    p = desk.add_parser("up", help="start the supervisor in the background (Windows: quant.cmd starts the task)")
+    p = desk.add_parser("secrets", help="write the model credentials file (hidden input, or --stdin)")
+    p.add_argument("--stdin", action="store_true", help="read KEY=VALUE lines; only model variables are kept")
+    p.add_argument("--status", action="store_true", help="show the variable names present")
+    p.set_defaults(fn=cmd_secrets)
+    p = desk.add_parser("up", help="development: start the supervisor in the background")
     p.set_defaults(fn=cmd_up)
     p = desk.add_parser("down", help="stop the supervisor gracefully")
     p.add_argument("--timeout", type=float, default=300)

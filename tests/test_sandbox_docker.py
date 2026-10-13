@@ -3,6 +3,7 @@ import subprocess
 
 import pytest
 
+from quant_research.runtime import runtime_image
 from quant_research.strategy.sandbox import SandboxConfig, SandboxError, run_plugin
 from tests.conftest import make_raw
 
@@ -10,7 +11,7 @@ from tests.conftest import make_raw
 def _docker_ready() -> bool:
     if shutil.which("docker") is None:
         return False
-    probe = subprocess.run(["docker", "image", "inspect", "quant-research-sandbox:latest"], capture_output=True)
+    probe = subprocess.run(["docker", "image", "inspect", runtime_image()], capture_output=True)
     return probe.returncode == 0
 
 
