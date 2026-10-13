@@ -235,7 +235,6 @@ class PaperFleet:
                     cutoff = to_epoch(pd.to_datetime(pd.Series([last]), utc=True))[0]
                     history = history[to_epoch(history["bar_open_time"]) <= cutoff]
                 trader.warm_up(history)
-                trader.write_health()
             except Exception as exc:  # noqa: BLE001
                 if trader is not None:
                     trader.ledger.close()

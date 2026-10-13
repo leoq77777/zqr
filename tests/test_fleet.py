@@ -205,6 +205,8 @@ def test_a_restart_after_an_outage_trades_the_latest_bar(tmp_path):
     assert to_epoch(pd.to_datetime(pd.Series([decisions[-1]["bar_open"]]), utc=True))[0] == store.last_open()
     assert (to_epoch(trader.history["bar_open_time"]) == to_epoch(store.bars["bar_open_time"])).all()
     assert len(trader.history) == len(store.bars)
+    events = [json.loads(line) for line in (paths.paper / "btc-sma" / "events.jsonl").read_text().splitlines()]
+    assert not [e for e in events if e["event"] == "stale_market_data" and e["ts"] > t["now"] - HOUR]
 
 
 def test_a_failed_catch_up_bar_is_retried_on_the_next_step(tmp_path, monkeypatch):
