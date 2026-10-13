@@ -1,6 +1,8 @@
+from quant_research.data.bars import to_epoch
 from quant_research.data.validate import validate_bars
 from quant_research.paper.barstore import BarStore
 from quant_research.paper.feeds import CoinbaseCandlePoller
+from quant_research.paper.fleet import _Feed
 from tests.conftest import HOUR, T0, make_raw
 from tests.test_fleet import NOW0, FakeCoinbase
 
@@ -32,3 +34,13 @@ def test_poller_backfills_after_an_outage():
     opens = [int(b["bar_open_time"].timestamp()) for b in poller.poll()]
     assert opens == [last + HOUR * k for k in range(1, 11)]
     assert poller.poll() == []
+
+
+def test_feed_is_anchored_at_the_frozen_dataset(paths, dataset):
+    clock = {"now": float(NOW0)}
+    feed = _Feed(paths, FakeCoinbase(lambda: clock["now"]), "BTC-USD", "ONE_HOUR", lambda: clock["now"],
+                 seed_bars=10)
+    opens = to_epoch(feed.history["bar_open_time"])
+    assert opens[0] == T0
+    assert opens[-1] == NOW0 - NOW0 % HOUR - HOUR
+    assert (feed.store.missing_opens() == [])

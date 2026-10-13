@@ -10,17 +10,26 @@ from pathlib import Path
 
 import pandas as pd
 
-from quant_research.data.bars import to_epoch
+from quant_research.data.bars import TIME_COLUMNS, to_epoch
 from quant_research.data.snapshot import list_datasets, load_dataset
 from quant_research.paths import Paths
 from quant_research.timeutil import granularity_seconds
+
+
+def _utc(bars: pd.DataFrame) -> pd.DataFrame:
+    """Parquet reads back ZoneInfo('UTC'), the venue gives timezone.utc; pandas concatenates the two as object."""
+    bars = bars.copy()
+    for col in TIME_COLUMNS:
+        if col in bars:
+            bars[col] = pd.to_datetime(bars[col], utc=True)
+    return bars
 
 
 class BarStore:
     def __init__(self, path: Path, granularity: str):
         self.path = Path(path)
         self.step = granularity_seconds(granularity)
-        self.bars = pd.read_parquet(self.path) if self.path.exists() else pd.DataFrame()
+        self.bars = _utc(pd.read_parquet(self.path)) if self.path.exists() else pd.DataFrame()
 
     @classmethod
     def for_feed(cls, paths: Paths, product: str, granularity: str) -> BarStore:
@@ -33,7 +42,7 @@ class BarStore:
         """Add bars newer than the last stored one; returns the rows added, in time order."""
         if bars is None or not len(bars):
             return pd.DataFrame()
-        new = bars.drop_duplicates("bar_open_time").sort_values("bar_open_time")
+        new = _utc(bars).drop_duplicates("bar_open_time").sort_values("bar_open_time")
         last = self.last_open()
         if last is not None:
             new = new[to_epoch(new["bar_open_time"]) > last]

@@ -5,7 +5,9 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from quant_research.data.bars import to_epoch
 from quant_research.desk.presets import preset_roster
+from quant_research.paper.barstore import BarStore
 from quant_research.paper.fleet import PaperFleet, Roster, RosterEntry, add_entry, load_roster, save_roster
 from quant_research.paper.ledger import Ledger
 from quant_research.paper.risk import RiskLimits
@@ -76,7 +78,7 @@ def _bump(path, t):
 def test_fleet_runs_many_strategies_on_shared_feeds(tmp_path):
     t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma"), _entry("btc-bh", ref="template:buy_and_hold"),
                                                  _entry("eth-sma", product="ETH-USD")])
-    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
     health = fleet.step()
     assert set(health["strategies"]) == {"btc-sma", "btc-bh", "eth-sma"}
     assert len(fleet.feeds) == 2  # one feed per product, shared by both BTC strategies
@@ -89,7 +91,7 @@ def test_fleet_runs_many_strategies_on_shared_feeds(tmp_path):
         ledger = Ledger(paths.paper / name / "paper.db")
         decisions = ledger.decisions()
         assert len(decisions) == 5
-        assert len(ledger.bars()) >= 1000
+        assert len(fleet.traders[name].history) >= 1000
         ledger.close()
     bh = fleet.traders["btc-bh"]
     assert bh.balances()["BTC"] > 0  # buy and hold is invested
@@ -97,13 +99,13 @@ def test_fleet_runs_many_strategies_on_shared_feeds(tmp_path):
 
 def test_recorded_window_reproduces_each_decision(tmp_path):
     t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma")])
-    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
     fleet.step()
     for _ in range(3):
         t["now"] += HOUR
         fleet.step()
     ledger = fleet.traders["btc-sma"].ledger
-    bars = ledger.bars()
+    bars = fleet.feeds[("BTC-USD", "ONE_HOUR")].history
     spec = StrategySpec(strategy_ref="template:sma_cross", parameters={"fast": 5, "slow": 20})
     decisions = ledger.decisions()
     assert len(decisions) == 3
@@ -116,7 +118,8 @@ def test_recorded_window_reproduces_each_decision(tmp_path):
 def test_roster_hot_reload_attaches_and_detaches(tmp_path):
     t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma")])
     activated = []
-    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], on_activate=activated.append)
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], on_activate=activated.append,
+                       seed_bars=1000)
     fleet.step()
     assert add_entry(roster, _entry("eth-bh", product="ETH-USD", ref="template:buy_and_hold",
                                     source="candidate", candidate_id="cand-x"))
@@ -144,7 +147,7 @@ def test_roster_hot_reload_attaches_and_detaches(tmp_path):
 def test_one_failing_strategy_does_not_stop_the_others(tmp_path):
     t, paths, roster, client = _setup(tmp_path, [_entry("good"), _entry("bad"),
                                                  _entry("broken", ref="template:no_such_template")])
-    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
     fleet.step()
     assert "broken" in fleet.errors and "broken" not in fleet.traders
 
@@ -164,3 +167,17 @@ def test_preset_roster_covers_both_products():
     assert len(names) == len(set(names)) == 16
     assert {e.product for e in r.entries} == {"BTC-USD", "ETH-USD"}
     assert all(e.strategy_ref.startswith("template:") and e.source == "preset" for e in r.entries)
+
+
+def test_fleet_catches_up_after_an_outage_and_trades_only_the_latest_bar(tmp_path):
+    t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma")])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
+    fleet.step()
+    t["now"] += 10 * HOUR
+    fleet.step()
+    trader = fleet.traders["btc-sma"]
+    opens = to_epoch(trader.history["bar_open_time"])
+    assert (np.diff(opens) == HOUR).all()
+    assert len(trader.ledger.decisions()) == 1
+    store = BarStore.for_feed(paths, "BTC-USD", "ONE_HOUR")
+    assert store.missing_opens() == [] and store.last_open() == opens[-1]

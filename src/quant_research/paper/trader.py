@@ -219,6 +219,14 @@ class PaperTrader:
         if avail > (self.ledger.get("last_data_time") or 0):
             self.ledger.put("last_data_time", avail)
 
+    def ingest(self, bar: dict[str, Any]) -> bool:
+        """Add a bar without deciding: catch-up bars after an outage rebuild state but never trade."""
+        if not self._append_bar(bar):
+            return False
+        self.ledger.record_bar(bar)
+        self.ledger.put("last_bar_open", str(bar["bar_open_time"]))
+        return True
+
     def on_bar(self, bar: dict[str, Any]) -> dict[str, Any] | None:
         """Handle one completed bar: resolve orders, reconcile, decide, risk-check, send."""
         if not self._append_bar(bar):

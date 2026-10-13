@@ -13,7 +13,7 @@ from tests.test_fleet import HOUR, _entry, _setup
 
 def test_daily_report_from_fixed_data(tmp_path, dataset):
     t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma"), _entry("btc-bh", ref="template:buy_and_hold")])
-    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
     fleet.step()
     for _ in range(6):
         t["now"] += HOUR

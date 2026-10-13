@@ -20,7 +20,8 @@ from typing import Any, Literal
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from quant_research.paper.feeds import CoinbaseCandlePoller, coinbase_mid_price
+from quant_research.paper.barstore import BarStore, snapshot_seed
+from quant_research.paper.feeds import SEED_BARS, CoinbaseCandlePoller, coinbase_mid_price
 from quant_research.paper.models import ProductSpec
 from quant_research.paper.risk import RiskLimits
 from quant_research.paper.runner import make_trader
@@ -30,7 +31,6 @@ from quant_research.strategy.sandbox import SandboxConfig
 from quant_research.timeutil import parse_granularity
 
 log = logging.getLogger(__name__)
-WARMUP_BARS = 1000
 
 
 class RosterEntry(BaseModel):
@@ -91,24 +91,34 @@ def add_entry(path: Path, entry: RosterEntry) -> bool:
 
 
 class _Feed:
-    def __init__(self, client, product: str, granularity: str, clock: Callable[[], float]):
+    """One market feed: the bar store (seeded from the frozen dataset, else from the venue) plus a poller."""
+
+    def __init__(self, paths, client, product: str, granularity: str, clock: Callable[[], float], seed_bars: int):
         self.product, self.granularity = product, granularity
+        self.store = BarStore.for_feed(paths, product, granularity)
         self.poller = CoinbaseCandlePoller(client, product, granularity, clock=clock)
-        self.history = self.poller.history(WARMUP_BARS)
+        if self.store.last_open() is None:
+            seed = snapshot_seed(paths, product, granularity)
+            self.store.append(seed if seed is not None and len(seed) else self.poller.history(seed_bars))
+        self.poller.last_open = self.store.last_open()
+        self.store.append(pd.DataFrame(self.poller.poll()))
+        self.missing = len(self.store.missing_opens())
+
+    @property
+    def history(self) -> pd.DataFrame:
+        return self.store.bars
 
     def poll(self) -> list[dict[str, Any]]:
-        bars = self.poller.poll()
-        if bars:
-            self.history = pd.concat([self.history, pd.DataFrame(bars)], ignore_index=True).tail(WARMUP_BARS)
-            self.history = self.history.reset_index(drop=True)
-        return bars
+        added = self.store.append(pd.DataFrame(self.poller.poll()))
+        return added.to_dict("records") if len(added) else []
 
 
 class PaperFleet:
     def __init__(self, paths, roster_path: Path, client, *, clock: Callable[[], float] = time.time,
-                 on_activate: Callable[[RosterEntry], None] | None = None):
+                 on_activate: Callable[[RosterEntry], None] | None = None, seed_bars: int = SEED_BARS):
         self.paths, self.roster_path, self.client, self.clock = paths, Path(roster_path), client, clock
         self.on_activate = on_activate
+        self.seed_bars = seed_bars
         self.feeds: dict[tuple[str, str], _Feed] = {}
         self.traders: dict[str, PaperTrader] = {}
         self.entries: dict[str, RosterEntry] = {}
@@ -164,8 +174,8 @@ class PaperFleet:
             try:
                 feed = self.feeds.get((e.product, e.granularity))
                 if feed is None:
-                    feed = self.feeds[(e.product, e.granularity)] = _Feed(self.client, e.product, e.granularity,
-                                                                         self.clock)
+                    feed = self.feeds[(e.product, e.granularity)] = _Feed(self.paths, self.client, e.product,
+                                                                         e.granularity, self.clock, self.seed_bars)
                 trader = make_trader(self._config(e), self.workdir / name, self._product(e.product),
                                      paths=self.paths, clock=self.clock)
                 trader.recover()
@@ -194,14 +204,22 @@ class PaperFleet:
             except Exception as exc:  # noqa: BLE001 - staleness shows in health; keep looping
                 self._log("ALERT", "feed_error", product=product, error=f"{type(exc).__name__}: {exc}")
                 continue
+            if len(bars) > 1:
+                self._log("WARN", "caught_up", product=product, bars=len(bars))
+            missing = len(feed.store.missing_opens()) if bars else feed.missing
+            if missing > feed.missing:
+                self._log("ALERT", "bar_gap", product=product, missing=missing - feed.missing)
+                feed.missing = missing
             for name in members:
                 trader = self.traders[name]
-                for bar in bars:
-                    try:
-                        trader.on_bar(bar)
-                    except Exception as exc:  # noqa: BLE001
-                        self.errors[name] = f"{type(exc).__name__}: {exc}"
-                        trader._log("ALERT", "bar_error", error=self.errors[name])
+                try:
+                    for bar in bars[:-1]:
+                        trader.ingest(bar)
+                    if bars:
+                        trader.on_bar(bars[-1])
+                except Exception as exc:  # noqa: BLE001
+                    self.errors[name] = f"{type(exc).__name__}: {exc}"
+                    trader._log("ALERT", "bar_error", error=self.errors[name])
             pending = [n for n in members if self.traders[n].live_orders()]
             if pending:
                 try:
