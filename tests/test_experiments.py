@@ -156,6 +156,46 @@ def test_holdout_cap_applies_to_every_path_and_overrides_are_recorded(paths, sto
     assert store.holdout_overrides(split.split_id)[0]["reason"] == "manual check"
 
 
+def test_over_the_cap_only_an_exact_repeat_runs_without_an_override(paths, store, dataset, monkeypatch):
+    from quant_research.backtest.engine import EngineConfig
+    from quant_research.validation import holdout as holdout_mod
+
+    manifest, split = dataset
+    reqs = [_req(manifest, split, parameters={"fast": f, "slow": 50}) for f in (5, 8)]
+    for r in reqs:
+        spec = r.spec.normalized()
+        store.freeze_candidate(spec.candidate_hash(), spec.strategy_ref, spec.parameters)
+        run_holdout(paths, store, r, max_viewings=2)
+    assert run_holdout(paths, store, reqs[0], max_viewings=2)[0].status == "duplicate"
+    changed = reqs[0].model_copy(update={"engine_config": EngineConfig(initial_cash=20_000.0)})
+    n_exp = len(store.list_experiments(limit=100))
+    real_load = holdout_mod.load_holdout_data
+    monkeypatch.setattr(holdout_mod, "load_holdout_data", lambda *a: pytest.fail("holdout data loaded"))
+    with pytest.raises(HoldoutError, match="already viewed 2 time\\(s\\); the limit is 2"):
+        run_holdout(paths, store, changed, max_viewings=2)
+    assert len(store.list_experiments(limit=100)) == n_exp
+    assert len(store.holdout_runs(split.split_id)) == 2 and not store.holdout_overrides(split.split_id)
+    monkeypatch.setattr(holdout_mod, "load_holdout_data", real_load)
+    res, _ = run_holdout(paths, store, changed, max_viewings=2, override_reason="cost check")
+    assert res.status == "completed" and len(store.holdout_runs(split.split_id)) == 3
+    assert [o["reason"] for o in store.holdout_overrides(split.split_id)] == ["cost check"]
+
+
+def test_a_tighter_mandate_on_the_split_caps_every_holdout_call(paths, store, dataset):
+    from tests.conftest import make_mandate
+
+    manifest, split = dataset
+    m = make_mandate(dataset)  # max_viewings 1
+    store.put_mandate(m.mandate_id(), m.model_dump(mode="json"))
+    reqs = [_req(manifest, split, parameters={"fast": f, "slow": 50}) for f in (5, 8)]
+    for r in reqs:
+        spec = r.spec.normalized()
+        store.freeze_candidate(spec.candidate_hash(), spec.strategy_ref, spec.parameters)
+    run_holdout(paths, store, reqs[0], max_viewings=5)
+    with pytest.raises(HoldoutError, match="the limit is 1"):
+        run_holdout(paths, store, reqs[1], max_viewings=5)
+
+
 def test_split_viewing_cap_uses_the_tightest_mandate(store, dataset):
     from tests.conftest import make_mandate
 
@@ -166,6 +206,28 @@ def test_split_viewing_cap_uses_the_tightest_mandate(store, dataset):
                          question=f"cap {cap}")
         store.put_mandate(m.mandate_id(), m.model_dump(mode="json"))
     assert split_viewing_cap(store, split.split_id) == 2
+
+
+def test_split_viewing_cap_reads_old_mandate_bodies(store, dataset):
+    _, split = dataset
+    sid = split.split_id
+    for i, body in enumerate([{"split_id": sid, "holdout": {"max_viewings": 3}}, {"split_id": sid},
+                              {"split_id": sid, "holdout": None}, {"split_id": sid, "holdout": {"max_viewings": "1"}},
+                              {"split_id": sid, "holdout": {"max_viewings": True}}, ["not", "a", "mandate"]]):
+        store.put_mandate(f"old-{i}", body)
+    assert split_viewing_cap(store, sid) == 3
+
+
+def test_holdout_test_cli_errors_are_one_line(paths, dataset):
+    from quant_research.cli import main
+
+    manifest, split = dataset
+    home = ["--home", str(paths.root)]
+    with pytest.raises(SystemExit, match="candidate is not frozen"):
+        main([*home, "holdout-test", "--dataset", manifest["dataset_id"], "--split", split.split_id,
+              "--template", "sma_cross", "--params", '{"fast": 10, "slow": 50}'])
+    with pytest.raises(SystemExit, match="only for the --dataset/--split path"):
+        main([*home, "holdout-test", "--candidate", "cand-x", "--override-reason", "why"])
 
 
 def test_parallel_matches_serial(paths, store, dataset):

@@ -230,15 +230,22 @@ def cmd_freeze_strategy(args) -> None:
 
 def cmd_holdout(args) -> None:
     from quant_research.report.markdown import write_experiment_report
-    from quant_research.validation.holdout import run_holdout, split_viewing_cap
+    from quant_research.validation.holdout import HoldoutError, run_holdout, split_viewing_cap
 
     if args.candidate:
+        if args.override_reason:
+            raise SystemExit("--override-reason is only for the --dataset/--split path; a candidate's holdout "
+                             "follows its mandate")
         return _candidate_call(_cand_holdout)(args)
     if not (args.dataset and args.split):
         raise SystemExit("give --candidate (mandate-governed) or --dataset/--split with a frozen strategy")
     paths, store = _ctx(args)
-    res, prior = run_holdout(paths, store, _request(args, paths), sandbox=_sandbox(args),
-                             max_viewings=split_viewing_cap(store, args.split), override_reason=args.override_reason)
+    try:
+        res, prior = run_holdout(paths, store, _request(args, paths), sandbox=_sandbox(args),
+                                 max_viewings=split_viewing_cap(store, args.split),
+                                 override_reason=args.override_reason)
+    except HoldoutError as exc:
+        raise SystemExit(str(exc)) from None
     out = _summ(res) | {"prior_holdout_runs_on_split": prior}
     if res.has_result:
         out["report"] = str(write_experiment_report(paths, store, res.experiment_id))

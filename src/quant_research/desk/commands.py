@@ -280,6 +280,17 @@ def cmd_recover(args) -> None:
     _out(_recover(paths, load_config(paths)))
 
 
+def cmd_promote(args) -> None:
+    from quant_research.strategy.sandbox import SandboxConfig
+
+    paths = get_paths(args.home)
+    store = _store(paths)
+    try:
+        _out(promotion.promote(paths, store, args.candidate_id, SandboxConfig(isolation=args.isolation)))
+    finally:
+        store.close()
+
+
 def cmd_setup(args) -> None:
     from quant_research.desk.setup import run_setup
     from quant_research.timeutil import parse_time
@@ -387,6 +398,11 @@ def register(sub) -> None:
     p.set_defaults(fn=cmd_research_loop)
     p = desk.add_parser("recover", help="close out research sessions of a dead desk process")
     p.set_defaults(fn=cmd_recover)
+    p = desk.add_parser("promote", help="push a candidate as far as the authorization allows (resumes from its state)")
+    p.add_argument("candidate_id")
+    p.add_argument("--isolation", choices=["subprocess", "docker"], default="docker",
+                   help="sandbox for the holdout run (the research loop uses docker)")
+    p.set_defaults(fn=cmd_promote)
     p = desk.add_parser("authorize", help="show, renew or revoke the standing authorization")
     p.add_argument("--renew", action="store_true")
     p.add_argument("--revoke", action="store_true")

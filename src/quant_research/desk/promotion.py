@@ -19,7 +19,7 @@ from quant_research.research.authorization import AuthorizationError
 from quant_research.research.mandate import Mandate
 from quant_research.research.registry import RegistryError, freeze, transition
 from quant_research.strategy.sandbox import SandboxConfig
-from quant_research.validation.holdout import HoldoutError, run_candidate_holdout
+from quant_research.validation.holdout import HoldoutError, run_candidate_holdout, split_viewing_cap
 
 log = logging.getLogger(__name__)
 PAPER_STATES = ("paper_approved", "paper_active")
@@ -52,9 +52,9 @@ def promote(paths: Paths, store: ExperimentStore, candidate_id: str, sandbox: Sa
             now: float | None = None) -> dict[str, Any]:
     """Push a candidate as far as the authorization and the mandate allow, resuming from the state it reached.
 
-    Paper slots are checked before the holdout so a full roster never spends a viewing; a frozen candidate whose
-    holdout already ran gets that result back (see `run_holdout`); a paper_approved candidate only needs its
-    roster entry.
+    Paper slots and the split's remaining holdout viewings are checked before freezing, so a full roster never
+    spends a viewing and a used-up split never freezes a candidate; a frozen candidate whose holdout already ran
+    gets that result back (see `run_holdout`); a paper_approved candidate only needs its roster entry.
     """
     out: dict[str, Any] = {"candidate_id": candidate_id, "steps": []}
 
@@ -87,6 +87,11 @@ def promote(paths: Paths, store: ExperimentStore, candidate_id: str, sandbox: Sa
         if state() != "paper_approved" and _paper_candidates(paths) >= auth.max_paper_strategies:
             return stop(full)
         if state() == "validated":
+            runs = store.holdout_runs(mandate.split_id)
+            cap = min(mandate.holdout.max_viewings, split_viewing_cap(store, mandate.split_id))
+            if all(r["candidate_hash"] != cand["candidate_hash"] for r in runs) and len(runs) >= cap:
+                return stop(f"holdout of {mandate.split_id} exhausted ({len(runs)} viewing(s), limit {cap}); "
+                            "not freezing")
             freeze(paths, store, candidate_id, "desk standing authorization", actor="desk", authorization=auth)
             out["steps"].append("frozen")
         if state() == "frozen":

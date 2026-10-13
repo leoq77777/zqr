@@ -105,7 +105,30 @@ def test_promotion_respects_product_cap_and_holdout_limit(paths, store, dataset)
     cid3 = _validated(paths, store, dataset, template="momentum", params={"lookback": 48}, holdout=one_view,
                       question="a different question")
     out = promotion.promote(paths, store, cid3)
-    assert "already viewed" in out["stopped"] and out["state"] == "frozen"
+    assert "exhausted" in out["stopped"] and out["state"] == "validated"  # not frozen on a used-up split
+    assert len(store.holdout_runs(dataset[1].split_id)) == 1
+
+
+def test_promotion_does_not_freeze_on_an_exhausted_split(paths, store, dataset):
+    _authorize(paths, max_paper_strategies=3)
+    first = _validated(paths, store, dataset, holdout={**EASY_HOLDOUT, "max_viewings": 1})
+    assert promotion.promote(paths, store, first)["stopped"] == "done"
+    looser = {**EASY_HOLDOUT, "max_viewings": 5}  # a newer mandate cannot reopen the split
+    cid = _validated(paths, store, dataset, template="momentum", params={"lookback": 24}, holdout=looser,
+                     question="a looser mandate")
+    out = promotion.promote(paths, store, cid)
+    assert out["stopped"].startswith(f"holdout of {dataset[1].split_id} exhausted") and out["state"] == "validated"
+    assert out["steps"] == [] and not store.is_frozen(store.get_candidate(cid)["candidate_hash"])
+
+
+def test_desk_promote_command_prints_the_result(paths, store, dataset, capsys):
+    from quant_research.cli import main
+
+    _authorize(paths)
+    cid = _validated(paths, store, dataset, holdout=EASY_HOLDOUT)
+    main(["--home", str(paths.root), "desk", "promote", cid, "--isolation", "subprocess"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["stopped"] == "done" and out["state"] == "paper_approved" and out["candidate_id"] == cid
 
 
 def test_promotion_resumes_after_a_slot_frees(paths, store, dataset):

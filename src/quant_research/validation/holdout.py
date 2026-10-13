@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from quant_research import ENGINE_VERSION
 from quant_research.data.snapshot import content_hash, load_manifest
 from quant_research.experiments.gatekeeper import GateContext
 from quant_research.experiments.runner import ExperimentRequest, ExperimentResult, run_experiment
@@ -29,12 +30,29 @@ DEFAULT_MAX_VIEWINGS = 10  # per split, when no mandate on the split declares a 
 
 
 def split_viewing_cap(store: ExperimentStore, split_id: str) -> int:
-    """The tightest viewing limit any mandate on this split declares; DEFAULT_MAX_VIEWINGS if none does."""
-    from quant_research.research.mandate import Mandate
+    """The tightest viewing limit any mandate on this split declares; DEFAULT_MAX_VIEWINGS if none does.
 
-    caps = [Mandate.model_validate(m["body"]).holdout.max_viewings for m in store.list_mandates()
-            if m["body"].get("split_id") == split_id]
+    Read from the raw bodies so mandates written under an older schema still count; malformed limits are skipped.
+    """
+    caps = []
+    for m in store.list_mandates():
+        body = m["body"]
+        if not isinstance(body, dict) or body.get("split_id") != split_id:
+            continue
+        cap = (body.get("holdout") or {}).get("max_viewings")
+        if type(cap) is int and cap > 0:
+            caps.append(cap)
     return min(caps) if caps else DEFAULT_MAX_VIEWINGS
+
+
+def _repeats_a_completed_run(paths: Paths, store: ExperimentStore, request: ExperimentRequest, chash: str) -> bool:
+    """Whether the gatekeeper would answer this holdout request with an earlier identical result."""
+    split = load_split(paths, request.split_id)
+    if split.dataset_id != request.dataset_id:
+        return False
+    data_hash = load_manifest(paths, request.dataset_id)["data_hash"]
+    return store.find_completed(chash, data_hash, request.split_id, split.holdout, request.engine_config.config_id(),
+                                ENGINE_VERSION, request.policy.policy_id()) is not None
 
 
 def run_holdout(
@@ -48,9 +66,10 @@ def run_holdout(
 ) -> tuple[ExperimentResult, int]:
     """The single gate to holdout data; returns the result and the viewings recorded before this candidate's.
 
-    A candidate already viewed on the split gets its recorded result back without a new viewing. Otherwise the
-    split must have fewer than `max_viewings` viewings, unless `override_reason` is given; an override is recorded
-    and marks the split's holdout as contaminated.
+    The limit is the tighter of `max_viewings` and `split_viewing_cap`. A candidate already viewed on the split
+    gets its recorded result back without a new viewing. Otherwise the split must be under the limit, unless
+    `override_reason` is given; an override is recorded and marks the split's holdout as contaminated. Over the
+    limit, only an exact repeat of a completed run proceeds without an override.
     """
     spec = request.spec.normalized()
     chash = spec.candidate_hash()
@@ -58,10 +77,11 @@ def run_holdout(
         raise HoldoutError("candidate is not frozen; run `zqr freeze-strategy` before the holdout test")
     runs = store.holdout_runs(request.split_id)
     earlier = next((r for r in runs if r["candidate_hash"] == chash), None)
-    over = len(runs) >= max_viewings
-    if earlier is None and over and not override_reason:
-        raise HoldoutError(f"holdout of {request.split_id} already viewed {len(runs)} time(s); the limit is "
-                           f"{max_viewings}")
+    cap = min(max_viewings, split_viewing_cap(store, request.split_id))
+    over = len(runs) >= cap
+    if over and not override_reason and not (earlier is not None
+                                             and _repeats_a_completed_run(paths, store, request, chash)):
+        raise HoldoutError(f"holdout of {request.split_id} already viewed {len(runs)} time(s); the limit is {cap}")
     data = load_holdout_data(paths, request.split_id)
     result = run_experiment(paths, store, request.model_copy(update={"parameters": spec.parameters}),
                             kind="holdout", data=data, sandbox=sandbox, gate=GateContext(caller="holdout"))
@@ -70,9 +90,8 @@ def run_holdout(
         return result, earlier["prior_runs_on_split"]
     prior = store.record_holdout_run(request.split_id, chash, result.experiment_id)
     if over:
-        reason = override_reason or "candidate re-run with a different request after the limit"
-        store.record_holdout_override(request.split_id, result.experiment_id, reason)
-        note = f"over the viewing limit ({reason}); this split's holdout is contaminated"
+        store.record_holdout_override(request.split_id, result.experiment_id, override_reason)
+        note = f"over the viewing limit ({override_reason}); this split's holdout is contaminated"
     elif prior == 0:
         note = "first holdout viewing on this split"
     else:

@@ -67,12 +67,14 @@ under a new name). Failed attaches retry with backoff. Every trader marks equity
 report computes returns from the marks and checks parity on targets, orders and fills.
 
 Promotion copies the validated capital and costs into the roster entry, refuses engine settings paper cannot
-reproduce (`execution_delay_bars`, `adverse_fill`, `rebalance_tolerance`), and resumes from any intermediate
-state. Every holdout path goes through `run_holdout` (`validation/holdout.py`) with a viewing limit: the
-mandate's for a candidate, the tightest limit of the split's mandates (default 10) for `zqr holdout-test
---dataset/--split`. A repeat of an already viewed candidate is not a new viewing. `zqr holdout-test
---override-reason` (dataset/split path only) exceeds the limit; the override is recorded in `holdout_overrides`
-and marks the split's holdout as contaminated.
+reproduce (`execution_delay_bars`, `adverse_fill`, `rebalance_tolerance`), does not freeze a candidate on a split
+whose holdout viewings are used up, and resumes from any intermediate state (`zqr desk promote <candidate_id>`).
+Every holdout path goes through `run_holdout` (`validation/holdout.py`), which enforces the tighter of the
+caller's limit (the mandate's for a candidate) and the tightest limit of the split's mandates (default 10), so a
+newer mandate cannot reopen a split. A repeat of an already viewed candidate is not a new viewing; over the
+limit only an exact repeat runs without an override. `zqr holdout-test --override-reason` (dataset/split path
+only) exceeds the limit; the override is recorded in `holdout_overrides` and marks the split's holdout as
+contaminated.
 
 All state lives under `ZQR_HOME`: `/zqr` (the `zqr-data` volume) in the release container, `./var` in a
 development checkout. There is one SQLite database writer per process (WAL, busy timeout).
@@ -378,6 +380,7 @@ a one-off container with the same mounts while the desk is stopped).
 | `zqr desk up` / `down` | Development checkout only: background supervisor. Refused inside the release container |
 | `zqr desk research-loop`, `zqr paper fleet` | Supervisor children (foreground, for debugging) |
 | `zqr desk recover` | Close out sessions of a dead desk process |
+| `zqr desk promote <candidate_id> [--isolation docker\|subprocess]` | Resume a candidate's promotion (freeze, holdout, paper approval, roster) under the standing authorization |
 | `zqr release [--target HOST\|local] [--allow-dirty] [--no-up]` | Development machine: build, ship and start a version |
 
 Lower-level commands (`fetch-data`, `backtest`, `mandate`, `candidate`, `holdout-test`, `bench`, `paper`, …)
