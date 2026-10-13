@@ -1,6 +1,7 @@
 from quant_research.data.bars import to_epoch
+from quant_research.data.snapshot import freeze_dataset
 from quant_research.data.validate import validate_bars
-from quant_research.paper.barstore import BarStore
+from quant_research.paper.barstore import BarStore, snapshot_seed
 from quant_research.paper.feeds import CoinbaseCandlePoller
 from quant_research.paper.fleet import _Feed
 from tests.conftest import HOUR, T0, make_raw
@@ -44,3 +45,15 @@ def test_feed_is_anchored_at_the_frozen_dataset(paths, dataset):
     assert opens[0] == T0
     assert opens[-1] == NOW0 - NOW0 % HOUR - HOUR
     assert (feed.store.missing_opens() == [])
+
+
+def test_seed_is_the_longest_coinbase_dataset(paths):
+    def freeze(venue, n, start, **extra):
+        bars, rep = validate_bars(make_raw(n, start=start), venue, "BTC-USD", "ONE_HOUR", start, start + n * HOUR)
+        freeze_dataset(paths, bars, rep, extra=extra)
+
+    freeze("coinbase", 2000, T0)
+    freeze("coinbase", 100, T0 + 2500 * HOUR)
+    freeze("lab", 3000, T0 - 1000 * HOUR, synthetic=True)
+    seed = snapshot_seed(paths, "BTC-USD", "ONE_HOUR")
+    assert to_epoch(seed["bar_open_time"])[0] == T0 and len(seed) == 2000

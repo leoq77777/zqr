@@ -1,3 +1,4 @@
+import sqlite3
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ from quant_research.backtest.engine import CostConfig, EngineConfig, run_backtes
 from quant_research.data.validate import validate_bars
 from quant_research.paper.broker import SimulatedBroker
 from quant_research.paper.feeds import CoinbaseCandlePoller
+from quant_research.paper.ledger import Ledger
 from quant_research.paper.models import BrokerEvent, BrokerEventType, OrderIntent, ProductSpec, Side
 from quant_research.paper.orders import Order, OrderError, OrderState
 from quant_research.paper.risk import RiskLimits
@@ -117,6 +119,21 @@ def test_restart_recovers_from_ledger(tmp_path):
     assert len(t2.orders) == n_orders and t2.balances() == bal1
     t2.recover()
     assert not t2.reconcile()
+
+
+def test_a_failed_bulk_bar_write_rolls_back(tmp_path):
+    bars = _bars(5)
+    ledger = Ledger(tmp_path / "paper.db")
+    ledger._conn.execute("CREATE TRIGGER poison BEFORE INSERT ON bars BEGIN SELECT RAISE(ABORT, 'boom'); END")
+    with pytest.raises(sqlite3.Error):
+        ledger.record_bars(bars)
+    ledger._conn.execute("DROP TRIGGER poison")
+    ledger.record_bars(bars.iloc[:2])
+    ledger.put("k", 1)
+    ledger.close()
+    reopened = Ledger(tmp_path / "paper.db")
+    assert reopened.get("k") == 1 and len(reopened.bars()) == 2
+    reopened.close()
 
 
 def test_stale_data_and_kill_switch_block_new_exposure(tmp_path):

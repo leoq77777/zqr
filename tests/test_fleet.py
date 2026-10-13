@@ -5,6 +5,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 
 from quant_research.data.bars import to_epoch
 from quant_research.desk.presets import preset_roster
@@ -182,6 +183,50 @@ def test_fleet_catches_up_after_an_outage_and_trades_only_the_latest_bar(tmp_pat
     assert len(trader.ledger.decisions()) == 1
     store = BarStore.for_feed(paths, "BTC-USD", "ONE_HOUR")
     assert store.missing_opens() == [] and store.last_open() == opens[-1]
+
+
+def test_a_restart_after_an_outage_trades_the_latest_bar(tmp_path):
+    t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma")])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
+    fleet.step()
+    for _ in range(3):
+        t["now"] += HOUR
+        fleet.step()
+    fleet.traders["btc-sma"].ledger.close()
+    t["now"] += 6 * HOUR
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
+    fleet.step()
+    trader = fleet.traders["btc-sma"]
+    store = fleet.feeds[("BTC-USD", "ONE_HOUR")].store
+    decisions = trader.ledger.decisions()
+    assert len(decisions) == 4
+    assert to_epoch(pd.to_datetime(pd.Series([decisions[-1]["bar_open"]]), utc=True))[0] == store.last_open()
+    assert (to_epoch(trader.history["bar_open_time"]) == to_epoch(store.bars["bar_open_time"])).all()
+    assert len(trader.history) == len(store.bars)
+
+
+def test_a_failed_catch_up_bar_is_retried_on_the_next_step(tmp_path, monkeypatch):
+    t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma")])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
+    fleet.step()
+    trader = fleet.traders["btc-sma"]
+    ingest, calls = trader.ingest, {"n": 0}
+
+    def flaky(bar):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("one-off ingest failure")
+        return ingest(bar)
+
+    monkeypatch.setattr(trader, "ingest", flaky)
+    t["now"] += 5 * HOUR
+    fleet.step()
+    assert "one-off ingest failure" in fleet.errors["btc-sma"]
+    t["now"] += HOUR
+    fleet.step()
+    store = fleet.feeds[("BTC-USD", "ONE_HOUR")].store
+    assert len(trader.history) == len(store.bars)
+    assert (to_epoch(trader.history["bar_open_time"]) == to_epoch(store.bars["bar_open_time"])).all()
 
 
 def test_risk_edits_reach_running_traders_and_identity_edits_are_refused(tmp_path):

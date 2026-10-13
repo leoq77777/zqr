@@ -20,6 +20,7 @@ from typing import Any, Literal
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
+from quant_research.data.bars import to_epoch
 from quant_research.paper.barstore import BarStore, snapshot_seed
 from quant_research.paper.feeds import SEED_BARS, CoinbaseCandlePoller, coinbase_mid_price
 from quant_research.paper.models import ProductSpec
@@ -207,7 +208,11 @@ class PaperFleet:
                 trader = make_trader(self._config(e), self.workdir / name, self._product(e.product),
                                      paths=self.paths, clock=self.clock)
                 trader.recover()
-                trader.warm_up(feed.history)
+                history, last = feed.history, trader.ledger.get("last_bar_open")
+                if last is not None:
+                    cutoff = to_epoch(pd.to_datetime(pd.Series([last]), utc=True))[0]
+                    history = history[to_epoch(history["bar_open_time"]) <= cutoff]
+                trader.warm_up(history)
                 trader.write_health()
             except Exception as exc:  # noqa: BLE001
                 n = self._failures[name] = self._failures.get(name, 0) + 1
@@ -262,10 +267,7 @@ class PaperFleet:
             for name in members:
                 trader = self.traders[name]
                 try:
-                    for bar in bars[:-1]:
-                        trader.ingest(bar)
-                    if bars:
-                        trader.on_bar(bars[-1])
+                    self._catch_up(trader, feed)
                 except Exception as exc:  # noqa: BLE001
                     self.errors[name] = f"{type(exc).__name__}: {exc}"
                     trader._log("ALERT", "bar_error", error=self.errors[name])
@@ -283,6 +285,19 @@ class PaperFleet:
                         self.errors[name] = f"{type(exc).__name__}: {exc}"
                         self.traders[name]._log("ALERT", "market_error", error=self.errors[name])
         return self.write_health()
+
+    @staticmethod
+    def _catch_up(trader: PaperTrader, feed: _Feed) -> None:
+        """Deliver the stored bars the trader has not seen: all but the latest without deciding, then the latest."""
+        bars = feed.history
+        if not trader.history.empty and len(bars):
+            last = to_epoch(trader.history["bar_open_time"])[-1]
+            bars = bars[to_epoch(bars["bar_open_time"]) > last]
+        rows = bars.to_dict("records")
+        for bar in rows[:-1]:
+            trader.ingest(bar)
+        if rows:
+            trader.on_bar(rows[-1])
 
     def write_health(self) -> dict[str, Any]:
         strategies = {}

@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 from quant_research.data.bars import TIME_COLUMNS, to_epoch
+from quant_research.data.coinbase import VENUE
 from quant_research.data.snapshot import list_datasets, load_dataset
 from quant_research.paths import Paths
 from quant_research.timeutil import granularity_seconds
@@ -68,11 +69,12 @@ class BarStore:
 
 
 def snapshot_seed(paths: Paths, product: str, granularity: str) -> pd.DataFrame | None:
-    """Bars of the most recent frozen dataset for this product and granularity, if any."""
+    """Bars of the frozen Coinbase dataset for this product and granularity reaching furthest back, if any."""
     found = [m for m in list_datasets(paths)
-             if m.get("instrument") == product and m.get("granularity") == granularity]
+             if m.get("instrument") == product and m.get("granularity") == granularity
+             and m.get("venue") == VENUE and not m.get("synthetic")]
     if not found:
         return None
-    latest = max(found, key=lambda m: m.get("requested_end") or 0)
-    bars, _ = load_dataset(paths, latest["dataset_id"])
+    longest = min(found, key=lambda m: (m.get("requested_start") or 0, -(m.get("requested_end") or 0)))
+    bars, _ = load_dataset(paths, longest["dataset_id"])
     return bars
