@@ -181,3 +181,22 @@ def test_fleet_catches_up_after_an_outage_and_trades_only_the_latest_bar(tmp_pat
     assert len(trader.ledger.decisions()) == 1
     store = BarStore.for_feed(paths, "BTC-USD", "ONE_HOUR")
     assert store.missing_opens() == [] and store.last_open() == opens[-1]
+
+
+def test_risk_edits_reach_running_traders_and_identity_edits_are_refused(tmp_path):
+    t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma")])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
+    fleet.step()
+    r = load_roster(roster)
+    r.risk.max_order_notional = 100
+    save_roster(roster, r)
+    _bump(roster, NOW0 + 1)
+    fleet.step()
+    trader = fleet.traders["btc-sma"]
+    assert trader.cfg.risk.max_order_notional == 100 and trader.risk.limits.max_order_notional == 100
+    r.entries[0].parameters = {"fast": 6, "slow": 20}
+    save_roster(roster, r)
+    _bump(roster, NOW0 + 2)
+    health = fleet.step()
+    assert fleet.traders["btc-sma"].cfg.parameters == {"fast": 5, "slow": 20}
+    assert health["errors"]["btc-sma"].startswith("config change refused")

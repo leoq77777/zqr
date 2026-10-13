@@ -170,6 +170,7 @@ class PaperFleet:
             self._log("INFO", "strategy_detached", name=name)
         for name, e in wanted.items():
             if name in self.traders:
+                self._refresh(name, e)
                 continue
             try:
                 feed = self.feeds.get((e.product, e.granularity))
@@ -193,6 +194,23 @@ class PaperFleet:
                     self.on_activate(e)
                 except Exception as exc:  # noqa: BLE001
                     self._log("WARN", "activate_hook_failed", name=name, error=f"{type(exc).__name__}: {exc}")
+
+    def _refresh(self, name: str, e: RosterEntry) -> None:
+        """Risk limits update in place; anything else that changes what is traded is refused."""
+        trader, want = self.traders[name], self._config(e)
+        running = trader.cfg.identity_hash()
+        if want.identity_hash() != running:
+            if not self.errors.get(name, "").startswith("config change refused"):
+                self.errors[name] = (f"config change refused: running {running}, roster {want.identity_hash()}; "
+                                     "add the changed strategy under a new name")
+                self._log("ALERT", "config_change_refused", name=name, running=running,
+                          wanted=want.identity_hash())
+            return
+        if self.errors.get(name, "").startswith("config change refused"):
+            self.errors.pop(name)
+        self.entries[name] = e
+        if want.risk != trader.cfg.risk:
+            trader.update_risk(want.risk)
 
     # -- loop ------------------------------------------------------------------------------------
     def step(self) -> dict[str, Any]:

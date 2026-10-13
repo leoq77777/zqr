@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from quant_research.backtest.rebalance import needs_trade
 from quant_research.data.bars import to_epoch
+from quant_research.hashing import hash_obj
 from quant_research.paper.broker import Broker, BrokerTimeout
 from quant_research.paper.ledger import Ledger
 from quant_research.paper.models import (
@@ -71,6 +72,10 @@ class PaperConfig(BaseModel):
     fee_rate: Decimal = Decimal("0.006")  # simulator only
     slippage_bps: Decimal = Decimal("5")  # simulator only
 
+    def identity_hash(self) -> str:
+        """What is traded and how it is costed; a change needs a new strategy name. Risk limits are excluded."""
+        return hash_obj(self.model_dump(mode="json", exclude={"risk", "sandbox"}))[:12]
+
 
 class PaperTrader:
     def __init__(self, cfg: PaperConfig, ledger: Ledger, broker: Broker, product: ProductSpec,
@@ -116,7 +121,8 @@ class PaperTrader:
         last_avail = self.ledger.get("last_data_time")
         stale = last_avail is None or now - last_avail > self.cfg.risk.stale_after_seconds
         health = {
-            "ts": now, "name": self.cfg.name, "last_bar_open": self.ledger.get("last_bar_open"),
+            "ts": now, "name": self.cfg.name, "config_hash": self.cfg.identity_hash(),
+            "risk": self.cfg.risk.model_dump(), "last_bar_open": self.ledger.get("last_bar_open"),
             "data_age_seconds": None if last_avail is None else now - last_avail,
             "last_seen": self.ledger.get("last_seen_time"), "stale": stale,
             "halted_reason": self.halted_reason, "kill_switch": self.risk.kill_switch_on(),
@@ -194,6 +200,11 @@ class PaperTrader:
         self.resolve_orders()
         self.reconcile()
         self._log("INFO", "recovered", live_orders=len(self.live_orders()))
+
+    def update_risk(self, limits: RiskLimits) -> None:
+        self.cfg = self.cfg.model_copy(update={"risk": limits})
+        self.risk = RiskManager(limits)
+        self._log("INFO", "risk_limits_updated", limits=limits.model_dump())
 
     # -- bar processing --------------------------------------------------------------------------
     def _append_bar(self, bar: dict[str, Any]) -> bool:
