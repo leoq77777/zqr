@@ -41,41 +41,56 @@ class CoinbaseCandlePoller:
         self.clock = clock
         self.last_open: int | None = None
 
-    def history(self, bars: int) -> pd.DataFrame:
-        """Recent completed bars for strategy warm-up (paged in 350-bar requests)."""
+    def _end(self) -> int:
         now = int(self.clock())
-        end = now - now % self.step
-        frames, start = [], end - bars * self.step
+        return now - now % self.step
+
+    def range(self, start: int, end: int) -> pd.DataFrame:
+        """Completed bars with open time in [start, end), paged in 350-bar requests."""
+        frames = []
         while start < end:
             we = min(start + 350 * self.step, end)
             frames.append(self._fetch(start, we))
             start = we
-        df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        frames = [f for f in frames if len(f)]
+        if not frames:
+            return pd.DataFrame()
+        df = pd.concat(frames, ignore_index=True)
+        return df.drop_duplicates("bar_open_time").sort_values("bar_open_time").reset_index(drop=True)
+
+    def history(self, bars: int) -> pd.DataFrame:
+        """The most recent `bars` completed bars."""
+        end = self._end()
+        df = self.range(end - bars * self.step, end)
         if len(df):
-            df = df.drop_duplicates("bar_open_time").sort_values("bar_open_time").reset_index(drop=True)
             self.last_open = int(to_epoch(df["bar_open_time"])[-1])
         return df
 
     def _fetch(self, start: int, end: int) -> pd.DataFrame:
         rec = self.client.candles(self.product_id, start, end - self.step, self.granularity)
         fetched_at = self.clock()
+        candles = rec.body.get("candles", [])
+        if not candles:
+            return pd.DataFrame()
         raw = pd.DataFrame([{"start": int(c["start"]), "open": float(c["open"]), "high": float(c["high"]),
                              "low": float(c["low"]), "close": float(c["close"]), "volume": float(c["volume"]),
                              "source_version": SOURCE_VERSION, "fetched_at": fetched_at}
-                            for c in rec.body.get("candles", [])])
+                            for c in candles])
         bars, _ = validate_bars(raw, VENUE, self.product_id, self.granularity, start, end)
         # Live bars become available when we observe them, not at their nominal close.
         bars["available_at"] = pd.to_datetime(fetched_at, unit="s", utc=True)
         return bars
 
     def poll(self) -> list[dict[str, Any]]:
-        now = int(self.clock())
-        end = now - now % self.step
-        bars = self._fetch(end - self.lookback * self.step, end)
-        if self.last_open is not None:
+        """Every completed bar after the last one emitted, in order; after an outage this backfills the gap."""
+        end = self._end()
+        start = end - self.lookback * self.step if self.last_open is None else self.last_open + self.step
+        bars = self.range(start, end) if start < end else pd.DataFrame()
+        if len(bars) and self.last_open is not None:
             bars = bars[to_epoch(bars["bar_open_time"]) > self.last_open]
-        if len(bars):
-            self.last_open = int(to_epoch(bars["bar_open_time"])[-1])
+        if not len(bars):
+            return []
+        self.last_open = int(to_epoch(bars["bar_open_time"])[-1])
         return bars.to_dict("records")
 
 
