@@ -20,6 +20,8 @@ import pandas as pd
 from pydantic import BaseModel, Field, NonNegativeFloat, NonNegativeInt, PositiveFloat
 
 from quant_research import ENGINE_VERSION
+from quant_research.backtest.rebalance import EPS as _EPS
+from quant_research.backtest.rebalance import needs_trade
 from quant_research.data.bars import to_epoch
 from quant_research.hashing import hash_obj
 
@@ -66,7 +68,6 @@ class BacktestResult:
 FILL_COLUMNS = ["time", "bar_index", "side", "qty", "price", "mark_price", "notional", "fee", "slippage_cost",
                 "target"]
 TRIP_COLUMNS = ["entry_time", "exit_time", "bars_held", "pnl", "return"]
-_EPS = 1e-9  # relative to equity: below this a rebalance is floating-point noise
 
 
 def run_backtest(
@@ -111,12 +112,10 @@ def run_backtest(
         target = float(targets[decided]) if decided >= 0 else math.nan
         if not math.isnan(target):  # NaN = no instruction at this bar (warmup or unscheduled rebalance)
             equity_open = cash + qty * o[i]
-            desired_value = target * equity_open
-            delta = desired_value - qty * o[i]
-            threshold = max(config.min_trade_notional, config.rebalance_tolerance * equity_open,
-                            _EPS * equity_open)
+            delta = target * equity_open - qty * o[i]
             full_exit = target == 0.0 and qty > 0
-            if full_exit or abs(delta) >= threshold:
+            if needs_trade(target, qty * o[i], equity_open, tolerance=config.rebalance_tolerance,
+                           min_notional=config.min_trade_notional):
                 value_before = equity_open
                 if delta > 0:
                     ref = max(o[i], c[decided]) if config.adverse_fill else o[i]

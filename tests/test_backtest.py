@@ -78,3 +78,12 @@ def test_metrics_definitions():
     assert m["max_drawdown"] == pytest.approx(-0.1)
     assert m["sharpe"] == pytest.approx(rets.mean() / rets.std(ddof=1) * np.sqrt(8760))
     assert m["n_fills"] == 1 and m["n_round_trips"] == 0
+
+
+def test_needs_trade_rule():
+    from quant_research.backtest.rebalance import needs_trade
+
+    assert not needs_trade(0.5, 5_400.0, 10_000.0, tolerance=0.1, min_notional=1.0)
+    assert needs_trade(0.5, 3_900.0, 10_000.0, tolerance=0.1, min_notional=1.0)
+    assert needs_trade(0.0, 0.5, 10_000.0, tolerance=0.1, min_notional=1.0)  # a full exit ignores the band
+    assert not needs_trade(0.0, 0.0, 10_000.0, tolerance=0.0, min_notional=1.0)

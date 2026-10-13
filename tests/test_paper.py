@@ -11,6 +11,7 @@ from quant_research.paper.orders import Order, OrderError, OrderState
 from quant_research.paper.risk import RiskLimits
 from quant_research.paper.runner import make_trader, run_replay
 from quant_research.paper.trader import PaperConfig
+from quant_research.portfolio.policy import PortfolioPolicy
 from quant_research.strategy.compute import compute_targets
 from quant_research.strategy.spec import StrategySpec
 from tests.conftest import HOUR, T0, make_raw
@@ -144,3 +145,18 @@ def test_quantization_rounds_down():
     p = PRODUCT.model_copy(update={"base_increment": Decimal("0.001")})
     assert p.quantize_base(Decimal("1.23456")) == Decimal("1.234")
     assert np.isclose(float(p.quantize_base(Decimal("0.0009"))), 0)
+
+
+def test_paper_honours_the_band_like_the_backtest(tmp_path):
+    raw = make_raw(24)
+    px = np.linspace(100, 110, len(raw))
+    for col in ("open", "high", "low", "close"):
+        raw[col] = px
+    bars, _ = validate_bars(raw, "coinbase", "BTC-USD", "ONE_HOUR", T0, T0 + 24 * HOUR)
+    policy = PortfolioPolicy(asset_cap=0.5, band=0.1)
+    cfg = _cfg(strategy_ref="template:buy_and_hold", parameters={}, policy=policy, fee_rate=Decimal(0),
+               slippage_bps=Decimal(0), buy_cash_buffer=0)
+    trader = run_replay(cfg, bars, tmp_path / "band", PRODUCT)
+    bt = run_backtest(bars, np.full(len(bars), 0.5),
+                      policy.engine_config(EngineConfig(costs=CostConfig(fee_rate=0, slippage_bps=0))))
+    assert len(trader.ledger.fills()) == len(bt.fills) == 1

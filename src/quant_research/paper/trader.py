@@ -15,6 +15,7 @@ from typing import Any
 import pandas as pd
 from pydantic import BaseModel, Field
 
+from quant_research.backtest.rebalance import needs_trade
 from quant_research.data.bars import to_epoch
 from quant_research.paper.broker import Broker, BrokerTimeout
 from quant_research.paper.ledger import Ledger
@@ -58,6 +59,7 @@ class PaperConfig(BaseModel):
     initial_base: Decimal = Decimal("0")
     history_bars: int = 3000
     buy_cash_buffer: float = 0.01  # headroom for price moves between decision and fill
+    min_trade_notional: float = 1.0  # the engine's default; skip smaller rebalances
     reconcile_tolerance: Decimal = Decimal("0.00000001")
     unknown_query_limit: int = 3  # queries returning "not found" before an UNKNOWN order is closed
     risk: RiskLimits = Field(default_factory=RiskLimits)
@@ -257,6 +259,9 @@ class PaperTrader:
               now: float) -> OrderIntent | None:
         p = self.product
         current_value = bal[p.base_currency] * price
+        if not needs_trade(decision.target_fraction, float(current_value), float(equity),
+                           tolerance=self.cfg.policy.band, min_notional=self.cfg.min_trade_notional):
+            return None
         delta = D(decision.target_fraction) * equity - current_value
         if decision.reduce_only and delta > 0:
             return None
