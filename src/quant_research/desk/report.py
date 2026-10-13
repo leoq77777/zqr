@@ -173,7 +173,8 @@ def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[li
             left = m.holdout.max_viewings - len(store.holdout_runs(m.split_id))
             lines.append(f"| {product} | {store.trial_count(m.split_id)} | "
                          f"{', '.join(f'{k} {v}' for k, v in sorted(states.items())) or '-'} | "
-                         f"{left}{' **(exhausted: no more automatic promotion)**' if left <= 0 else ''} |")
+                         f"{left}{' **(exhausted: no more automatic promotion)**' if left <= 0 else ''}"
+                         f"{' **(contaminated by override)**' if store.holdout_overrides(m.split_id) else ''} |")
     produced = [r for r in rows if r.get("candidate_id") or r.get("verdict")]
     if produced:
         lines += ["", "| run | product | topic | verdict | candidate | promotion | cost |",

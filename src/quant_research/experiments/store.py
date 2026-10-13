@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS holdout_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, split_id TEXT, candidate_hash TEXT, experiment_id TEXT,
     run_at REAL, prior_runs_on_split INTEGER
 );
+CREATE TABLE IF NOT EXISTS holdout_overrides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, split_id TEXT, experiment_id TEXT, reason TEXT, at REAL
+);
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY, created_at REAL, updated_at REAL, question TEXT, dataset_id TEXT, split_id TEXT,
     state TEXT, budget TEXT, usage TEXT, config TEXT, stop_reason TEXT, workspace TEXT
@@ -237,6 +240,14 @@ class ExperimentStore:
                                       "experiment_id": experiment_id, "run_at": time.time(),
                                       "prior_runs_on_split": prior})
         return prior
+
+    def record_holdout_override(self, split_id: str, experiment_id: str, reason: str) -> None:
+        self._insert("holdout_overrides", {"split_id": split_id, "experiment_id": experiment_id, "reason": reason,
+                                           "at": time.time()})
+
+    def holdout_overrides(self, split_id: str) -> list[dict[str, Any]]:
+        rows = self._exec("SELECT * FROM holdout_overrides WHERE split_id=? ORDER BY at", (split_id,)).fetchall()
+        return [dict(r) for r in rows]
 
     # -- sessions --------------------------------------------------------------------------------
     def create_session(self, **fields: Any) -> str:

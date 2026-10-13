@@ -230,14 +230,15 @@ def cmd_freeze_strategy(args) -> None:
 
 def cmd_holdout(args) -> None:
     from quant_research.report.markdown import write_experiment_report
-    from quant_research.validation.holdout import run_holdout
+    from quant_research.validation.holdout import run_holdout, split_viewing_cap
 
     if args.candidate:
         return _candidate_call(_cand_holdout)(args)
     if not (args.dataset and args.split):
         raise SystemExit("give --candidate (mandate-governed) or --dataset/--split with a frozen strategy")
     paths, store = _ctx(args)
-    res, prior = run_holdout(paths, store, _request(args, paths), sandbox=_sandbox(args))
+    res, prior = run_holdout(paths, store, _request(args, paths), sandbox=_sandbox(args),
+                             max_viewings=split_viewing_cap(store, args.split), override_reason=args.override_reason)
     out = _summ(res) | {"prior_holdout_runs_on_split": prior}
     if res.has_result:
         out["report"] = str(write_experiment_report(paths, store, res.experiment_id))
@@ -798,6 +799,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = research_cmd("holdout-test", cmd_holdout, "final test on holdout (frozen candidates only)", segment=False,
                      required=False)
     p.add_argument("--candidate", help="registry candidate id (frozen); uses its mandate's viewing limit and rule")
+    p.add_argument("--override-reason", help="exceed the split's viewing limit; recorded, and marks the split's "
+                   "holdout as contaminated")
 
     p = sub.add_parser("freeze-strategy", help="freeze a candidate before the holdout test")
     _add_strategy(p)

@@ -25,22 +25,58 @@ def load_holdout_data(paths: Paths, split_id: str) -> SegmentData:
     return SegmentData(bars, split.holdout, "holdout")
 
 
+DEFAULT_MAX_VIEWINGS = 10  # per split, when no mandate on the split declares a limit
+
+
+def split_viewing_cap(store: ExperimentStore, split_id: str) -> int:
+    """The tightest viewing limit any mandate on this split declares; DEFAULT_MAX_VIEWINGS if none does."""
+    from quant_research.research.mandate import Mandate
+
+    caps = [Mandate.model_validate(m["body"]).holdout.max_viewings for m in store.list_mandates()
+            if m["body"].get("split_id") == split_id]
+    return min(caps) if caps else DEFAULT_MAX_VIEWINGS
+
+
 def run_holdout(
     paths: Paths,
     store: ExperimentStore,
     request: ExperimentRequest,
     sandbox: SandboxConfig | None = None,
+    *,
+    max_viewings: int,
+    override_reason: str | None = None,
 ) -> tuple[ExperimentResult, int]:
-    """Returns the result and how many holdout runs had already been made on this split."""
+    """The single gate to holdout data; returns the result and the viewings recorded before this candidate's.
+
+    A candidate already viewed on the split gets its recorded result back without a new viewing. Otherwise the
+    split must have fewer than `max_viewings` viewings, unless `override_reason` is given; an override is recorded
+    and marks the split's holdout as contaminated.
+    """
     spec = request.spec.normalized()
-    if not store.is_frozen(spec.candidate_hash()):
+    chash = spec.candidate_hash()
+    if not store.is_frozen(chash):
         raise HoldoutError("candidate is not frozen; run `zqr freeze-strategy` before the holdout test")
+    runs = store.holdout_runs(request.split_id)
+    earlier = next((r for r in runs if r["candidate_hash"] == chash), None)
+    over = len(runs) >= max_viewings
+    if earlier is None and over and not override_reason:
+        raise HoldoutError(f"holdout of {request.split_id} already viewed {len(runs)} time(s); the limit is "
+                           f"{max_viewings}")
     data = load_holdout_data(paths, request.split_id)
     result = run_experiment(paths, store, request.model_copy(update={"parameters": spec.parameters}),
                             kind="holdout", data=data, sandbox=sandbox, gate=GateContext(caller="holdout"))
-    prior = store.record_holdout_run(request.split_id, spec.candidate_hash(), result.experiment_id)
-    note = ("first holdout viewing on this split" if prior == 0 else
-            f"holdout already viewed {prior} time(s) on this split; result is no longer an untouched test")
+    if earlier is not None and result.status == "duplicate":
+        store.set_notes(result.experiment_id, f"repeat of holdout run {earlier['experiment_id']}; not a new viewing")
+        return result, earlier["prior_runs_on_split"]
+    prior = store.record_holdout_run(request.split_id, chash, result.experiment_id)
+    if over:
+        reason = override_reason or "candidate re-run with a different request after the limit"
+        store.record_holdout_override(request.split_id, result.experiment_id, reason)
+        note = f"over the viewing limit ({reason}); this split's holdout is contaminated"
+    elif prior == 0:
+        note = "first holdout viewing on this split"
+    else:
+        note = f"holdout already viewed {prior} time(s) on this split; result is no longer an untouched test"
     store.set_notes(result.experiment_id, note)
     return result, prior
 
@@ -63,14 +99,10 @@ def run_candidate_holdout(paths: Paths, store: ExperimentStore, candidate_id: st
     if mandate.evaluation_design.kind != "single_validation":
         raise HoldoutError("holdout of a walk-forward procedure (re-selection through the holdout) is not "
                            "implemented; a fixed-parameter holdout would test a different candidate")
-    viewed = len(store.holdout_runs(mandate.split_id))
-    if viewed >= mandate.holdout.max_viewings:
-        raise HoldoutError(f"holdout of {mandate.split_id} already viewed {viewed} time(s); the mandate allows "
-                           f"{mandate.holdout.max_viewings}")
     request = ExperimentRequest(strategy_ref=cand["strategy_ref"], parameters=cand["parameters"],
                                 dataset_id=mandate.dataset_id, split_id=mandate.split_id,
                                 engine_config=mandate.engine_config, policy=mandate.policy)
-    result, prior = run_holdout(paths, store, request, sandbox)
+    result, prior = run_holdout(paths, store, request, sandbox, max_viewings=mandate.holdout.max_viewings)
     evidence = {"holdout_experiment": result.experiment_id, "prior_viewings": prior, "status": result.status}
     if result.has_result:
         primary = metric_value(result.metrics, mandate.primary_metric)

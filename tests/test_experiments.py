@@ -9,7 +9,7 @@ from quant_research.report.markdown import write_experiment_report
 from quant_research.strategy.compute import compute_targets
 from quant_research.strategy.plugin import register_plugin
 from quant_research.strategy.spec import StrategySpec
-from quant_research.validation.holdout import HoldoutError, run_holdout
+from quant_research.validation.holdout import HoldoutError, run_holdout, split_viewing_cap
 from quant_research.validation.robustness import run_robustness
 from quant_research.validation.splits import SplitError, load_research_segment
 from quant_research.validation.walkforward import walk_forward
@@ -110,15 +110,16 @@ def test_holdout_requires_freeze_and_tracks_viewings(paths, store, dataset):
     manifest, split = dataset
     req = _req(manifest, split)
     with pytest.raises(HoldoutError):
-        run_holdout(paths, store, req)
+        run_holdout(paths, store, req, max_viewings=10)
     spec = req.spec.normalized()
     store.freeze_candidate(spec.candidate_hash(), spec.strategy_ref, spec.parameters)
-    res, prior = run_holdout(paths, store, req)
+    res, prior = run_holdout(paths, store, req, max_viewings=10)
     assert res.status == "completed" and prior == 0
     rec = store.get_experiment(res.experiment_id)
     assert (rec["window_start"], rec["window_end"]) == tuple(split.holdout)
-    _, prior2 = run_holdout(paths, store, req)
-    assert prior2 == 1
+    again, prior2 = run_holdout(paths, store, req, max_viewings=10)
+    assert again.status == "duplicate" and prior2 == 0  # the same candidate again is not a new viewing
+    assert len(store.holdout_runs(split.split_id)) == 1
     assert replay_experiment(paths, store, res.experiment_id)["reproducible"]
     # holdout runs do not inflate research trial counts
     assert store.trial_count(split_id=split.split_id) == 0
@@ -131,11 +132,40 @@ def test_holdout_dsr_counts_viewings_not_research_trials(paths, store, dataset):
     req = _req(manifest, split)
     spec = req.spec.normalized()
     store.freeze_candidate(spec.candidate_hash(), spec.strategy_ref, spec.parameters)
-    first, _ = run_holdout(paths, store, req)
+    first, _ = run_holdout(paths, store, req, max_viewings=10)
     assert store.trial_count(split_id=split.split_id) == 3
     assert first.statistics["n_trials"] == 1 and first.statistics["dsr"] == pytest.approx(first.statistics["psr_0"])
-    second, _ = run_holdout(paths, store, req)
+    second, _ = run_holdout(paths, store, req, max_viewings=10)
     assert second.statistics["n_trials"] == 2
+
+
+def test_holdout_cap_applies_to_every_path_and_overrides_are_recorded(paths, store, dataset):
+    manifest, split = dataset
+    reqs = [_req(manifest, split, parameters={"fast": f, "slow": 50}) for f in (5, 8, 12)]
+    for r in reqs:
+        spec = r.spec.normalized()
+        store.freeze_candidate(spec.candidate_hash(), spec.strategy_ref, spec.parameters)
+    run_holdout(paths, store, reqs[0], max_viewings=2)
+    run_holdout(paths, store, reqs[1], max_viewings=2)
+    again, _ = run_holdout(paths, store, reqs[0], max_viewings=2)
+    assert again.status == "duplicate" and len(store.holdout_runs(split.split_id)) == 2
+    with pytest.raises(HoldoutError, match="already viewed 2"):
+        run_holdout(paths, store, reqs[2], max_viewings=2)
+    run_holdout(paths, store, reqs[2], max_viewings=2, override_reason="manual check")
+    assert len(store.holdout_runs(split.split_id)) == 3
+    assert store.holdout_overrides(split.split_id)[0]["reason"] == "manual check"
+
+
+def test_split_viewing_cap_uses_the_tightest_mandate(store, dataset):
+    from tests.conftest import make_mandate
+
+    _, split = dataset
+    assert split_viewing_cap(store, split.split_id) == 10
+    for cap in (4, 2):
+        m = make_mandate(dataset, holdout={"max_viewings": cap, "min_primary": 0.0, "min_total_return": 0.0},
+                         question=f"cap {cap}")
+        store.put_mandate(m.mandate_id(), m.model_dump(mode="json"))
+    assert split_viewing_cap(store, split.split_id) == 2
 
 
 def test_parallel_matches_serial(paths, store, dataset):
