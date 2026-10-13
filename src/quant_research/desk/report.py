@@ -1,7 +1,8 @@
 """Daily desk report: `desk/reports/YYYY-MM-DD.md` (UTC day).
 
-Paper: per strategy equity, return vs buy-and-hold over the same bars, trades, fees, alerts, and a decision-parity
-check (the bars the fleet recorded are re-run through the same strategy code; the target must be identical).
+Paper: per strategy equity, return vs buy-and-hold over the same bars, trades, fees, alerts, and decision parity
+(targets recomputed from the bar store, orders re-derived with the backtest rule, fills compared with the next bar's
+open).
 Research: sessions, cost, trials, candidates by state, holdout viewings left, violations, audit failures.
 """
 
@@ -13,22 +14,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
-
 from quant_research.desk import research as rl
 from quant_research.desk.config import load_config
 from quant_research.desk.promotion import roster_path
 from quant_research.desk.supervisor import state_file
 from quant_research.experiments.store import ExperimentStore
-from quant_research.paper.fleet import Roster, RosterEntry, entry_costs, load_roster
+from quant_research.paper.barstore import BarStore
+from quant_research.paper.fleet import Roster, entry_costs, load_roster
 from quant_research.paper.ledger import Ledger
-from quant_research.paper.trader import target_fraction
+from quant_research.paper.parity import paper_parity
 from quant_research.paths import Paths
 from quant_research.research.mandate import Mandate
-from quant_research.strategy.sandbox import SandboxConfig
-from quant_research.strategy.spec import StrategySpec
-
-MAX_PARITY_CHECKS = 48
 
 
 def _window(day: str) -> tuple[float, float]:
@@ -40,46 +36,26 @@ def _pct(x: float | None) -> str:
     return "-" if x is None else f"{x:+.2%}"
 
 
-def parity(entry: RosterEntry, ledger: Ledger, decisions: list[dict[str, Any]], paths: Paths) -> dict[str, Any]:
-    """Recompute each decision's target from the recorded bars; any difference is a bug, not noise."""
-    checkable = [d for d in decisions if d.get("history_start")][-MAX_PARITY_CHECKS:]
-    if not checkable:
-        return {"checked": 0, "mismatches": [], "note": "no decisions with a recorded window"}
-    bars = ledger.bars()
-    spec = StrategySpec(strategy_ref=entry.strategy_ref, parameters=entry.parameters)
-    sandbox = SandboxConfig(isolation="docker" if entry.strategy_ref.startswith("plugin:") else "subprocess")
-    mismatches = []
-    for d in checkable:
-        lo, hi = pd.Timestamp(d["history_start"]), pd.Timestamp(d["bar_open"])
-        window = bars[(bars["bar_open_time"] >= lo) & (bars["bar_open_time"] <= hi)].reset_index(drop=True)
-        try:
-            frac = target_fraction(spec, entry.policy, window, entry.granularity, paths, sandbox)
-        except Exception as exc:  # noqa: BLE001
-            mismatches.append(f"{d['bar_open']}: recompute failed ({type(exc).__name__}: {exc})")
-            continue
-        recorded = d["target"]["target_fraction"]
-        if frac != recorded:
-            mismatches.append(f"{d['bar_open']}: recorded {recorded}, recomputed {frac}")
-    return {"checked": len(checkable), "mismatches": mismatches}
-
-
 def paper_section(paths: Paths, day: str) -> tuple[list[str], dict[str, Any]]:
     t0, t1 = _window(day)
     rp = roster_path(paths)
     roster = load_roster(rp) if rp.exists() else Roster()
     rows, details, summary = [], [], {"strategies": 0, "parity_mismatches": 0, "alerts": 0}
+    stores: dict[tuple[str, str], Any] = {}
     for entry in sorted(roster.entries, key=lambda e: e.name):
         name = entry.name
         db = paths.paper / name / "paper.db"
         if not db.exists():
             continue
+        key = (entry.product, entry.granularity)
+        if key not in stores:
+            stores[key] = BarStore.for_feed(paths, *key).bars
         ledger = Ledger(db)
         try:
             marks = ledger.marks()
             all_dec = ledger.decisions()
-            day_dec = [d for d in all_dec if t0 <= d["at"] < t1]
             fills = [f for f in ledger.fills() if t0 <= f.ts < t1]
-            par = parity(entry, ledger, day_dec, paths)
+            par = paper_parity(entry, roster, ledger, stores[key], paths, since=t0, until=t1)
         finally:
             ledger.close()
         alerts = Counter()
@@ -105,20 +81,25 @@ def paper_section(paths: Paths, day: str) -> tuple[list[str], dict[str, Any]]:
             p0 = float(all_dec[0]["price"]) if all_dec else marks.iloc[0]["price"]
             bh_total = end["price"] / (p0 * (1 + slip / 10_000) * (1 + fee)) - 1
         fees = sum(float(f.fee) for f in fills)
+        mismatches = par["target_mismatches"] + par["order_mismatches"]
         summary["strategies"] += 1
-        summary["parity_mismatches"] += len(par["mismatches"])
+        summary["parity_mismatches"] += len(mismatches)
         summary["alerts"] += sum(alerts.values())
         rows.append(f"| {name} | {entry.strategy_ref.split(':')[-1][:16]} | {entry.product} | "
                     f"{end['equity']:,.2f} | {_pct(day_ret)} | {_pct(bh_ret)} | {_pct(total_ret)} | "
                     f"{_pct(bh_total)} | {len(fills)} | {fees:.2f} | {sum(alerts.values())} | "
-                    f"{par['checked'] - len(par['mismatches'])}/{par['checked']} |"
+                    f"{par['checked'] - len(mismatches)}/{par['checked']} |"
                     if end is not None else
                     f"| {name} | {entry.strategy_ref.split(':')[-1][:16]} | {entry.product} | - | - | - | - | - | "
                     f"{len(fills)} | {fees:.2f} | {sum(alerts.values())} | {par['checked']} |")
-        if alerts or par["mismatches"] or not entry.enabled:
+        if alerts or mismatches or not entry.enabled:
             details.append(f"- **{name}**{' (disabled)' if not entry.enabled else ''}: "
                            + ", ".join(f"{k}×{v}" for k, v in alerts.items())
-                           + "".join(f"\n  - parity: {m}" for m in par["mismatches"][:5]))
+                           + "".join(f"\n  - parity: {m}" for m in mismatches[:5]))
+        if par["fills"]:
+            details.append(f"- {name} execution: {par['fills']} fills, {par['fill_vs_next_open_bps']:+.1f} bps vs "
+                           f"the next bar's open, fee rate error {par['fee_rate_error']:.2e}"
+                           + (f"; {par['skipped']} decisions predate the bar store" if par["skipped"] else ""))
     lines = ["## Paper fleet", "",
              "Simulated fills at the mid price plus slippage and fees on live Coinbase public data. Returns use "
              "the equity marked at every bar close; total buy & hold includes the entry fee and slippage.", "",

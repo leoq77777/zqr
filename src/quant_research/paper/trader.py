@@ -230,7 +230,6 @@ class PaperTrader:
                             else pd.concat([self.history, new], ignore_index=True))
             if self.cfg.history_bars:
                 self.history = self.history.tail(self.cfg.history_bars).reset_index(drop=True)
-            self.ledger.record_bars(new)
         close = float(to_epoch(bars["bar_close_time"])[-1])
         if close > (self.ledger.get("last_data_time") or 0):
             self.ledger.put("last_data_time", close)

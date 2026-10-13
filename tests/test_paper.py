@@ -223,3 +223,19 @@ def test_every_bar_is_marked_even_without_a_rebalance(tmp_path):
     assert len(marks) == len(bars) and len(trader.ledger.decisions()) < len(bars)
     final_close = Decimal(str(bars["close"].iloc[-1]))
     assert marks.iloc[-1]["equity"] == pytest.approx(float(trader.equity(final_close)))
+
+
+def test_parity_is_clean_for_a_replay_with_partial_positions_and_a_band(tmp_path):
+    from quant_research.paper.fleet import Roster, RosterEntry
+    from quant_research.paper.parity import paper_parity
+
+    bars = _bars(400)
+    policy = PortfolioPolicy(vol_target=0.5, vol_lookback=24, band=0.05)
+    cfg = _cfg(policy=policy, buy_cash_buffer=0.0)
+    trader = run_replay(cfg, bars, tmp_path / "p", PRODUCT)
+    entry = RosterEntry(name="t", product="BTC-USD", strategy_ref=cfg.strategy_ref, parameters=cfg.parameters,
+                        policy=policy, fee_rate=0.001, slippage_bps=2.0)
+    out = paper_parity(entry, Roster(), trader.ledger, bars, None)
+    assert out["checked"] > 100 and out["skipped"] == 0
+    assert out["target_mismatches"] == [] and out["order_mismatches"] == []
+    assert out["fills"] > 4 and abs(out["fill_vs_next_open_bps"]) < 1e-6 and out["fee_rate_error"] < 1e-9
