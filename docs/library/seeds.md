@@ -1,7 +1,8 @@
 # Seed catalog
 
-Status: draft for human review (phase 1, design section 3). Nothing here is imported until approved. The machine
-copy is `library/seeds.yaml`, generated from this catalog after review; `zqr library import` reads it.
+Status: approved 2026-10-13 (phase 1, design section 3; decisions in section 10). The machine copy is
+`src/quant_research/library/seeds.yaml`, packaged with the image; `zqr library import` reads it, and
+`tests/test_library.py` pins it to the parameters below.
 
 Written from the sources only. No ZQR data (dev, validation or holdout) was looked at while drafting, and no
 parameter was chosen by testing. Turnover, cost and correlation figures appear only after import, in the dev
@@ -31,7 +32,7 @@ first boundary with a complete lookback, the exposure is 0. Holding a past value
 
 | Cadence | Boundary (bar closing at 00:00 UTC on) |
 |---|---|
-| hourly | every bar |
+| bar | every bar (hourly) |
 | daily | every day |
 | weekly | Monday |
 | monthly | the 1st of the month |
@@ -58,7 +59,8 @@ Four families take a sleeve; the volatility overlay is not a sleeve.
 | Volatility overlay (`vol_overlay`) | 1 | — | scales the blend |
 
 Every sleeve family has at least two variants, so no member exceeds the 15% single-member cap (design 5.2). The
-same 11 entries are instantiated for BTC-USD and ETH-USD with identical parameters (22 instances).
+same 12 entries (11 members and the overlay) are instantiated for BTC-USD and ETH-USD with identical parameters
+(24 instances, ids such as `btc-tsmom-12m`).
 
 Seeds are imported with status `candidate`. They become `member` when the seed portfolio version enters paper
 (design 5.8); seeds have no probation.
@@ -107,9 +109,11 @@ and time series", SSRN 2695101. The trend signal for a pair of time scales (S, L
 1. `x = EWMA_S(price) − EWMA_L(price)`, EWMA with time scale n (decay 1 − 1/n);
 2. `y = x / std_63(price)` (63-day standard deviation of price);
 3. `z = y / std_252(y)` (252-day standard deviation of y);
-4. response `u = z · exp(−z² / 4) / 0.89`, which lies in [−1, 1] and peaks at 1 at `z = √2`.
+4. response `u = z · exp(−z² / 4) / 0.89`, which peaks at about 0.96 at `z = √2` (and −0.96 at `−√2`).
 
-The exact EWMA and window definitions are checked against the paper text before import.
+Checked against the paper text (version of 7 December 2015, equations 28–33): each time scale n is a decay factor
+λ = (n − 1)/n in the standard EWMA recursion, not a look-back or a half-life. The paper's final signal is the
+equal-weighted sum of the three u's; equal weighting within the family reproduces it, with each u floored at 0.
 
 Template `ewma_trend` (new): exposure `max(0, u)`, computed on daily closes (the close of the bar ending 00:00
 UTC), cadence daily.
@@ -137,7 +141,7 @@ Sources: Faith (2007), *Way of the Turtle* (the Turtle rules); Donchian channels
 breakout and exits on a 10-day opposite breakout; System 2 uses 55 and 20 days.
 
 Template `breakout` (existing, version 1): enter when the close exceeds the highest high of the prior `entry`
-bars, exit when the close falls below the lowest low of the prior `exit` bars. Cadence hourly: the Turtles traded
+bars, exit when the close falls below the lowest low of the prior `exit` bars. Every bar (hourly): the Turtles traded
 breakouts intraday.
 
 | Entry | Entry, exit (days) | Bars |
@@ -201,15 +205,14 @@ buy and hold, so it can be tested like any template; in the portfolio it multipl
 
 | Entry | Window | Bars | Cadence | Target σ* |
 |---|---|---|---|---|
-| `voltarget-1m` | 1 month | 720 | daily | from the risk budget (open decision, section 8 of the design) |
+| `voltarget-1m` | 1 month | 720 | daily | 40% (investment policy, `docs/investment-policy.md`) |
 
 Adaptation notes:
 
 - Inverse volatility (Harvey et al.) rather than inverse variance (Moreira & Muir): with a cap of 1, inverse
   variance mostly hits the cap or cuts very hard, and the design's overlay formula is in volatility.
 - The cap at 1 means the overlay only reduces exposure, never levers.
-- Not a sleeve and not a blend member; at most one overlay is active per portfolio. σ* must be set before the
-  seed portfolio is validated.
+- Not a sleeve and not a blend member; at most one overlay is active per portfolio.
 
 ## 8. Considered and not seeded
 
@@ -229,15 +232,15 @@ all trend. Diversification here is by speed and signal shape, not by premium. Ph
 many independent families these really are; family definitions are confirmed then, before the seed portfolio is
 fixed (review point R6).
 
-## 10. Review points
+## 10. Review decisions (2026-10-13)
 
-- **R1.** 12 months = 8,760 bars (one year), while N months below 12 use 30-day months (10 months = 7,200).
-  Alternative: 12 × 720 = 8,640.
+All six review points were approved as proposed:
+
+- **R1.** 12 months = 8,760 bars (one year); N months below 12 use 30-day months (10 months = 7,200).
 - **R2.** Baz et al.'s 63- and 252-day normalisation windows translate as a quarter and a year (2,160 and 8,760
-  bars). Alternative: keep the day counts (1,512 and 6,048).
-- **R3.** Decision cadence follows each source (weekly, monthly, daily, hourly for breakouts). Alternative: all
-  daily.
-- **R4.** Keep `tsmom-1w` (crypto-specific, out-of-sample, but the most cost-exposed), or drop it and keep
-  Hurst's 1/3/12 months only (3 variants, 8.33% each).
+  bars).
+- **R3.** Decision cadence follows each source (weekly, monthly, daily, every bar for breakouts).
+- **R4.** `tsmom-1w` is kept: the only crypto-native prior and out-of-sample for our data; 6.25% of capital and
+  Monday-only decisions limit its cost.
 - **R5.** No continuous TSMOM seed.
-- **R6.** Accept the trend concentration for now and revisit after the phase 2 clustering.
+- **R6.** The trend concentration is accepted for now and revisited after the phase 2 clustering.

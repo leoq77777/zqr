@@ -105,7 +105,8 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `runtime.py` | Resources, version, image names, sibling-container mounts, scratch dirs, control network |
 | `release.py` | `zqr release`: build, cross-build, ship and start images on a host |
 | `data/` | Coinbase REST client (`coinbase.py`), bar normalisation, validation, snapshots, synthetic data |
-| `strategy/` | `StrategySpec`, templates (`buy_and_hold`, `cash`, `sma_cross`, `momentum`, `breakout`), agent plugins, sandbox (subprocess or Docker) |
+| `strategy/` | `StrategySpec`, templates (`buy_and_hold`, `cash`, `sma_cross`, `momentum`, `breakout`, and the seed templates `tsmom`, `ma_filter`, `ewma_trend`, `vol_target`), decision cadence (`cadence.py`), agent plugins, sandbox (subprocess or Docker) |
+| `library/` | Strategy library: seed catalog (`seeds.yaml`, reviewed in `docs/library/seeds.md`), catalog validation, library tables in `experiments.db`, `zqr library` commands |
 | `portfolio/policy.py` | Portfolio policy v1: vol target, asset/gross caps, rebalance cadence, no-trade band |
 | `backtest/engine.py` | Accounting engine (fills, fees, slippage, delay) |
 | `backtest/rebalance.py` | `needs_trade`: when a target becomes an order; shared by the engine and the paper trader |
@@ -125,7 +126,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (145 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (194 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -280,6 +281,21 @@ Desk transitions record the authorization hash in the evidence. No transition to
   split has a recorded override;
 - a table of sessions.
 
+### 5.7 Strategy library (`library/`)
+
+- The seed catalog lists families and template entries with fixed parameters; each entry is instantiated per
+  product (`btc-tsmom-12m`, …). Validation refuses unknown templates or parameters, a member in a non-sleeve family
+  (or an overlay in a sleeve family), a sleeve family with fewer than two variants, and a member share above
+  `max_member_share` (equal sleeves, equal weight within a family).
+- Seed templates decide at a calendar cadence on hourly bars (`strategy/cadence.py`): a bar is a boundary when its
+  nominal close (open + 1 h) falls in a later UTC day, Monday-based week or month than the previous bar's, so the
+  bar closing at 00:00 UTC decides, or the first bar after a gap. The value is held until the next boundary.
+  `ewma_trend` and `vol_target` compute on the daily close series of those boundary bars.
+- `zqr library import` adds new instances as `candidate` and records an event; existing ids with the same identity
+  are left alone, and a changed identity refuses the whole import (entries are immutable; a change is a new id).
+  Status changes go through `LibraryStore.set_status` (candidate → probation/member/retired, probation →
+  member/retired, member → retired), each recorded in `library_events`.
+
 ## 6. Security model and invariants
 
 These must hold after any change. Tests cover most of them.
@@ -381,6 +397,8 @@ a one-off container with the same mounts while the desk is stopped).
 | `zqr desk research-loop`, `zqr paper fleet` | Supervisor children (foreground, for debugging) |
 | `zqr desk recover` | Close out sessions of a dead desk process |
 | `zqr desk promote <candidate_id> [--isolation docker\|subprocess]` | Resume a candidate's promotion (freeze, holdout, paper approval, roster) under the standing authorization |
+| `zqr library import [--dry-run] [--file PATH]` | Import the reviewed seed catalog into the library (new entries only) |
+| `zqr library list [--product P] [--family F] [--status S] [--json]` / `zqr library show <id>` | Library entries; one entry with its events |
 | `zqr release [--target HOST\|local] [--allow-dirty] [--no-up]` | Development machine: build, ship and start a version |
 
 Lower-level commands (`fetch-data`, `backtest`, `mandate`, `candidate`, `holdout-test`, `bench`, `paper`, …)

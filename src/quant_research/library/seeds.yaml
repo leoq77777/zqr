@@ -1,0 +1,125 @@
+# Seed catalog v1, approved 2026-10-13. Human-readable version with the full sources and translations:
+# docs/library/seeds.md. Windows are hourly bars (1 day = 24, 1 week = 168, 1 month = 720, 12 months = 8,760).
+# Entries are immutable once imported: a change is a new entry id.
+version: 1
+products: [BTC-USD, ETH-USD]
+granularity: ONE_HOUR
+max_member_share: 0.15
+
+families:
+  - id: tsmom
+    name: Time-series momentum
+    thesis: An asset's own trailing return predicts its next return, across asset classes, a century of data, and in crypto at one to four weeks.
+    sleeve: true
+  - id: ewma_trend
+    name: EWMA trend
+    thesis: The trend premium measured by smoothed price crossovers with a continuous response that trades less on weak signals.
+    sleeve: true
+  - id: channel_breakout
+    name: Channel breakout
+    thesis: A new N-day high marks the start of a trend; exit on a shorter opposite channel.
+    sleeve: true
+  - id: trend_filter
+    name: Trend filter
+    thesis: Hold the asset only above its long moving average, avoiding most of the deepest drawdowns.
+    sleeve: true
+  - id: vol_overlay
+    name: Volatility overlay
+    thesis: Volatility clusters while expected returns do not rise proportionally; cutting exposure when realised volatility is high improves risk-adjusted returns.
+    sleeve: false
+
+entries:
+  - id: tsmom-1w
+    family: tsmom
+    kind: member
+    template: tsmom
+    parameters: {lookback: 168, cadence: weekly}
+    sources: ["Liu & Tsyvinski (2021), Risks and returns of cryptocurrency, Review of Financial Studies 34(6)"]
+    rationale: Crypto-specific momentum at one week; out-of-sample for our data (their sample ends 2018).
+    notes: [Weekly decision on Mondays as in the source; the most cost-exposed seed.]
+  - id: tsmom-1m
+    family: tsmom
+    kind: member
+    template: tsmom
+    parameters: {lookback: 720, cadence: monthly}
+    sources: ["Hurst, Ooi & Pedersen (2017), A century of evidence on trend-following investing, Journal of Portfolio Management 44(1)"]
+    rationale: One of the three equal-weighted horizons of the century-long trend study.
+  - id: tsmom-3m
+    family: tsmom
+    kind: member
+    template: tsmom
+    parameters: {lookback: 2160, cadence: monthly}
+    sources: ["Hurst, Ooi & Pedersen (2017), A century of evidence on trend-following investing, Journal of Portfolio Management 44(1)"]
+    rationale: One of the three equal-weighted horizons of the century-long trend study.
+  - id: tsmom-12m
+    family: tsmom
+    kind: member
+    template: tsmom
+    parameters: {lookback: 8760, cadence: monthly}
+    sources:
+      - "Moskowitz, Ooi & Pedersen (2012), Time series momentum, Journal of Financial Economics 104(2)"
+      - "Hurst, Ooi & Pedersen (2017), A century of evidence on trend-following investing, Journal of Portfolio Management 44(1)"
+    rationale: The canonical 12-month time-series momentum rule, rebalanced monthly.
+    notes: [12 months = one year = 8,760 bars (R1).]
+  - id: ewma-8-24
+    family: ewma_trend
+    kind: member
+    template: ewma_trend
+    parameters: {fast: 192, slow: 576, vol_window: 2160, norm_window: 8760}
+    sources: ["Baz, Granger, Harvey, Le Roux & Rattray (2015), Dissecting investment strategies in the cross section and time series, SSRN 2695101"]
+    rationale: Fastest of the three EWMA pairs of the CTA momentum signal.
+    notes: [Normalisation windows 63 and 252 days translated as a quarter and a year (R2).]
+  - id: ewma-16-48
+    family: ewma_trend
+    kind: member
+    template: ewma_trend
+    parameters: {fast: 384, slow: 1152, vol_window: 2160, norm_window: 8760}
+    sources: ["Baz, Granger, Harvey, Le Roux & Rattray (2015), Dissecting investment strategies in the cross section and time series, SSRN 2695101"]
+    rationale: Middle EWMA pair of the CTA momentum signal.
+  - id: ewma-32-96
+    family: ewma_trend
+    kind: member
+    template: ewma_trend
+    parameters: {fast: 768, slow: 2304, vol_window: 2160, norm_window: 8760}
+    sources: ["Baz, Granger, Harvey, Le Roux & Rattray (2015), Dissecting investment strategies in the cross section and time series, SSRN 2695101"]
+    rationale: Slowest EWMA pair of the CTA momentum signal.
+  - id: turtle-s1
+    family: channel_breakout
+    kind: member
+    template: breakout
+    parameters: {entry: 480, exit: 240}
+    sources: ["Faith (2007), Way of the Turtle (System 1)", "Donchian channels"]
+    rationale: 20-day breakout entry, 10-day exit.
+    notes: [Not adopted - the skip-after-a-winner filter, 2N stop, pyramiding and N sizing.]
+  - id: turtle-s2
+    family: channel_breakout
+    kind: member
+    template: breakout
+    parameters: {entry: 1320, exit: 480}
+    sources: ["Faith (2007), Way of the Turtle (System 2)", "Donchian channels"]
+    rationale: 55-day breakout entry, 20-day exit.
+  - id: faber-10m
+    family: trend_filter
+    kind: member
+    template: ma_filter
+    parameters: {window: 7200, cadence: monthly}
+    sources: ["Faber (2007), A quantitative approach to tactical asset allocation, Journal of Wealth Management 9(4)"]
+    rationale: Long above the 10-month moving average, checked monthly.
+    notes: [Averages all 7,200 hourly closes instead of ten month-end prices.]
+  - id: brock-1-200
+    family: trend_filter
+    kind: member
+    template: ma_filter
+    parameters: {window: 4800, cadence: daily}
+    sources: ["Brock, Lakonishok & LeBaron (1992), Simple technical trading rules and the stochastic properties of stock returns, Journal of Finance 47(5)"]
+    rationale: The 1-200 variable moving-average rule without a band.
+  - id: voltarget-1m
+    family: vol_overlay
+    kind: overlay
+    template: vol_target
+    parameters: {window: 720, target_vol: 0.40}
+    sources:
+      - "Moreira & Muir (2017), Volatility-managed portfolios, Journal of Finance 72(4)"
+      - "Harvey, Hoyle, Korgaonkar, Rattray, Sargaison & Van Hemert (2018), The impact of volatility targeting, Journal of Portfolio Management 45(1)"
+    rationale: Scales the blend by min(1, 40% / realised volatility of the last 30 daily returns).
+    notes: [Target volatility 40% set in the investment policy on 2026-10-13.]
