@@ -34,7 +34,7 @@ A personal systematic research desk for Coinbase BTC-USD and ETH-USD spot, long/
 | Desk (closed loop) | done, deployed | Paper fleet, research loop, auto_paper authorization, supervisor, daily report |
 | Release (images) | done | Runtime and agent images, `zqr release`, host wrapper `zqr`, desk as a container |
 | M6 Portfolio research | **not started** | Multi-asset aggregation; today each strategy trades one product independently |
-| M7 Paper (full) | partial | Decision parity, stale-data halt, restart recovery are in; reconciliation and drills beyond tests are not |
+| M7 Paper (full) | partial | Parity on targets, orders and fills, stale-data halt, restart recovery from the bar store are in; reconciliation and drills beyond tests are not |
 
 ## 3. Architecture
 
@@ -53,9 +53,26 @@ Windows PC: WSL2 (Ubuntu-24.04) + Docker Desktop (starts at sign-in, restarts zq
       │    └─ promote (standing authorization): freeze -> holdout -> paper_approved -> roster entry
       └─ fleet child: zqr paper fleet                        (no model credentials)
            ├─ roster.json hot reload (presets + promoted candidates)
-           ├─ one Coinbase candle poller per product/granularity, one PaperTrader per strategy
-           └─ simulated fills (mid + slippage + fees), risk limits, per-strategy ledger, health file
+           ├─ one bar store + Coinbase candle poller per product/granularity, one PaperTrader per strategy
+           └─ simulated fills (mid + slippage + fees), risk limits, per-strategy ledger and marks, health file
 ```
+
+Paper history is a bar store per product and granularity (`paper/bars/<product>-<granularity>.parquet`),
+anchored at the first bar of the frozen Coinbase dataset reaching furthest back (the latest 17,520 venue bars
+when no dataset exists) and only appended. Strategies compute from the whole store, so a restart reproduces
+stateful positions. The poller backfills from the last stored bar after an outage; catch-up bars rebuild state and
+only the latest bar can trade. Staleness is the age of the latest bar close. Risk limits edited in the roster apply
+to running traders; edits to strategy, parameters, policy, capital or costs are refused (add the changed strategy
+under a new name). Failed attaches retry with backoff. Every trader marks equity at each bar close; the daily
+report computes returns from the marks and checks parity on targets, orders and fills.
+
+Promotion copies the validated capital and costs into the roster entry, refuses engine settings paper cannot
+reproduce (`execution_delay_bars`, `adverse_fill`, `rebalance_tolerance`), and resumes from any intermediate
+state. Every holdout path goes through `run_holdout` (`validation/holdout.py`) with a viewing limit: the
+mandate's for a candidate, the tightest limit of the split's mandates (default 10) for `zqr holdout-test
+--dataset/--split`. A repeat of an already viewed candidate is not a new viewing. `zqr holdout-test
+--override-reason` (dataset/split path only) exceeds the limit; the override is recorded in `holdout_overrides`
+and marks the split's holdout as contaminated.
 
 All state lives under `ZQR_HOME`: `/zqr` (the `zqr-data` volume) in the release container, `./var` in a
 development checkout. There is one SQLite database writer per process (WAL, busy timeout).
@@ -89,6 +106,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `strategy/` | `StrategySpec`, templates (`buy_and_hold`, `cash`, `sma_cross`, `momentum`, `breakout`), agent plugins, sandbox (subprocess or Docker) |
 | `portfolio/policy.py` | Portfolio policy v1: vol target, asset/gross caps, rebalance cadence, no-trade band |
 | `backtest/engine.py` | Accounting engine (fills, fees, slippage, delay) |
+| `backtest/rebalance.py` | `needs_trade`: when a target becomes an order; shared by the engine and the paper trader |
 | `evaluation/` | Metrics, statistics (bootstrap, deflated Sharpe), diagnosis |
 | `validation/` | Splits, holdout control (viewing limit), robustness, walk-forward |
 | `experiments/` | Experiment gate (`gatekeeper.py`), runner, SQLite store, replay |
@@ -96,7 +114,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `controller/` | Research controller/session state, agent runners, budgets |
 | `gateway/` | `ToolGateway` service and MCP server (`submit_plan`, `submit_experiment`, `get_experiment`, `read_source`, compare, dataset info, research.json validation) |
 | `bench/` | Agent container adapter, egress network/proxy, isolation probe, audit, recovery, benchmark runner/grader |
-| `paper/` | Paper trader, broker simulator, risk limits, orders, ledger (decisions, fills, bars), fleet |
+| `paper/` | Paper trader, broker simulator, risk limits, orders, ledger (decisions, fills, bars, marks), bar store, fleet, parity |
 | `desk/` | Desk config, presets, promotion, research loop, supervisor, daily report, setup/check, CLI commands |
 | `report/` | Markdown research reports |
 | `scripts/zqr-host.sh` | Host wrapper, installed from the image as `~/.local/bin/zqr` on the deployment host |
@@ -105,7 +123,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (121 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (145 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -174,37 +192,66 @@ Desk transitions record the authorization hash in the evidence. No transition to
 - `research/authorization.py`: an `Authorization` lists products, `max_paper_strategies`, `created_at`,
   `expires_at`, `created_by`, a note and a scope. The scope is the two desk transitions. The body is sealed with a
   hash, and `check()` rejects a bad hash, expiry, a transition outside the scope or a product that is not listed.
-- `desk/promotion.py` `promote()` runs these steps:
+- `desk/promotion.py` `promote()` runs these steps and stops at the first refusal, leaving the candidate in the
+  state it reached:
   1. Check the authorization against the dataset's product.
-  2. Freeze the candidate (actor `desk`).
-  3. Run the holdout. Exhausted viewings or a failure stop promotion here.
-  4. Check the paper-slot cap.
-  5. Move the candidate to `paper_approved` (actor `desk`).
-  6. Add a roster entry `<base>-<cid>` with source `candidate`.
+  2. Refuse a mandate whose engine settings paper cannot reproduce (`execution_delay_bars`, `adverse_fill`,
+     `rebalance_tolerance` other than the defaults).
+  3. Check the paper-slot cap (candidate entries in the roster), so a full roster never spends a holdout viewing.
+     A `paper_approved` candidate skips this check.
+  4. If `validated`: freeze the candidate (actor `desk`).
+  5. If `frozen`: run the holdout through the capped gate (`run_candidate_holdout`). Exhausted viewings or a
+     failed pass rule stop promotion here.
+  6. Check the paper-slot cap again.
+  7. Move the candidate to `paper_approved` (actor `desk`).
+  8. Add the roster entry `<base>-<cid>` with source `candidate` if it is missing. It carries the mandate's
+     policy, `initial_cash`, fee rate, slippage and minimum trade notional.
+- Promotion resumes from `validated`, `frozen`, `final_evaluated` or `paper_approved`; a frozen candidate whose
+  holdout already ran gets its recorded result back without a new viewing.
 - When the fleet attaches that entry, `activate_hook` moves the candidate to `paper_active`.
 
 ### 5.4 Paper fleet (`paper/fleet.py`)
 
-- The roster (`desk/roster.json`) holds fee rate 0.006, slippage 5 bps, `RiskLimits` and the entries. Defaults
-  are created from `desk/presets.json`: 16 entries, 8 rules × 2 products.
+- The roster (`desk/roster.json`) holds the default fee rate 0.006 and slippage 5 bps, `RiskLimits` and the
+  entries. An entry may set its own `fee_rate`, `slippage_bps` and `min_trade_notional` (promoted candidates
+  do). Defaults are created from `desk/presets.json`: 16 entries, 8 rules × 2 products.
 - The fleet reloads the roster when its mtime changes:
   - an invalid roster is logged and the running set is kept;
   - removed or disabled entries are detached, and their ledgers are kept;
-  - attaching a strategy runs make_trader → recover → warm_up (1000 bars) → health.
-- Each feed polls Coinbase candles. Every trader's `on_bar` runs with errors isolated per trader. When any trader
-  has live orders, the fleet fetches one mid price per product.
+  - a changed risk section is applied to running traders (`PaperTrader.update_risk`);
+  - a change to anything in `PaperConfig.identity_hash()` (strategy, parameters, policy, capital, costs; risk and
+    sandbox are excluded) is refused: the trader keeps running its old configuration, the fleet logs
+    `config_change_refused` and `fleet_health.json` lists "config change refused" under `errors` until the edit is reverted or the strategy
+    is added under a new name;
+  - attaching a strategy runs make_trader → recover → warm_up → health. Warm-up loads the bar store up to the
+    ledger's `last_bar_open` (the whole store for a new trader), so bars the trader missed while stopped are
+    delivered by the next step. A failed attach is retried after min(60·2^(n−1), 1800) s.
+- Each product/granularity has one feed: a bar store (`paper/barstore.py`) plus a poller. A new store is seeded
+  from the frozen Coinbase dataset for that product and granularity reaching furthest back, else from the latest
+  17,520 venue bars (`SEED_BARS`); after that it is only appended. Each poll fetches every completed bar after
+  the last stored one, so an outage is backfilled. Gaps the venue leaves raise a `bar_gap` alert.
+- Every step, each trader receives the stored bars it has not seen (`_catch_up`): all but the latest are ingested
+  without deciding (state, ledger bars and marks only), the latest goes through `on_bar`. Errors are isolated per
+  trader. When any trader has live orders, the fleet fetches one mid price per product.
+- Orders follow the backtest's rebalancing rule (`backtest/rebalance.py` `needs_trade`, including the policy
+  band and the minimum trade notional).
 - Default risk limits:
   - max position fraction 1.0;
   - max order notional $5,000 (a $10k position therefore builds over two bars);
   - daily loss 5%;
   - 6 orders per hour;
-  - stale after 7200 s;
+  - stale after 7200 s, measured from the latest bar's close (`last_data_time`); the time the bar was fetched is
+    kept separately (`last_seen_time`, shown as `last_seen` in health);
   - optional kill-switch file.
-- Each decision records `history_start`, target, price and equity, and every bar is stored in the ledger. The
-  report recomputes `target_fraction` from the ledger bars in `[history_start, bar_open]` and requires an exact
-  match (decision parity).
-- Outputs: `paper/fleet_health.json`, `paper/fleet.jsonl`, and `paper/<strategy>/` (`paper.db`, `events.jsonl`,
-  `health.json`).
+- Each decision records `history_start`, target, price and equity; every bar is stored in the ledger, and the
+  trader marks equity at every bar close (ledger table `marks`). `paper/parity.py` `paper_parity` checks, for
+  decisions whose `history_start` is the bar store's first bar (older ones are counted as skipped):
+  - targets: `target_fraction` recomputed from the bar store with the research code must match exactly;
+  - orders: `needs_trade` applied to the marked position and equity at that bar must give the same side (or no
+    order);
+  - fills: average price against the next bar's open ± slippage, and the fee against the configured fee rate.
+- Outputs: `paper/bars/`, `paper/fleet_health.json`, `paper/fleet.jsonl`, and `paper/<strategy>/` (`paper.db`,
+  `events.jsonl`, `health.json`).
 
 ### 5.5 Supervisor (`desk/supervisor.py`)
 
@@ -223,11 +270,12 @@ Desk transitions record the authorization hash in the evidence. No transition to
 
 `desk/reports/<day>.md` contains:
 
-- per-strategy equity, day and total return against buy & hold over the same decision bars, fills, fees, alerts
-  and parity;
+- per-strategy equity, day and total return from the bar-close marks against buy & hold (total buy & hold pays
+  the entry fee and slippage), fills, fees, alerts, and parity on targets, orders and fills;
 - process restarts and fleet alerts;
 - research sessions by failure class, cost against the cap, violations and audit failures;
-- trials per split, candidates by state and holdout viewings left;
+- trials per split, candidates by state and holdout viewings left, flagged "(contaminated by override)" when the
+  split has a recorded override;
 - a table of sessions.
 
 ## 6. Security model and invariants
@@ -245,7 +293,9 @@ These must hold after any change. Tests cover most of them.
    Nothing transitions to live.
 5. Every experiment, tool call, transition and paper decision is recorded. Session audits must reconcile
    experiments with tool events.
-6. Trials on a split are never deleted. DSR counts all of them, and holdout viewings are capped per split.
+6. Trials on a split are never deleted. DSR counts all of them. Holdout data is read only through `run_holdout`,
+   which caps viewings per split; exceeding the cap needs a recorded override and marks the split's holdout as
+   contaminated.
 7. No trading credentials exist. Paper fills are simulated against public market data.
 
 ## 7. Runtime layout (`ZQR_HOME`)
@@ -256,7 +306,7 @@ These must hold after any change. Tests cover most of them.
 | `raw/`, `snapshots/`, `splits/`, `holdout/` | Imported data, frozen datasets, split definitions, holdout segments |
 | `artifacts/` | Frozen candidate code and identity |
 | `sessions/` | Controller session workspaces |
-| `paper/` | Fleet health/log and one directory per paper strategy |
+| `paper/` | Bar stores (`bars/<product>-<granularity>.parquet`), fleet health/log and one directory per paper strategy |
 | `desk/config.json` | `DeskConfig` (below) |
 | `desk/check.json` | Last `desk check` result, including `isolation_ok` and the chosen network mode |
 | `desk/authorization.json` | Standing authorization |
@@ -418,6 +468,13 @@ exactly the production layout (volumes, control network, sibling containers) on 
 - **Release transfer:** every release ships the whole runtime image (about 250 MB compressed). A private registry
   would ship only changed layers if this becomes slow.
 - **Benchmark difficulty:** the v0.2 tasks saturate. Harder tasks are needed before agents can be ranked.
+- **Review probes:** `docs/reviews/2026-10-13/reproduce_findings.py` asserts the paper, promotion and holdout
+  defects as they were at `a28d9b2`; on the current code it stops at its first assertion (the band defect is
+  fixed). It is kept as a record of the review, not as a test. The corresponding
+  correct-behaviour tests live in `tests/` (`test_paper.py`, `test_paper_data.py`, `test_fleet.py`,
+  `test_desk.py`, `test_experiments.py`, `test_report.py`).
+- **Paper history before the bar store:** decisions recorded before a strategy's ledger started from the bar
+  store have a different `history_start` and are counted as skipped by the parity check, not verified.
 - **Not built:** M6 multi-asset portfolio, a second agent adapter (Codex), live trading (out of scope by design),
   reconciliation against a real account.
 - **Operations:**
