@@ -6,6 +6,7 @@ on every restart, and the report can recompute any decision from it.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -75,6 +76,7 @@ def snapshot_seed(paths: Paths, product: str, granularity: str) -> pd.DataFrame 
              and m.get("venue") == VENUE and not m.get("synthetic")]
     if not found:
         return None
-    longest = min(found, key=lambda m: (m.get("requested_start") or 0, -(m.get("requested_end") or 0)))
+    longest = min(found, key=lambda m: (math.inf if m.get("requested_start") is None else m["requested_start"],
+                                        -(m.get("requested_end") or 0)))
     bars, _ = load_dataset(paths, longest["dataset_id"])
     return bars

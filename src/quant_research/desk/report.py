@@ -55,7 +55,11 @@ def paper_section(paths: Paths, day: str) -> tuple[list[str], dict[str, Any]]:
             marks = ledger.marks()
             all_dec = ledger.decisions()
             fills = [f for f in ledger.fills() if t0 <= f.ts < t1]
-            par = paper_parity(entry, roster, ledger, stores[key], paths, since=t0, until=t1)
+            try:
+                par = paper_parity(entry, roster, ledger, stores[key], paths, since=t0, until=t1)
+            except Exception as exc:  # noqa: BLE001 - one strategy's parity must not sink the report
+                par = {"checked": 0, "skipped": 0, "fills": 0, "order_mismatches": [],
+                       "target_mismatches": [f"parity failed ({type(exc).__name__}: {exc})"]}
         finally:
             ledger.close()
         alerts = Counter()

@@ -1,11 +1,13 @@
 import json
 import os
+import sqlite3
 import zlib
 from decimal import Decimal
 from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from quant_research.data.bars import to_epoch
 from quant_research.desk.presets import preset_roster
@@ -227,6 +229,23 @@ def test_a_failed_catch_up_bar_is_retried_on_the_next_step(tmp_path, monkeypatch
     store = fleet.feeds[("BTC-USD", "ONE_HOUR")].store
     assert len(trader.history) == len(store.bars)
     assert (to_epoch(trader.history["bar_open_time"]) == to_epoch(store.bars["bar_open_time"])).all()
+    assert "btc-sma" not in fleet.errors
+
+
+def test_an_empty_trader_warms_up_from_the_store_instead_of_ingesting_every_bar(tmp_path, monkeypatch):
+    t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma")])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
+    fleet.step()
+    trader = fleet.traders["btc-sma"]
+    trader.history = pd.DataFrame()
+    ingested = []
+    monkeypatch.setattr(trader, "ingest", ingested.append)
+    t["now"] += HOUR
+    fleet.step()
+    store = fleet.feeds[("BTC-USD", "ONE_HOUR")].store
+    assert not ingested
+    assert len(trader.history) == len(store.bars)
+    assert len(trader.ledger.decisions()) == 1
 
 
 def test_risk_edits_reach_running_traders_and_identity_edits_are_refused(tmp_path):
@@ -246,6 +265,74 @@ def test_risk_edits_reach_running_traders_and_identity_edits_are_refused(tmp_pat
     health = fleet.step()
     assert fleet.traders["btc-sma"].cfg.parameters == {"fast": 5, "slow": 20}
     assert health["errors"]["btc-sma"].startswith("config change refused")
+    assert set(health["config_refused"]["btc-sma"]) == {"running", "roster"}
+
+
+def test_an_identity_edit_is_refused_across_a_restart(tmp_path):
+    t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma")])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
+    fleet.step()
+    running = fleet.traders["btc-sma"].cfg.identity_hash()
+    fleet.traders["btc-sma"].ledger.close()
+    r = load_roster(roster)
+    r.entries[0].parameters = {"fast": 6, "slow": 20}
+    save_roster(roster, r)
+    t["now"] += HOUR
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
+    health = fleet.step()
+    assert "btc-sma" not in fleet.traders
+    assert fleet.errors["btc-sma"].startswith("config change refused")
+    assert health["config_refused"]["btc-sma"]["running"] == running
+    ledger = Ledger(paths.paper / "btc-sma" / "paper.db")
+    assert ledger.get("config_hash") == running
+    ledger.close()
+
+
+def test_a_ledger_without_a_config_hash_adopts_the_roster_config(tmp_path):
+    t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma")])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
+    fleet.step()
+    ledger = fleet.traders["btc-sma"].ledger
+    ledger._conn.execute("DELETE FROM kv WHERE key='config_hash'")
+    ledger.close()
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
+    fleet.step()
+    trader = fleet.traders["btc-sma"]
+    assert trader.ledger.get("config_hash") == trader.cfg.identity_hash()
+
+
+def test_a_failed_attach_closes_the_traders_ledger(tmp_path, monkeypatch):
+    import quant_research.paper.fleet as fleet_mod
+
+    made, make_trader = [], fleet_mod.make_trader
+
+    def boom(bars):
+        raise RuntimeError("warm-up failed")
+
+    def make(*args, **kw):
+        made.append(make_trader(*args, **kw))
+        made[-1].warm_up = boom
+        return made[-1]
+
+    t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma")])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
+    monkeypatch.setattr(fleet_mod, "make_trader", make)
+    fleet.step()
+    assert "warm-up failed" in fleet.errors["btc-sma"] and len(made) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        made[0].ledger.get("config_hash")
+
+
+def test_a_detached_strategy_drops_its_error(tmp_path):
+    t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma"), _entry("btc-bh", ref="template:buy_and_hold")])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
+    fleet.step()
+    fleet.errors["btc-bh"] = "RuntimeError: stale"
+    r = load_roster(roster)
+    r.entries[1].enabled = False
+    save_roster(roster, r)
+    _bump(roster, NOW0 + 1)
+    assert "btc-bh" not in fleet.step()["errors"]
 
 
 def test_a_failed_attach_is_retried_without_a_roster_edit(tmp_path):

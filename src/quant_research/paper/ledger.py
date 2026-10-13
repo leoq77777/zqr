@@ -115,17 +115,6 @@ class Ledger:
         self._conn.execute("INSERT OR IGNORE INTO bars VALUES (?, ?)",
                            (str(bar["bar_open_time"]), json.dumps(bar, default=str)))
 
-    def record_bars(self, bars: pd.DataFrame) -> None:
-        """Bulk `record_bar` in one transaction (warm-up loads years of bars)."""
-        rows = [(str(b["bar_open_time"]), json.dumps(b, default=str)) for b in bars.to_dict("records")]
-        self._conn.execute("BEGIN")
-        try:
-            self._conn.executemany("INSERT OR IGNORE INTO bars VALUES (?, ?)", rows)
-        except BaseException:
-            self._conn.execute("ROLLBACK")
-            raise
-        self._conn.execute("COMMIT")
-
     def bars(self) -> pd.DataFrame:
         rows = [json.loads(d) for (d,) in self._conn.execute("SELECT data FROM bars ORDER BY bar_open")]
         df = pd.DataFrame(rows)

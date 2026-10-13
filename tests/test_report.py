@@ -87,3 +87,24 @@ def test_report_day_return_comes_from_marks(tmp_path):
     end = marks[marks["at"] <= T0 + 48 * HOUR].iloc[-1]
     assert summary["strategies"] == 1
     assert f"{end['equity'] / start['equity'] - 1:+.2%}" in "\n".join(lines)
+
+
+def test_a_failing_parity_check_is_reported_not_raised(tmp_path, monkeypatch):
+    from quant_research.desk import promotion, report
+    from quant_research.paper.fleet import Roster, RosterEntry, save_roster
+    from quant_research.paper.runner import run_replay
+    from quant_research.paths import get_paths
+    from tests.test_paper import PRODUCT, _bars, _cfg
+
+    def boom(*args, **kw):
+        raise RuntimeError("bad bars")
+
+    paths = get_paths(tmp_path / "home")
+    entry = RosterEntry(name="btc-sma", product="BTC-USD", strategy_ref="template:sma_cross",
+                        parameters={"fast": 5, "slow": 20})
+    save_roster(promotion.roster_path(paths), Roster(entries=[entry]))
+    run_replay(_cfg(name="btc-sma"), _bars(48), paths.paper / "btc-sma", PRODUCT).ledger.close()
+    monkeypatch.setattr(report, "paper_parity", boom)
+    lines, summary = report.paper_section(paths, "2024-01-02")
+    assert summary["parity_mismatches"] == 1
+    assert "parity failed (RuntimeError: bad bars)" in "\n".join(lines)

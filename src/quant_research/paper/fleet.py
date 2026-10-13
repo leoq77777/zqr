@@ -101,6 +101,17 @@ def add_entry(path: Path, entry: RosterEntry) -> bool:
     return True
 
 
+REFUSED = "config change refused"
+
+
+class ConfigChangeRefused(RuntimeError):
+    pass
+
+
+def _refusal(held_by: str, running: str, roster: str) -> str:
+    return f"{REFUSED}: {held_by} {running}, roster {roster}; add the changed strategy under a new name"
+
+
 class _Feed:
     """One market feed: the bar store (seeded from the frozen dataset, else from the venue) plus a poller."""
 
@@ -135,6 +146,7 @@ class PaperFleet:
         self.entries: dict[str, RosterEntry] = {}
         self.products: dict[str, ProductSpec] = {}
         self.errors: dict[str, str] = {}
+        self.refused: dict[str, dict[str, str]] = {}  # name -> running and roster config hashes
         self._retry_at: dict[str, float] = {}
         self._failures: dict[str, int] = {}
         self._roster_mtime: float | None = None
@@ -186,11 +198,14 @@ class PaperFleet:
         for name in [n for n in self.traders if n not in wanted]:
             self.traders.pop(name).ledger.close()
             self.entries.pop(name, None)
+            self.errors.pop(name, None)
+            self.refused.pop(name, None)
             self._log("INFO", "strategy_detached", name=name)
         for name in [n for n in self._retry_at if n not in wanted]:
             self._retry_at.pop(name)
             self._failures.pop(name, None)
             self.errors.pop(name, None)
+            self.refused.pop(name, None)
         for name, e in wanted.items():
             if name in self.traders:
                 self._refresh(name, e)
@@ -200,6 +215,7 @@ class PaperFleet:
         for name, e in self.roster.enabled().items():
             if name in self.traders or now < self._retry_at.get(name, 0.0):
                 continue
+            trader = None
             try:
                 feed = self.feeds.get((e.product, e.granularity))
                 if feed is None:
@@ -207,6 +223,12 @@ class PaperFleet:
                                                                          e.granularity, self.clock, self.seed_bars)
                 trader = make_trader(self._config(e), self.workdir / name, self._product(e.product),
                                      paths=self.paths, clock=self.clock)
+                stored, want = trader.ledger.get("config_hash"), trader.cfg.identity_hash()
+                if stored is None:
+                    trader.ledger.put("config_hash", want)
+                elif stored != want:
+                    self.refused[name] = {"running": stored, "roster": want}
+                    raise ConfigChangeRefused(_refusal("ledger", stored, want))
                 trader.recover()
                 history, last = feed.history, trader.ledger.get("last_bar_open")
                 if last is not None:
@@ -215,13 +237,16 @@ class PaperFleet:
                 trader.warm_up(history)
                 trader.write_health()
             except Exception as exc:  # noqa: BLE001
+                if trader is not None:
+                    trader.ledger.close()
                 n = self._failures[name] = self._failures.get(name, 0) + 1
                 self._retry_at[name] = now + min(60.0 * 2 ** (n - 1), 1800.0)
-                self.errors[name] = f"{type(exc).__name__}: {exc}"
+                self.errors[name] = str(exc) if isinstance(exc, ConfigChangeRefused) else f"{type(exc).__name__}: {exc}"
                 self._log("ALERT", "strategy_attach_failed", name=name, error=self.errors[name], attempt=n)
                 continue
             self.traders[name], self.entries[name] = trader, e
             self.errors.pop(name, None)
+            self.refused.pop(name, None)
             self._retry_at.pop(name, None)
             self._failures.pop(name, None)
             self._log("INFO", "strategy_attached", name=name, strategy=e.strategy_ref, product=e.product)
@@ -236,14 +261,15 @@ class PaperFleet:
         trader, want = self.traders[name], self._config(e)
         running = trader.cfg.identity_hash()
         if want.identity_hash() != running:
-            if not self.errors.get(name, "").startswith("config change refused"):
-                self.errors[name] = (f"config change refused: running {running}, roster {want.identity_hash()}; "
-                                     "add the changed strategy under a new name")
+            if not self.errors.get(name, "").startswith(REFUSED):
+                self.errors[name] = _refusal("running", running, want.identity_hash())
+                self.refused[name] = {"running": running, "roster": want.identity_hash()}
                 self._log("ALERT", "config_change_refused", name=name, running=running,
                           wanted=want.identity_hash())
             return
-        if self.errors.get(name, "").startswith("config change refused"):
+        if self.errors.get(name, "").startswith(REFUSED):
             self.errors.pop(name)
+        self.refused.pop(name, None)
         self.entries[name] = e
         if want.risk != trader.cfg.risk:
             trader.update_risk(want.risk)
@@ -271,6 +297,9 @@ class PaperFleet:
                 except Exception as exc:  # noqa: BLE001
                     self.errors[name] = f"{type(exc).__name__}: {exc}"
                     trader._log("ALERT", "bar_error", error=self.errors[name])
+                    continue
+                if name in self.errors and not self.errors[name].startswith(REFUSED):
+                    del self.errors[name]
             pending = [n for n in members if self.traders[n].live_orders()]
             if pending:
                 try:
@@ -290,7 +319,10 @@ class PaperFleet:
     def _catch_up(trader: PaperTrader, feed: _Feed) -> None:
         """Deliver the stored bars the trader has not seen: all but the latest without deciding, then the latest."""
         bars = feed.history
-        if not trader.history.empty and len(bars):
+        if trader.history.empty:
+            trader.warm_up(bars.iloc[:-1])
+            bars = bars.iloc[-1:]
+        elif len(bars):
             last = to_epoch(trader.history["bar_open_time"])[-1]
             bars = bars[to_epoch(bars["bar_open_time"]) > last]
         rows = bars.to_dict("records")
@@ -307,7 +339,7 @@ class PaperFleet:
             except Exception as exc:  # noqa: BLE001
                 strategies[name] = {"error": f"{type(exc).__name__}: {exc}"}
         health = {"ts": self.clock(), "strategies": strategies, "errors": dict(self.errors),
-                  "feeds": [f"{p}:{g}" for p, g in self.feeds]}
+                  "config_refused": dict(self.refused), "feeds": [f"{p}:{g}" for p, g in self.feeds]}
         (self.workdir / "fleet_health.json").write_text(json.dumps(health, indent=2, default=str))
         return health
 

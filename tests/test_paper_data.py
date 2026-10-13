@@ -57,3 +57,15 @@ def test_seed_is_the_longest_coinbase_dataset(paths):
     freeze("lab", 3000, T0 - 1000 * HOUR, synthetic=True)
     seed = snapshot_seed(paths, "BTC-USD", "ONE_HOUR")
     assert to_epoch(seed["bar_open_time"])[0] == T0 and len(seed) == 2000
+
+
+def test_a_seed_manifest_without_a_requested_start_sorts_last(paths):
+    def freeze(n, start, **extra):
+        bars, rep = validate_bars(make_raw(n, start=start), "coinbase", "BTC-USD", "ONE_HOUR", start,
+                                  start + n * HOUR)
+        freeze_dataset(paths, bars, rep, extra=extra)
+
+    freeze(100, T0)
+    freeze(50, T0 + 200 * HOUR, requested_start=None)
+    seed = snapshot_seed(paths, "BTC-USD", "ONE_HOUR")
+    assert to_epoch(seed["bar_open_time"])[0] == T0 and len(seed) == 100
