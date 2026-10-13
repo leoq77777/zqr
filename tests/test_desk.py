@@ -16,7 +16,7 @@ from quant_research.desk import promotion
 from quant_research.desk import research as rl
 from quant_research.desk.config import DeskConfig, check_path
 from quant_research.gateway import ToolGateway
-from quant_research.paper.fleet import load_roster
+from quant_research.paper.fleet import load_roster, save_roster
 from quant_research.research import authorization as auth_mod
 from quant_research.research.authorization import AuthorizationError
 from quant_research.research.registry import RegistryError, freeze, transition
@@ -98,13 +98,46 @@ def test_promotion_respects_product_cap_and_holdout_limit(paths, store, dataset)
     assert promotion.promote(paths, store, cid)["stopped"] == "done"
     cid2 = _validated(paths, store, dataset, template="momentum", params={"lookback": 24}, holdout=EASY_HOLDOUT)
     out = promotion.promote(paths, store, cid2)
-    assert "authorization cap" in out["stopped"] and out["state"] == "final_evaluated"
+    assert "authorization cap" in out["stopped"] and out["state"] == "validated"  # no holdout viewing spent
 
+    _authorize(paths, max_paper_strategies=3)
     one_view = {**EASY_HOLDOUT, "max_viewings": 1}
     cid3 = _validated(paths, store, dataset, template="momentum", params={"lookback": 48}, holdout=one_view,
                       question="a different question")
     out = promotion.promote(paths, store, cid3)
     assert "already viewed" in out["stopped"] and out["state"] == "frozen"
+
+
+def test_promotion_resumes_after_a_slot_frees(paths, store, dataset):
+    _authorize(paths, max_paper_strategies=1)
+    first = _validated(paths, store, dataset, holdout=EASY_HOLDOUT)
+    assert promotion.promote(paths, store, first)["stopped"] == "done"
+    second = _validated(paths, store, dataset, template="momentum", params={"lookback": 24}, holdout=EASY_HOLDOUT)
+    out = promotion.promote(paths, store, second)
+    assert "authorization cap" in out["stopped"] and out["state"] == "validated"
+    viewings = len(store.holdout_runs(dataset[1].split_id))
+    rp = promotion.roster_path(paths)
+    roster = load_roster(rp)
+    roster.entries[0].enabled = False
+    save_roster(rp, roster)
+    out = promotion.promote(paths, store, second)
+    assert out["stopped"] == "done" and out["state"] == "paper_approved"
+    assert len(store.holdout_runs(dataset[1].split_id)) == viewings + 1
+
+
+def test_promotion_is_idempotent_from_paper_approved(paths, store, dataset):
+    _authorize(paths)
+    cid = _validated(paths, store, dataset, holdout=EASY_HOLDOUT)
+    assert promotion.promote(paths, store, cid)["stopped"] == "done"
+    rp = promotion.roster_path(paths)
+    roster = load_roster(rp)
+    roster.entries = [e for e in roster.entries if e.candidate_id != cid]  # crashed before the roster write
+    save_roster(rp, roster)
+    viewings = len(store.holdout_runs(dataset[1].split_id))
+    out = promotion.promote(paths, store, cid)
+    assert out["stopped"] == "done" and out["steps"] == ["roster"]
+    assert load_roster(rp).entries[-1].candidate_id == cid
+    assert len(store.holdout_runs(dataset[1].split_id)) == viewings
 
 
 # -- research loop -------------------------------------------------------------------------------------

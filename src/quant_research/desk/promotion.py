@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 PAPER_STATES = ("paper_approved", "paper_active")
 # Engine settings the paper trader cannot reproduce; a candidate validated with them is not promoted.
 PAPER_UNSUPPORTED = ("execution_delay_bars", "adverse_fill", "rebalance_tolerance")
+RESUMABLE = ("validated", "frozen", "final_evaluated", "paper_approved")
 
 
 def paper_gaps(engine: EngineConfig) -> list[str]:
@@ -49,16 +50,24 @@ def _paper_candidates(paths: Paths) -> int:
 
 def promote(paths: Paths, store: ExperimentStore, candidate_id: str, sandbox: SandboxConfig | None = None,
             now: float | None = None) -> dict[str, Any]:
-    """Push a validated candidate as far as the authorization and the mandate allow."""
+    """Push a candidate as far as the authorization and the mandate allow, resuming from the state it reached.
+
+    Paper slots are checked before the holdout so a full roster never spends a viewing; a frozen candidate whose
+    holdout already ran gets that result back (see `run_holdout`); a paper_approved candidate only needs its
+    roster entry.
+    """
     out: dict[str, Any] = {"candidate_id": candidate_id, "steps": []}
 
     def stop(reason: str) -> dict[str, Any]:
         cand = store.get_candidate(candidate_id)
         return out | {"state": cand["state"] if cand else None, "stopped": reason}
 
+    def state() -> str:
+        return store.get_candidate(candidate_id)["state"]
+
     cand = store.get_candidate(candidate_id)
-    if cand is None or cand["state"] != "validated":
-        return stop(f"not validated (state {cand['state'] if cand else 'unknown'})")
+    if cand is None or cand["state"] not in RESUMABLE:
+        return stop(f"nothing to promote (state {cand['state'] if cand else 'unknown'})")
     auth = auth_mod.load(authorization_path(paths))
     if auth is None:
         return stop("no standing authorization; waiting for a human (`zqr candidate freeze`)")
@@ -72,26 +81,29 @@ def promote(paths: Paths, store: ExperimentStore, candidate_id: str, sandbox: Sa
     if gaps:
         return stop("paper cannot run the validated configuration (" + ", ".join(gaps)
                     + "); revalidate without these settings")
+    full = f"paper roster already has {auth.max_paper_strategies} candidate strategies (authorization cap)"
 
     try:
-        freeze(paths, store, candidate_id, "desk standing authorization", actor="desk", authorization=auth)
-        out["steps"].append("frozen")
-        res = run_candidate_holdout(paths, store, candidate_id, sandbox)
+        if state() != "paper_approved" and _paper_candidates(paths) >= auth.max_paper_strategies:
+            return stop(full)
+        if state() == "validated":
+            freeze(paths, store, candidate_id, "desk standing authorization", actor="desk", authorization=auth)
+            out["steps"].append("frozen")
+        if state() == "frozen":
+            res = run_candidate_holdout(paths, store, candidate_id, sandbox)
+            out["steps"].append("final_evaluated" if res["passed"] else "failed_final")
+            out["holdout"] = {k: v for k, v in res["candidate"]["evidence"].items() if k != "rule"}
+            if not res["passed"]:
+                return stop("holdout pass rule not met")
+        if state() == "final_evaluated":
+            if _paper_candidates(paths) >= auth.max_paper_strategies:
+                return stop(full)
+            transition(store, candidate_id, "paper_approved", "desk", note="desk standing authorization",
+                       authorization=auth)
+            out["steps"].append("paper_approved")
     except (RegistryError, HoldoutError) as exc:
         return stop(str(exc))
-    out["steps"].append("final_evaluated" if res["passed"] else "failed_final")
-    out["holdout"] = {k: v for k, v in res["candidate"]["evidence"].items() if k != "rule"}
-    if not res["passed"]:
-        return stop("holdout pass rule not met")
 
-    if _paper_candidates(paths) >= auth.max_paper_strategies:
-        return stop(f"paper roster already has {auth.max_paper_strategies} candidate strategies (authorization cap)")
-    try:
-        transition(store, candidate_id, "paper_approved", "desk", note="desk standing authorization",
-                   authorization=auth)
-    except RegistryError as exc:
-        return stop(str(exc))
-    out["steps"].append("paper_approved")
     engine = mandate.engine_config
     entry = RosterEntry(name=f"{manifest['instrument'].split('-')[0].lower()}-{candidate_id}",
                         product=manifest["instrument"], granularity=manifest["granularity"],
@@ -99,8 +111,8 @@ def promote(paths: Paths, store: ExperimentStore, candidate_id: str, sandbox: Sa
                         initial_cash=engine.initial_cash, fee_rate=engine.costs.fee_rate,
                         slippage_bps=engine.costs.slippage_bps, min_trade_notional=engine.min_trade_notional,
                         source="candidate", candidate_id=candidate_id)
-    add_entry(roster_path(paths), entry)
-    out["steps"].append("roster")
+    if add_entry(roster_path(paths), entry):
+        out["steps"].append("roster")
     out["roster_name"] = entry.name
     return stop("done")
 
