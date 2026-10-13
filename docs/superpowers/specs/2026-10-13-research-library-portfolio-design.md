@@ -1,8 +1,9 @@
 # Design: strategy library, research memory, portfolio and campaigns
 
-Status: approved in discussion on 2026-10-13, revised after review the same day, pending review of this document.
-Supersedes the desk's topic-rotation research loop (`desk/research.py`) as the way research is directed. Rule
-changes in sections 4.4, 5.3, 5.4 and 5.6 take effect only after the human approves the contract appendix.
+Status: approved in discussion on 2026-10-13, revised the same day after a statistical review and after the
+project review in `docs/reviews/2026-10-13/zqr-project-review.md`; pending review of this document. Supersedes the
+desk's topic-rotation research loop (`desk/research.py`) as the way research is directed. Rule changes in sections
+4.4, 5.3, 5.4, 5.5 and 5.6 take effect only after the human approves the contract appendix.
 
 ## 1. Problem
 
@@ -24,6 +25,10 @@ Three causes:
 The research question itself is hard: hourly bars, long/cash only, 0.6% taker fee per side (about 1.3% per round
 trip).
 
+Separately, the project review found nine defects in the paper path (all reproduced on the current code,
+section 7.2). Until they are fixed, paper results cannot be compared with backtests, and the seed strategies cannot
+run in paper at all: paper keeps 3,000 hourly bars and warms up with 1,000, while a 12-month lookback needs 8,760.
+
 ## 2. Decisions
 
 | Topic | Decision |
@@ -35,6 +40,9 @@ trip).
 | Existing trials | Splits kept; old trials count in full, reduced to an effective number of independent trials by clustering; validation and holdout stay unused |
 | Admission of new members | Prior first: a written prior and a registered hypothesis of at most three variants; tested on dev with K equal to the registered variants; enters paper at half weight on probation. The DSR over all trials on the split is reported, not used as a gate |
 | Architecture | Layered: strategy library, research memory (returns, clusters, family archives), portfolio layer, campaigns |
+| Order of work | Execution correctness first (phase 0), then the four research phases |
+| Account | Two independent product portfolios; the report adds a combined account at a fixed 50/50 split. No shared cash or netted orders yet |
+| Investment policy | Capital, horizon, risk budget, benchmark and research budget are open decisions for the human (section 8); the values used until then are marked provisional |
 
 Universe stays BTC-USD and ETH-USD spot, long/cash. Live trading stays out of scope.
 
@@ -196,8 +204,10 @@ Initial archives import the conclusions of the 177 existing sessions.
 ### 5.1 Definition
 
 Per product: members (library entries) with their status (member or probation), blend rule, no-trade band,
-volatility overlay switch. Immutable, hashed, versioned; lifecycle draft → validated → frozen → holdout → paper, like
-candidates today.
+volatility overlay switch, and the full run configuration (initial cash, fee rate, slippage, minimum notional,
+execution delay, quantity increment, order limits, history requirement). Immutable, hashed, versioned; lifecycle
+draft → validated → frozen → holdout → paper, like candidates today. Paper runs exactly the configuration in the
+version; any difference (for example a different capital) is a new version, validated again.
 
 ### 5.2 Blending
 
@@ -222,8 +232,9 @@ execute). The band compares targets, not the current market weight: a price rise
 equity from 50% to 56% does not trigger a sale. For long/cash the drift stays within [0, 1].
 
 This differs from the engine today: `backtest/engine.py` compares the target with the drifted weight at the fill
-bar's open (`rebalance_tolerance`). The portfolio path uses the deadband in backtests and paper alike. The existing
-single-strategy path is unchanged.
+bar's open (`rebalance_tolerance`), and paper ignores the band entirely (review finding F1). The portfolio path uses
+the deadband in backtests and paper alike, through one shared function. For the single-strategy path, phase 0 makes
+paper apply the backtest's existing rule, so the controls keep their meaning.
 
 Band width, volatility target, sleeves and cap are fixed when the seed portfolio is defined; changing them later
 counts as a trial.
@@ -248,10 +259,20 @@ harm.
 
 Literature priors added after the seeds follow the same path, registered by the human or a campaign.
 
+Validation feedback: the agent sees only the verdict of each gate (passed, or which gate failed), never validation
+or holdout metrics. Archives keep those metrics in the human-facing part only (6.4). Each validation use is counted
+per split and shown in the report; once outcomes have shaped later hypotheses, validation is no longer described as
+independent evidence.
+
 ### 5.5 Holdout budget
 
 Each split has 10 holdout viewings; each new portfolio version uses one. Accepted changes are batched into versions
 (several accepted changes, or at least a week apart).
+
+The cap holds only if every holdout path goes through one gate. Today the manual CLI path bypasses it (review
+finding F9); phase 0 routes all paths through a single capped, recorded gate. A manual override needs an explicit
+flag and a reason, and marks the split's holdout as contaminated. Ten viewings are a limit, not ten independent
+confirmations; the report shows how many have been used.
 
 ### 5.6 Probation
 
@@ -273,18 +294,30 @@ retirement. In this phase the human confirms. Retired entries stay in the librar
 
 All reviewed seed families, equal sleeves; members, weights, band, cap and volatility target fixed before
 validation or holdout is looked at. No probation for seeds. Validation standard fixed in advance: Sharpe ≥ 0.5 and
-max drawdown not worse than −25%. The result is shown to the human before the holdout is used. If it fails
+max drawdown not worse than −25% (provisional until the risk budget in section 8 is set; it must be set before the
+seed portfolio is validated). The result is shown to the human before the holdout is used. If it fails
 validation, it is recorded and discussed; it is not adjusted and retried automatically.
 
 ### 5.9 Paper and report
 
-Paper adds one portfolio trader per product; the 16 single strategies stay as controls. The daily report adds:
+Paper adds one portfolio trader per product; the 16 single strategies stay as controls. The report also shows a
+combined account: the two product portfolios at a fixed 50/50 capital split, rebalanced only by the report's
+arithmetic (no shared cash, no netted orders). A real shared account is a later decision.
 
-- portfolio return against buy and hold;
+Valuation: every trader records a mark-to-market equity at each daily boundary, whether or not it traded (today
+equity is only read from decision rows, so a day without a rebalance has no return). Daily returns, drawdowns and
+risk come from these marks.
+
+The daily report adds:
+
+- portfolio and combined-account returns against buy and hold with the same capital and the same costs (the current
+  report's buy and hold is a price ratio without costs);
 - contribution by family; members on probation and days remaining;
 - current composition, turnover and costs;
-- split DSR per member and per split;
-- decision parity, bar by bar, as today.
+- split DSR per member and per split; validation and holdout uses per split;
+- parity, bar by bar: under one identical fill model, backtest and paper must agree on target, target after risk
+  limits, order, fill, cost, position and equity, not only on the target. Differences that live paper allows (mid
+  price fills, order limits, cash buffer) are measured and reported separately from rule differences.
 
 Portfolio diagnostics (drawdowns by regime, concentration, weak periods) feed campaign generation.
 
@@ -331,7 +364,7 @@ in the report are the safeguards. The report counts registrations per split and 
 
 ### 6.4 Gateway tools (dev only)
 
-- family archive query;
+- family archive query (the agent-facing view: dev statistics and gate verdicts, no validation or holdout metrics);
 - current portfolio members and their dev statistics;
 - marginal evaluation on dev (appraisal ratio against the current portfolio); counts as a trial;
 - hypothesis registration.
@@ -340,7 +373,11 @@ in the report are the safeguards. The report counts registrations per split and 
 
 - One campaign at a time; idle (no model calls) when the queue is empty.
 - Generation after each campaign, after each portfolio version, and daily.
-- Daily cap ($20) stays; each campaign has its own cap.
+- Budgets are reserved, not only checked: before a session starts, its maximum cost is reserved against the
+  campaign and daily caps, and the session is refused if the reservation does not fit. Today the cap is checked
+  against costs already booked, so a running session can overshoot. Model calls with unknown pricing are recorded
+  as unpriced and stop the loop until a price is configured; they are never counted as zero.
+- Daily cap ($20) and per-campaign caps are provisional until the research budget in section 8 is set.
 - Family quotas: each family has a trial quota per split. A family that has used its quota gets no more campaigns
   on that split; other families and exploration continue.
 - Split schedule, predefined: a new split is cut when unseen data has accrued for at least 6 months of validation
@@ -360,22 +397,49 @@ like tasks.
 
 | Phase | Scope | Human checkpoint |
 |---|---|---|
+| 0. Execution correctness | Review findings F1–F9, history requirements and state rebuild, data freshness and gap backfill, daily mark-to-market equity, full parity (7.2) | Review the parity report on the 16 running paper strategies after release |
 | 1. Library and seeds | Templates, library and family schema, seed catalog, `zqr library list/show/import` | Review `docs/library/seeds.md`, then import |
 | 2. Memory, clustering, statistics | Return archive and backfill, residual clustering, K at three thresholds, split DSR and registered test, deterministic archives, import of 177 session conclusions | Approve the contract appendix; review the clustering report on old trials |
 | 3. Portfolio | Portfolio versions, blending engine with cap, probation and deadband, gates, seed portfolio, paper portfolio traders, report section, portfolio parity | Review the seed portfolio's validation result before the holdout |
 | 4. Campaigns | Campaign schema, generator, family quotas, registration, loop change, gateway tools, archive write-back, report | Review the first campaign queue, then re-enable research |
 
-Research stays disabled (`research_enabled = false`) until phase 4. The paper fleet keeps running.
+Research stays disabled (`research_enabled = false`) until phase 4. The paper fleet keeps running. Phases 0 and 1
+do not depend on each other; phase 0 goes first because the running paper fleet has these defects today, and
+phase 3 cannot start without it.
 
-### 7.2 Migration
+### 7.2 Phase 0: execution correctness
+
+From the project review (`docs/reviews/2026-10-13/`). Its reproduction script confirms all nine defects on the
+current code; each becomes a regression test with the correct expected behaviour.
+
+| Finding | Defect | Required behaviour |
+|---|---|---|
+| F1 | Paper ignores the policy's no-trade band | One rebalancing function shared by backtest and paper |
+| F2 | Paper keeps 3,000 bars and warms up with 1,000; stateful strategies (breakout exits) lose their position when the window slides or on restart | Each strategy declares its history requirement (longest lookback plus state); paper rebuilds from the full local bar store, not from a fixed window. Continuous running, window sliding and restart give the same target as a full-history backtest |
+| F3 | Fetch time is used as data freshness, so an old bar returned now counts as fresh and orders are approved | Track bar close time, first seen and last successful fetch separately; staleness compares the latest completed bar with the expected one; stale data blocks risk increases and alerts |
+| F4 | After an outage longer than 5 bars, the gap is never filled | Persist the last processed bar; backfill from it and check continuity; replayed bars rebuild state but only the latest bar can trade |
+| F5 | Editing risk limits in the roster does not reach running traders | Safe limits update atomically; strategy or cost identity changes require a new version; health shows expected and actual configuration hashes |
+| F6 | Promotion drops the validated capital and costs (research $20,000 at 0.1% became paper $10,000 at 0.6%) | Paper runs the full validated configuration (5.1); differences are reported before promotion and need revalidation |
+| F7 | One failed attach leaves a strategy absent until the roster file changes | Failed entries retry with backoff, independently of others |
+| F8 | Promotion stopped midway (e.g. paper slots full after the holdout) cannot resume | Promotion is resumable from each stored step without reusing a holdout viewing, duplicating a roster entry or re-authorising |
+| F9 | The manual holdout path bypasses the viewing cap | Single capped gate (5.5) |
+
+Also in phase 0: daily mark-to-market equity and the full parity report (5.9), applied to the existing 16 paper
+strategies first.
+
+### 7.3 Migration
 
 - Data unchanged: splits, segments and all trial records stay; validation and holdout remain unused.
 - Mandates are immutable: the new statistics and portfolio rules go into new mandate versions on the same splits.
 - `docs/contracts-v2.md` is not edited; the appendix carries the changes.
 - The single-candidate flow stays in code for controls and benchmarks; the research loop no longer uses it.
 
-### 7.3 Tests
+### 7.4 Tests
 
+- Execution (phase 0): the nine review probes turned into tests of the correct behaviour; nonzero band with partial
+  positions and volatility scaling; long-held breakout across window slides and restarts; stale but successful
+  responses; long gaps, missing, duplicate and out-of-order bars, with no replay of old orders; configuration change
+  reaching the next order; promotion resumed after an interruption.
 - Templates: fixed-input values; no look-ahead (truncating later data leaves earlier positions unchanged);
   calendar-time parameter translation.
 - Clustering and statistics: planted-cluster synthetic data; winsorisation; fixed-input values for `σ0`, `SR0(K)`,
@@ -390,8 +454,11 @@ Research stays disabled (`research_enabled = false`) until phase 4. The paper fl
   record); family quota exhaustion.
 - Before each release: full suite and a local rehearsal (`zqr release --target local`).
 
-### 7.4 Risks
+### 7.5 Risks
 
+- Research cost against capital: 177 sessions cost about $6 in 10 hours, roughly $10–15 a day at that pace. On
+  $10,000 of capital that is 40–55% a year, more than any plausible excess return. The research budget must follow
+  from the capital (section 8), and campaigns are judged by cost per conclusion.
 - The registered test understates the search when registration follows exploration on the same data (6.3).
   Safeguards: prior requirement, do-no-harm validation, holdout, probation, split DSR reported.
 - Portfolio construction can overfit: band, volatility target, cap and family definitions are fixed in phase 1;
@@ -399,3 +466,17 @@ Research stays disabled (`research_enabled = false`) until phase 4. The paper fl
 - Validation and future holdouts are short; real out-of-sample evidence accrues in paper over time, tracked in the
   daily report.
 - K depends on the threshold; the report shows all three.
+
+## 8. Open decisions for the human (investment policy)
+
+These do not block phases 0 and 1. Each is needed by the point named in the last column; until then the provisional
+value applies.
+
+| Decision | Provisional value | Needed before |
+|---|---|---|
+| Capital and quote currency; deposits and withdrawals | $10,000 per paper trader (simulation default) | Phase 3 (portfolio versions carry the capital) |
+| Horizon, review cadence and stop rule (when to stop the desk or a portfolio) | None | Phase 3 |
+| Risk budget: tolerable drawdown, volatility target, what happens on breach (reduce, flatten, halt) | Seed validation: Sharpe ≥ 0.5, max drawdown no worse than −25% | Seed portfolio validation (phase 3) |
+| Primary benchmark and cash return | Buy and hold with costs; cash earns 0 | Phase 3 report |
+| Research budget, tied to capital | $20 daily cap | Phase 4 (re-enabling research) |
+| Actual fee tier of the Coinbase account | 0.6% taker per side plus 5 bps (unverified) | Phase 3; a different real fee means revalidation |
