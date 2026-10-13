@@ -23,7 +23,8 @@ from quant_research.experiments.store import ExperimentStore
 from quant_research.gateway.service import GatewayError, PolicyRefusal, ToolGateway
 from quant_research.paths import Paths
 
-FAULTS = ("timeout_after_commit",)
+FAULTS = ("timeout_after_commit", "gateway_unavailable", "sandbox_crash")
+OUTAGE_CALLS = 2
 INSTRUCTIONS = ("Research tools for one session. Experiments run in the fixed engine with the mandate's data, costs "
                 "and policy; every call is recorded. Reuse an idempotency key when retrying a submission.")
 
@@ -34,8 +35,11 @@ def build_server(gw: ToolGateway, faults: list[str] | None = None) -> MCPServer:
     if unknown:
         raise ValueError(f"unknown faults {sorted(unknown)}")
     server = MCPServer("quant-research", instructions=INSTRUCTIONS)
+    gw.crash_next_sandbox = "sandbox_crash" in pending
 
     def call(tool: str, args: dict[str, Any], fn):
+        if tool == "submit_experiment":  # written first, so a crash mid-backtest still leaves the request on record
+            gw.store.log_session_event(gw.sid, "tool_started", {"tool": tool, "args": args})
         try:
             out = fn()
         except GatewayError as exc:
@@ -121,6 +125,40 @@ class _BearerAuth:
         await self.app(scope, receive, send)
 
 
+class _Outage:
+    """Fault `gateway_unavailable`: the first OUTAGE_CALLS tools/call requests get HTTP 503 (gateway never sees
+    them), as if the service were briefly down."""
+
+    def __init__(self, app, gw: ToolGateway, calls: int = OUTAGE_CALLS):
+        self.app, self.gw, self.remaining = app, gw, calls
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") != "POST" or self.remaining <= 0:
+            await self.app(scope, receive, send)
+            return
+        chunks = []
+        while True:
+            msg = await receive()
+            chunks.append(msg)
+            if not msg.get("more_body"):
+                break
+        body = b"".join(m.get("body", b"") for m in chunks)
+        if b'"tools/call"' in body:
+            self.remaining -= 1
+            self.gw.store.log_session_event(self.gw.sid, "fault_injected",
+                                            {"fault": "gateway_unavailable", "remaining": self.remaining})
+            await send({"type": "http.response.start", "status": 503,
+                        "headers": [(b"content-type", b"text/plain"), (b"retry-after", b"2")]})
+            await send({"type": "http.response.body", "body": b"service temporarily unavailable"})
+            return
+        replay = iter(chunks)
+
+        async def again():
+            return next(replay, None) or await receive()
+
+        await self.app(scope, again, send)
+
+
 def _free_port(host: str) -> int:
     with socket.socket() as s:
         s.bind((host, 0))
@@ -131,16 +169,22 @@ class GatewayHTTPServer:
     """Serve one session's gateway on 127.0.0.1 (Docker Desktop forwards host.docker.internal to it)."""
 
     def __init__(self, paths: Paths, store: ExperimentStore, session_id: str, *, faults: list[str] | None = None,
-                 host: str = "127.0.0.1", port: int | None = None):
+                 host: str = "127.0.0.1", port: int | None = None, extra_hosts: tuple[str, ...] = (),
+                 run_label: str | None = None):
         self.gateway = ToolGateway(paths, store, session_id)
+        if run_label:
+            self.gateway.cfg.sandbox.run_label = run_label
         self.token = secrets.token_urlsafe(32)
         self.host, self.port = host, port or _free_port(host)
         security = TransportSecuritySettings(enable_dns_rebinding_protection=True,
                                              allowed_hosts=[f"{h}:{self.port}" for h in
-                                                            ("127.0.0.1", "localhost", "host.docker.internal")],
+                                                            ("127.0.0.1", "localhost", "host.docker.internal")]
+                                             + list(extra_hosts),
                                              allowed_origins=[])
         app = build_server(self.gateway, faults).streamable_http_app(stateless_http=True, json_response=True,
                                                                      transport_security=security, host=host)
+        if "gateway_unavailable" in (faults or []):
+            app = _Outage(app, self.gateway)
         self._server = uvicorn.Server(uvicorn.Config(_BearerAuth(app, self.token), host=host, port=self.port,
                                                      log_level="warning", lifespan="on"))
         self._thread: threading.Thread | None = None
@@ -148,9 +192,9 @@ class GatewayHTTPServer:
     def url(self, host_alias: str | None = None) -> str:
         return f"http://{host_alias or self.host}:{self.port}/mcp"
 
-    def client_config(self, host_alias: str = "host.docker.internal") -> dict[str, Any]:
+    def client_config(self, host_alias: str = "host.docker.internal", url: str | None = None) -> dict[str, Any]:
         """Claude Code / MCP client config; contains the session token, so mount it read-only, never log it."""
-        return {"mcpServers": {"quant": {"type": "http", "url": self.url(host_alias),
+        return {"mcpServers": {"quant": {"type": "http", "url": url or self.url(host_alias),
                                          "headers": {"Authorization": f"Bearer {self.token}"}}}}
 
     def __enter__(self) -> GatewayHTTPServer:
@@ -164,6 +208,8 @@ class GatewayHTTPServer:
         return self
 
     def __exit__(self, *exc) -> None:
-        self._server.should_exit = True
+        self._server.should_exit = True  # graceful: in-flight tool calls (a running backtest) finish first
         if self._thread:
-            self._thread.join(timeout=10)
+            self._thread.join(timeout=self.gateway.cfg.sandbox.wall_seconds + 60)
+            if self._thread.is_alive():
+                self.gateway.store.log_session_event(self.gateway.sid, "gateway_shutdown_timeout", {})

@@ -33,7 +33,8 @@ from quant_research.validation.splits import load_research_segment, load_split
 ACTIVE = {SessionState.RUNNING, SessionState.WAITING_FOR_AGENT, SessionState.CREATED}
 CONTAINER_WORKSPACE = PurePosixPath("/workspace")
 REPORT_FIELDS = ("research_id", "task_id", "hypothesis", "preregistered_plan", "experiment_ids",
-                 "strategy_artifacts", "decision", "limitations", "sources", "unresolved")
+                 "strategy_artifacts", "decision", "limitations", "sources", "unresolved", "final_artifact")
+FINAL_FIELDS = ("path", "sha256", "parameters", "experiment_id")
 DECISIONS = ("continue", "revise", "reject", "insufficient_evidence")
 
 
@@ -59,7 +60,8 @@ def _matches(cited: Any, recorded: Any) -> bool:
 
 
 class ToolGateway:
-    def __init__(self, paths: Paths, store: ExperimentStore, session_id: str, *, caller: str = "agent_tool"):
+    def __init__(self, paths: Paths, store: ExperimentStore, session_id: str, *, caller: str = "agent_tool",
+                 workspace: Path | None = None):
         sess = store.get_session(session_id)
         if sess is None:
             raise GatewayError(f"unknown session {session_id}")
@@ -67,7 +69,8 @@ class ToolGateway:
         self.session = sess
         self.cfg = SessionConfig.model_validate(sess["config"])
         self.mandate = self.cfg.mandate
-        self.workspace = Path(sess["workspace"]).resolve()
+        self.workspace = Path(workspace or sess["workspace"]).resolve()
+        self.crash_next_sandbox = False  # fault injection (benchmark): crash the next plugin backtest
 
     # -- helpers ---------------------------------------------------------------------------------
     def _require_active(self) -> None:
@@ -138,8 +141,12 @@ class ToolGateway:
                 "costs": self.mandate.engine_config.costs.model_dump(), "policy": self.mandate.policy.label()}
 
     def read_source(self, source_id: str) -> dict[str, Any]:
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+", source_id):
-            raise PolicyRefusal("invalid source id")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", source_id) or source_id == "..":
+            p = PurePosixPath(source_id)
+            if ".." in p.parts or (p.is_absolute() and CONTAINER_WORKSPACE not in p.parents):
+                raise PolicyRefusal("invalid source id")
+            raise GatewayError("invalid source id: read_source reads registered sources by id; read workspace "
+                               "files with your file tools")
         path = self.paths.root / "sources" / f"{source_id}.json"
         if not path.exists():
             raise GatewayError(f"unknown source {source_id}")
@@ -202,10 +209,17 @@ class ToolGateway:
         req = ExperimentRequest(strategy_ref=strategy_ref, parameters=parameters, dataset_id=self.mandate.dataset_id,
                                 split_id=self.mandate.split_id, segment=segment,
                                 engine_config=self.mandate.engine_config, policy=self.mandate.policy)
-        res = run_experiment(self.paths, self.store, req, session_id=self.sid, sandbox=self.cfg.sandbox,
+        crash = self.crash_next_sandbox and strategy_ref.startswith("plugin:")
+        sandbox = self.cfg.sandbox.model_copy(update={"wall_seconds": 0}) if crash else self.cfg.sandbox
+        res = run_experiment(self.paths, self.store, req, session_id=self.sid, sandbox=sandbox,
                              gate=self._gate(), llm_suggestion={"source": "tool gateway", "artifact": name},
                              record={"plan_id": plan_id, "plan_status": status, "plan_deviation": deviation,
                                      "artifact": name, "idempotency_key": key})
+        if crash and res.status not in ("duplicate", "blocked"):  # otherwise no worker ran; stay armed
+            self.crash_next_sandbox = False
+            self.store.log_session_event(self.sid, "fault_injected", {
+                "fault": "sandbox_crash", "idempotency_key": key, "experiment_id": res.experiment_id,
+                "status": res.status})
         self.store.bind_request(self.sid, key, res.experiment_id)
         return {"replayed": False, **self.get_experiment(res.experiment_id)}
 
@@ -286,7 +300,7 @@ class ToolGateway:
             raise PolicyRefusal(f"{path} is outside the workspace")
         return p
 
-    def build_report(self, path: str = "research.json") -> dict[str, Any]:
+    def build_report(self, path: str = "research.json", record: bool = True) -> dict[str, Any]:
         """Validate research.json (benchmark research schema): every experiment id exists in this session, every
         strategy artifact hash matches the workspace file, and every number cited under `results` matches."""
         p = self._workspace_file(path)
@@ -316,6 +330,8 @@ class ToolGateway:
                 problems.append(f"artifact {art.get('path')!r} not found")
             elif hashlib.sha256(f.read_bytes()).hexdigest() != art.get("sha256"):
                 problems.append(f"artifact {art.get('path')!r}: sha256 does not match the file")
+        if "final_artifact" in doc:
+            problems += self.final_artifact_problems(doc["final_artifact"])
         for cited in doc.get("results") or []:
             rec = self.store.get_experiment(cited.get("experiment_id") or "")
             if rec is None or rec["session_id"] != self.sid:
@@ -327,6 +343,36 @@ class ToolGateway:
                 elif not _matches(value, recorded[name]):
                     problems.append(f"{rec['id']}: {name}={value!r} but recorded {recorded[name]!r}")
         valid = not problems
-        self.store.log_session_event(self.sid, "report_validated", {"path": path, "valid": valid,
-                                                                    "problems": problems})
+        if record:
+            self.store.log_session_event(self.sid, "report_validated", {"path": path, "valid": valid,
+                                                                        "problems": problems})
         return {"valid": valid, "problems": problems}
+
+    def final_artifact_problems(self, final: Any) -> list[str]:
+        """The declared final artifact must be exactly what a completed experiment of this session ran."""
+        if final is None:
+            return []
+        if not isinstance(final, dict):
+            return ["final_artifact must be an object or null"]
+        missing = [k for k in FINAL_FIELDS if k not in final]
+        if missing:
+            return [f"final_artifact: missing {missing}"]
+        out: list[str] = []
+        try:
+            f = self._workspace_file(str(final["path"]))
+        except GatewayError as exc:
+            return [f"final_artifact: {exc}"]
+        if not f.is_file():
+            out.append(f"final_artifact: {final['path']!r} not found")
+        elif hashlib.sha256(f.read_bytes()).hexdigest() != final["sha256"]:
+            out.append("final_artifact: sha256 does not match the file")
+        rec = self.store.get_experiment(str(final["experiment_id"]))
+        if rec is None or rec["session_id"] != self.sid:
+            return out + [f"final_artifact: unknown experiment {final['experiment_id']!r}"]
+        if rec["status"] not in ("completed", "duplicate"):
+            out.append(f"final_artifact: experiment {rec['id']} is {rec['status']}, not completed")
+        if rec["strategy_ref"] != f"plugin:{final['sha256']}":
+            out.append(f"final_artifact: experiment {rec['id']} ran {rec['strategy_ref']}, not this file")
+        if (rec["parameters"] or {}) != (final["parameters"] or {}):
+            out.append(f"final_artifact: parameters differ from experiment {rec['id']} ({rec['parameters']})")
+        return out

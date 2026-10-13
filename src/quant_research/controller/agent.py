@@ -169,6 +169,32 @@ def usage_from_output(stdout: str) -> TokenUsage | None:
     return None
 
 
+def usage_from_transcripts(root: Path) -> TokenUsage | None:
+    """Token usage summed from Claude Code session transcripts (`~/.claude/projects/**/*.jsonl`).
+
+    Used when the CLI never printed its final result (killed agent). Streaming writes one line per content block
+    with the same message id and usage, so usage is counted once per message id.
+    """
+    per_message: dict[str, tuple[str | None, dict[str, Any]]] = {}
+    for path in sorted(root.rglob("*.jsonl")) if root.exists() else []:
+        for line in path.read_text(errors="replace").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            msg = row.get("message") if isinstance(row, dict) and row.get("type") == "assistant" else None
+            if isinstance(msg, dict) and isinstance(msg.get("usage"), dict):
+                per_message[str(msg.get("id") or row.get("uuid"))] = (msg.get("model"), msg["usage"])
+    if not per_message:
+        return None
+    rows = [u for _, u in per_message.values()]
+    return TokenUsage(
+        model=",".join(sorted({m for m, _ in per_message.values() if m})) or None,
+        input_tokens=sum(int(u.get(k) or 0) for u in rows for k in ("input_tokens", "cache_creation_input_tokens")),
+        cache_read_tokens=sum(int(u.get("cache_read_input_tokens") or 0) for u in rows),
+        output_tokens=sum(int(u.get("output_tokens") or 0) for u in rows))
+
+
 CLAUDE_PROMPT = "Read {task_file} and follow it exactly. Write submission.json into {workdir}."
 CLAUDE_TOOLS = "Read Write Edit Glob Grep Bash(quant tool *)"
 CLAUDE_PASS_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]

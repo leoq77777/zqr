@@ -14,12 +14,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 PACKAGE_SRC = Path(__file__).resolve().parents[2]
 
@@ -30,6 +31,7 @@ class SandboxConfig(BaseModel):
     memory_mb: int = 4096
     wall_seconds: int = 300
     docker_image: str = "quant-research-sandbox:latest"
+    run_label: str | None = Field(None, exclude=True)  # runtime only: lets a crashed harness's containers be found
 
 
 class SandboxError(RuntimeError):
@@ -49,12 +51,14 @@ def _limits(cfg: SandboxConfig):
     return apply
 
 
-def _command(cfg: SandboxConfig, workdir: Path) -> tuple[list[str], dict[str, str]]:
+def _command(cfg: SandboxConfig, workdir: Path, name: str) -> tuple[list[str], dict[str, str]]:
     if cfg.isolation == "docker":
         if shutil.which("docker") is None:
             raise SandboxError("docker isolation requested but docker is not installed")
         cmd = [
-            "docker", "run", "--rm", "--network", "none", "--read-only", "--pids-limit", "256",
+            "docker", "run", "--rm", "--name", name, "--label", "quant-research=sandbox",
+            *(["--label", f"quant-research.run={cfg.run_label}"] if cfg.run_label else []),
+            "--network", "none", "--read-only", "--pids-limit", "256",
             "--memory", f"{cfg.memory_mb}m", "--cpus", "1", "--tmpfs", "/tmp:size=256m",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
             "-v", f"{workdir}:/work", "-v", f"{PACKAGE_SRC}:/app/src:ro",
@@ -81,13 +85,16 @@ def run_plugin(
         bars.to_parquet(workdir / "bars.parquet", index=False)
         (workdir / "request.json").write_text(json.dumps({"parameters": params,
                                                           "prefix_lengths": prefix_lengths or []}))
-        cmd, env = _command(cfg, workdir)
+        name = f"qr-sbx-{uuid.uuid4().hex[:12]}"
+        cmd, env = _command(cfg, workdir, name)
         try:
             proc = subprocess.run(
                 cmd, cwd=workdir, env=env, capture_output=True, text=True, timeout=cfg.wall_seconds,
                 preexec_fn=_limits(cfg) if cfg.isolation == "subprocess" else None,
             )
         except subprocess.TimeoutExpired as exc:
+            if cfg.isolation == "docker":  # killing the client leaves the container running
+                subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=60)
             raise SandboxError(f"strategy exceeded wall time of {cfg.wall_seconds}s") from exc
         result_path = workdir / "result.json"
         if not result_path.exists():

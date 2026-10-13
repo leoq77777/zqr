@@ -479,28 +479,57 @@ def cmd_bench_run(args) -> None:
 
     paths, store = _ctx(args)
     adapter = ClaudeContainerAdapter(model=args.agent_model)
+
+    def brief(r: dict) -> dict:
+        res = r["result"]
+        return {"run_id": res["run_id"], "task": res["task_id"], "status": res["status"],
+                "failure_class": res["failure_class"], "score": res["score"], "cost": res["cost_estimated_usd"],
+                "audit_ok": res["audit"]["ok"], "faults": {f["fault"]: f["outcome"] for f in res["faults"]}}
+
     if args.bcmd == "run":
-        out = run_task(paths, store, args.task, adapter, repeat=args.repeat, cny_per_usd=args.cny_per_usd)
-        _out({"run_dir": out["run_dir"], "status": out["result"]["status"], "score": out["detail"]["score"],
-              "cost_estimated_usd": out["result"]["cost_estimated_usd"],
-              "hard_failures": out["result"]["hard_failures"]})
+        out = run_task(paths, store, args.task, adapter, repeat=args.repeat, cny_per_usd=args.cny_per_usd,
+                       faults=args.fault)
+        _out({"run_dir": out["run_dir"], **brief(out)})
     else:
+        faults: dict[str, list[str]] = {}
+        for spec in filter(None, (args.faults or "").split(",")):
+            task, _, fault = spec.partition(":")
+            faults.setdefault(task, []).append(fault)
         out = screen(paths, store, args.tasks.split(","), adapter, max_cost_usd=args.max_cost,
-                     cny_per_usd=args.cny_per_usd)
+                     cny_per_usd=args.cny_per_usd, repeats=args.repeats, faults=faults,
+                     title=args.title or "Benchmark v0.2 screen")
         _out({"report": out["report"], "spent_estimated_usd": out["spent_estimated_usd"],
-              "runs": [{"task": r["task_id"], "skipped": r["skipped"]} if "skipped" in r else
-                       {"task": r["result"]["task_id"], "status": r["result"]["status"],
-                        "score": r["detail"]["score"], "cost": r["result"]["cost_estimated_usd"]}
+              "runs": [{"task": r["task_id"], "skipped": r["skipped"]} if "skipped" in r else brief(r)
                        for r in out["runs"]]})
 
 
 def cmd_bench_grade(args) -> None:
-    from quant_research.bench.grader import grade
+    from quant_research.bench.ledger import load_results, regrade
 
     paths, store = _ctx(args)
-    g = grade(paths, store, args.task, args.session)
-    _out({"score": g.score(), "report_valid": g.report_valid, "hard_failures": g.hard_failures,
-          "attempted_violations": g.attempted_violations, "items": [i.out() for i in g.items], "notes": g.notes})
+    found = load_results(paths, [args.run])
+    if not found:
+        raise SystemExit(f"no v0.2 result for run {args.run}")
+    _out(regrade(paths, store, found[0]))
+
+
+def cmd_bench_recover(args) -> None:
+    from quant_research.bench.adapter import ClaudeContainerAdapter
+    from quant_research.bench.runner import recover_runs
+
+    paths, store = _ctx(args)
+    _out(recover_runs(paths, store, ClaudeContainerAdapter()))
+
+
+def cmd_bench_ledger(args) -> None:
+    from quant_research.bench.ledger import load_results, repeat_report, write_ledger
+
+    paths, store = _ctx(args)
+    results = load_results(paths, args.runs.split(",") if args.runs else None)
+    out = write_ledger(paths, results)
+    if args.repeats:
+        out["repeat"] = repeat_report(paths, store, results, title=args.title or "Repeat analysis")
+    _out(out)
 
 
 # -- candidate registry --------------------------------------------------------------------------------
@@ -849,16 +878,27 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "run":
             p.add_argument("--task", required=True)
             p.add_argument("--repeat", type=int, default=1)
+            p.add_argument("--fault", action="append", default=[], help="inject a fault (repeatable): "
+                           "timeout_after_commit, gateway_unavailable, sandbox_crash, agent_killed, model_unreachable")
         else:
             p.add_argument("--tasks", default="B02,B03,B05,B07")
             p.add_argument("--max-cost", type=float, required=True, help="stop starting tasks past this USD estimate")
+            p.add_argument("--repeats", type=int, default=1)
+            p.add_argument("--faults", help="TASK:FAULT,... e.g. B02:sandbox_crash,B03:gateway_unavailable")
+            p.add_argument("--title")
         p.add_argument("--agent-model", help="--model passed to Claude Code (default: its environment setting)")
         p.add_argument("--cny-per-usd", type=float, default=7.1)
         p.set_defaults(fn=cmd_bench_run)
-    p = bench.add_parser("grade", help="re-grade a finished session")
-    p.add_argument("--task", required=True)
-    p.add_argument("--session", required=True)
+    p = bench.add_parser("grade", help="re-grade a run from its frozen submission and compare with its result")
+    p.add_argument("--run", required=True)
     p.set_defaults(fn=cmd_bench_grade)
+    p = bench.add_parser("recover", help="finalise runs whose harness process died (cleanup, audit, result)")
+    p.set_defaults(fn=cmd_bench_recover)
+    p = bench.add_parser("ledger", help="cost/violation/failure ledger over runs; --repeats adds variance analysis")
+    p.add_argument("--runs", help="comma-separated run ids (default: all v0.2 runs)")
+    p.add_argument("--repeats", action="store_true")
+    p.add_argument("--title")
+    p.set_defaults(fn=cmd_bench_ledger)
 
     cand = sub.add_parser("candidate", help="candidate registry lifecycle").add_subparsers(dest="ccmd", required=True)
     p = cand.add_parser("list")

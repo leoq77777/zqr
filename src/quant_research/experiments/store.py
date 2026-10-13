@@ -343,6 +343,11 @@ class ExperimentStore:
         self._exec("DELETE FROM tool_requests WHERE session_id=? AND idempotency_key=? AND experiment_id IS NULL",
                    (session_id, key))
 
+    def tool_requests(self, session_id: str) -> list[dict[str, Any]]:
+        rows = self._exec("SELECT * FROM tool_requests WHERE session_id=? ORDER BY created_at",
+                          (session_id,)).fetchall()
+        return [dict(r) for r in rows]
+
     def experiment_for_key(self, session_id: str, key: str) -> str | None:
         row = self._exec("SELECT id FROM experiments WHERE session_id=? AND idempotency_key=? ORDER BY created_at "
                          "LIMIT 1", (session_id, key)).fetchone()

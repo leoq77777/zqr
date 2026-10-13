@@ -8,7 +8,7 @@ behaves as specified, that is stated; every change is listed in section 11.
 ## 1. Scope and assumptions
 
 - Coinbase Advanced Trade public data, BTC-USD and ETH-USD spot, long/cash, ONE_HOUR and ONE_DAY completed bars.
-  M2-M4 use one asset per candidate; M5 adds two-asset aggregation.
+  M2-M5 use one asset per candidate; M6 adds two-asset aggregation.
 - No leverage, shorting, derivatives, order-book data or HFT.
 - Account jurisdiction, fee tier and live eligibility are unresolved. Costs are configuration inputs labelled
   with their source; the default (0.6% taker, 5 bps slippage) is an assumption, not the account's tier.
@@ -200,9 +200,14 @@ Rejected and failed states keep their evidence. A failed final evaluation does n
 
 - The agent harness runs in a container whose only mounts are `/workspace` (rw: role prompt, task brief, public
   fixtures, deliverables) and the MCP client config with the session token (ro). Root filesystem read-only, all
-  capabilities dropped, memory/CPU/pid limits. Model credentials are passed by variable name only. Egress is not
-  yet restricted at the network level (Docker Desktop has no per-container allowlist); the container has no
-  credentials other than the model key and the session token.
+  capabilities dropped, memory/CPU/pid limits. Model credentials are passed by variable name only.
+- Network (M5): the agent container joins only a per-run `--internal` Docker network with external DNS disabled.
+  Its single exit is an egress proxy container (`quant_research.bench.egress_proxy`, stdlib only) that tunnels
+  CONNECT to the model API host from `ANTHROPIC_BASE_URL` and forwards `egress:8080` to the gateway; every attempt
+  is logged (host/port only). Verified by `tests/test_egress.py`: direct HTTPS, direct IP, `host.docker.internal`,
+  the Docker Desktop host IP, DNS, plain-HTTP proxying and non-allowlisted CONNECT all fail; the gateway needs
+  the token. Residual: the internal bridge address (the Docker VM) answers TCP; nothing listens there, and
+  published ports of other containers are not reachable through it.
 - Research tools are served by a host-side gateway (MCP over HTTP on a local port). The agent never receives
   host paths; tools take opaque ids.
 - Strategy code runs in a separate container per evaluation: `--network none`, read-only root, the plugin file
@@ -261,6 +266,34 @@ split into policy refusals (attempted violations) and malformed input (notes). I
 Anthropic-compatible endpoint, estimated 0.12 USD in total. One run per task on public fixtures: feasibility
 evidence, not a ranking. Not done: network-level egress allowlist for the agent container, Codex adapter,
 B01/B04/B06 (review-only) and B08 runs, repeated runs for variance.
+
+Done in M5 (reliability and security):
+- Isolation: per-run internal network + egress proxy (section 8); network denials other than the model host are
+  violations of source `network`.
+- Strict grading: research.json `final_artifact` (path, sha256, parameters, experiment_id) is required; the
+  gateway checks it against the records; the grader runs exactly that registered file with those parameters on a
+  frozen, read-only copy of the workspace (`bench_runs/<run>/submission`). A declaration that contradicts the
+  records is a hard failure; no fallback to other files or runs. Critical items (B02 definition, B05 holdout
+  isolation, B07 budget) fail the run unless fully earned.
+- Faults (`quant bench run --fault`): timeout_after_commit, gateway_unavailable, sandbox_crash, agent_killed,
+  model_unreachable, plus harness death handled by `quant bench recover`. Each injected fault is judged
+  recovered / safe_stop / unsafe (`not_triggered` when the agent never reached it). Recovery aborts experiments
+  left running, releases unbound idempotency claims and ends the session `failed` with the reason; the
+  invariant audit (terminal session, nothing running, every claim bound, no key executed twice, budget kept,
+  every experiment traced to a tool event, result files present) runs after every run. A failed audit makes the
+  run `invalid` (`audit.failed`): the records, not the agent, are in doubt. Sandbox containers are named and
+  removed on timeout (previously a timed-out docker run left the container running), and carry the run label so
+  `quant bench recover` removes them with the agent and proxy containers and the network of a dead harness.
+- Reproducibility: `config_hash` over image digest, harness version, model flag, task, mandate, fixtures, grader
+  version, research schema, egress allowlist and faults; `quant bench grade --run` regrades the frozen submission
+  and must reproduce the stored items exactly; `quant bench ledger --repeats` groups runs by task and
+  configuration with pass rate, score spread and per-item evidence for every item that differs.
+- Traceability: result schema v0.2 (`benchmark/v0.2/result.schema.json`, validated on write) with
+  `failure_class`, `failure_details`, `violations` by source (tool_policy, gatekeeper, network, grader), audit,
+  fault outcomes, usage and cost; `quant bench ledger` writes `ledger.csv` / `ledger.md` across runs. Usage of a
+  killed agent or dead harness is rebuilt from the CLI session transcript (`usage_source: transcript`); cost is
+  0 only when no model tunnel was opened, otherwise unknown (null), never silently 0.
+- Evidence: `benchmark/v0.2/results/m5-summary.md`.
 
 | Area | Current (engine 1.0.0) | Change |
 |---|---|---|

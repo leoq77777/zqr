@@ -88,7 +88,11 @@ There is no shell and no network besides these tools. Files you may write: anyth
   optional `results: [{{"experiment_id": ..., "metrics": {{...}}}}]` list so they can be verified.
 - `/workspace/report.md`: what you did, what the evidence supports and does not, all attempts, next step.
 - Strategy code files under `/workspace/`, listed in `strategy_artifacts` with their sha256.
-Call `write_report` before finishing and fix any problem it reports.
+- `final_artifact` in research.json: the one strategy you submit as your result, as
+  `{{"path", "sha256", "parameters", "experiment_id"}}`, where the experiment is a completed run of exactly that
+  file with exactly those parameters (`null` if you recommend no strategy). Only this declared artifact is graded;
+  other files and runs are not considered.
+Call `write_report` before finishing and fix any problem it reports. The workspace is frozen when you finish.
 """
 
 
@@ -105,7 +109,7 @@ def prepare(paths: Paths, store: ExperimentStore, task: BenchTask, run_id: str,
     ws = Path(store.get_session(sid)["workspace"])
     (ws / "fixtures").mkdir()
     shutil.copyfile(root / "role_prompt.md", ws / "ROLE.md")
-    shutil.copyfile(root / "research.schema.json", ws / "research.schema.json")
+    shutil.copyfile(root / "v0.2" / "research.schema.json", ws / "research.schema.json")
     for name in task.visible_fixtures:
         src = root / CONTRACT_V02 if name == "strategy_contract.md" else root / "fixtures" / name
         shutil.copyfile(src, ws / "fixtures" / name)

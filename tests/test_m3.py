@@ -212,10 +212,15 @@ def test_gateway_compare_and_report_validation(paths, store, dataset):
     doc = {"research_id": "r", "task_id": "t", "hypothesis": "h", "preregistered_plan": {},
            "experiment_ids": [a["experiment_id"]],
            "strategy_artifacts": [{"path": "/workspace/s.py", "sha256": digest}],
-           "decision": "reject", "limitations": [], "sources": [], "unresolved": [],
+           "decision": "reject", "limitations": [], "sources": [], "unresolved": [], "final_artifact": None,
            "results": [{"experiment_id": a["experiment_id"], "metrics": {"sharpe": sharpe}}]}
     (gw.workspace / "research.json").write_text(json.dumps(doc))
     assert gw.build_report() == {"valid": True, "problems": []}
+    doc["final_artifact"] = {"path": "/workspace/s.py", "sha256": digest, "parameters": {},
+                             "experiment_id": a["experiment_id"]}  # a template run, not this file
+    (gw.workspace / "research.json").write_text(json.dumps(doc))
+    assert any("not this file" in p for p in gw.build_report()["problems"])
+    doc["final_artifact"] = None
     doc["results"][0]["metrics"]["sharpe"] = sharpe + 1
     doc["experiment_ids"].append("exp-made-up")
     doc["strategy_artifacts"][0]["sha256"] = "0" * 64

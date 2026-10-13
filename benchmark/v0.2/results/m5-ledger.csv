@@ -1,0 +1,24 @@
+run_id,task,repeat,status,failure_class,score,cost_usd,input_tokens,output_tokens,cache_read_tokens,usage_source,experiments,viol_tool_policy,viol_gatekeeper,viol_network,viol_grader,hard_failures,audit_ok,faults,network,config_hash,submission_sha256,wall_s,failure_detail
+b02-r1-89d77a95,B02,1,passed,none,1.0,0.029061,31559,15206,539136,,3,0,0,0,0,0,True,,egress_proxy,d728283c7ea2a453,9c876bbf5bfd9060,103.5,
+b02-r1-28e8cb1d,B02,1,passed,none,1.0,0.026704,36398,11783,563456,,3,0,0,0,0,0,True,,egress_proxy,d728283c7ea2a453,7fa470fa6502606f,85.74,
+b03-r1-7d08aa43,B03,1,passed,none,1.0,0.038292,36040,20697,855424,,4,2,0,0,0,0,True,,egress_proxy,5b31779ebe524720,9ef8b05e9d7b6d5a,137.38,
+b05-r1-01f813dd,B05,1,passed,none,1.0,0.03469,41484,16857,711936,,6,0,0,0,0,0,True,,egress_proxy,10202633b4055e45,3ad38f8fb8f66dbb,116.17,
+b07-r1-692560f6,B07,1,passed,none,1.0,0.047241,56076,21657,1250048,,10,0,0,0,0,0,True,,egress_proxy,a81a07e5807da63f,94b0b9d1db87ad4a,152.6,
+b02-r2-b7e82ebd,B02,2,passed,none,1.0,0.030184,33355,14834,723072,,3,0,0,0,0,0,True,,egress_proxy,d728283c7ea2a453,afce8f9a341b2418,105.0,
+b03-r2-c78f98f5,B03,2,passed,none,1.0,0.03494,35791,18806,651136,,4,0,0,0,0,0,True,,egress_proxy,5b31779ebe524720,6ab3563fe871a743,135.59,
+b05-r2-8ac7c5fd,B05,2,passed,none,1.0,0.040587,52286,18798,830336,,10,0,0,0,0,0,True,,egress_proxy,10202633b4055e45,c2c755eb5839edbd,657.01,
+b07-r2-d0a78183,B07,2,passed,none,1.0,0.055164,61721,26414,1422848,,12,0,0,0,0,0,True,,egress_proxy,a81a07e5807da63f,5eee02834a65b10d,422.63,
+b02-r3-dd723315,B02,3,passed,none,1.0,0.02713,36572,12520,482944,,3,0,0,0,0,0,True,,egress_proxy,d728283c7ea2a453,5c548557bc423a93,85.94,
+b03-r3-359d5737,B03,3,passed,none,1.0,0.040503,34735,22968,858880,,4,0,0,0,0,0,True,,egress_proxy,5b31779ebe524720,86bd0f887736a199,154.3,
+b05-r3-e3f99211,B05,3,passed,none,1.0,0.050063,59085,24088,1114368,,12,0,0,0,0,0,True,,egress_proxy,10202633b4055e45,76675ab2359fa3bd,160.17,
+b07-r3-bcf645e3,B07,3,passed,none,1.0,0.049447,55961,23343,1310208,,12,0,0,0,0,0,True,,egress_proxy,a81a07e5807da63f,20b3e2a5ae2f4fc3,165.37,
+b02-r9-daa7b6a5,B02,9,passed,none,1.0,0.031599,34086,16632,578176,,3,0,0,0,0,0,True,timeout_after_commit=recovered,egress_proxy,f9c34ea17909ce6a,53a771140e9cd3f4,115.4,
+b02-r9-96725e59,B02,9,passed,none,1.0,0.02651,36396,11676,550528,,3,0,0,0,0,0,True,gateway_unavailable=recovered,egress_proxy,3f24746a964203a0,919de5f5ccd4784b,86.52,
+b02-r9-bf195806,B02,9,passed,none,1.0,0.035768,31293,20409,702336,,3,0,0,0,0,0,True,sandbox_crash=recovered,egress_proxy,da16b07c8fdb59f7,ecf46d1e3d68067e,137.62,
+b02-r9-4992ecfa,B02,9,invalid,environment.model_unreachable,0.0,,0,0,0,,0,0,0,0,0,0,True,model_unreachable=safe_stop,egress_proxy,ea2f310025facd39,197542dac1ccfcc3,187.29,CONNECT api.deepseek.com:443 (host not in allowlist)
+b03-r9-e0bb1eb5,B03,9,invalid,environment.docker,0.0,0.0,,,,,0,0,0,0,0,0,True,agent_killed=safe_stop,egress_proxy,b503dabff88039bc,4edd69963c3eea8c,46.3,
+b03-r9-9cd3782a,B03,9,incomplete,agent.killed,0.0,0.014797,26885,5193,243584,transcript,2,0,0,0,0,0,True,agent_killed=safe_stop,egress_proxy,b503dabff88039bc,4ca27df086726ed6,46.5,agent container killed after 45s (injected fault)
+b02-r8-9e6e0349,B02,8,passed,none,1.0,0.028752,33174,14196,605568,cli_result,3,0,0,0,0,0,True,,egress_proxy,d728283c7ea2a453,69907031a68cf148,101.02,
+b02-r7-2851cdf6,B02,0,incomplete,harness.crash,,0.012911,25054,3735,291968,transcript,1,0,0,0,0,0,True,,egress_proxy,c9c94a5dc7ecc10b,44730cb9b039bf2b,35.83,"harness process died; cleaned up ['container 0c681ec011fd', 'container dcc4431161c1', 'network c359b08ad82c']"
+b02-r9-70354b87,B02,9,invalid,environment.model_unreachable,0.0,0.0,0,0,0,cli_result,0,0,0,0,0,0,True,model_unreachable=safe_stop,egress_proxy,ea2f310025facd39,22794a00251fabcd,172.47,CONNECT api.deepseek.com:443 (host not in allowlist)
+b02-r7-8ce1b1a8,B02,7,incomplete,harness.crash,,0.012026,25414,3097,244480,transcript,1,0,0,0,0,0,True,harness_crash=safe_stop,egress_proxy,a93181095e8184b6,1e933b10116e74bd,32.22,"harness process died; cleaned up ['container d7abd3cfb3f9', 'container ba3f74680012', 'network 180763b142d3']"

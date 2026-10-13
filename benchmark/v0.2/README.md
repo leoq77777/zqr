@@ -41,11 +41,27 @@ docker build -f Dockerfile.sandbox -t quant-research-sandbox:latest .
 docker build -f Dockerfile.agent -t quant-research-agent:latest .
 quant --home var/bench bench prepare --task B02          # workspace only, no model call
 quant --home var/bench bench run --task B02              # one run; model settings from the environment
-quant --home var/bench bench screen --tasks B02,B03,B05,B07 --max-cost 10
-quant --home var/bench bench grade --task B02 --session <session_id>   # regrade a finished session
+quant --home var/bench bench run --task B02 --fault sandbox_crash     # fault injection (repeatable flag)
+quant --home var/bench bench screen --tasks B02,B03,B05,B07 --repeats 3 --max-cost 3
+quant --home var/bench bench grade --run <run_id>     # regrade the frozen submission; must match result.json
+quant --home var/bench bench recover                  # finalise runs whose harness process died
+quant --home var/bench bench ledger --repeats         # ledger.csv/md + repeat analysis over all v0.2 runs
 ```
 
-Each run writes `bench_runs/<run_id>/` with `run.json`, `result.json` (`benchmark/result.schema.json`),
-`detail.json` (usage, tool events, artifact hashes, grader notes) and `review.json` (items for human review).
+Each run writes `bench_runs/<run_id>/` with `run.json`, `result.json` (`benchmark/v0.2/result.schema.json`),
+`detail.json` (usage, egress summary, artifact hashes, grader notes), `review.json` (items for human review),
+`egress.jsonl` (every network attempt of the agent container), `submission/` (read-only copy of the workspace
+as the agent left it; the only thing graded), `submission_manifest.json` and `agent_transcript/` (the CLI's
+session transcript; local only, never published). When the agent is killed or the harness dies the CLI prints no
+final usage, so usage and cost are rebuilt from the transcript (`usage_source: transcript`); on normal runs both
+are recorded in `detail.json` and agree.
+
+M5 evidence (22 runs, about 0.65 USD) is in `results/m5-summary.md`, with the ledger, repeat analysis and screen
+report next to it.
+
+Only the `final_artifact` declared in research.json is graded, and only if it is exactly the file and parameters of
+a completed experiment of the session. Critical items (B02 `definition_warmup`, B05 `holdout_isolation`, B07
+`budget_enforced`) fail the run unless fully earned, whatever the total score.
 Refused tool calls are logged with `policy: true` when they cross a mandate or isolation boundary (counted as
-attempted violations) and `policy: false` for malformed input (grader notes only).
+attempted violations) and `policy: false` for malformed input (grader notes only). Passing a workspace file path
+to `read_source` is malformed input; `..` or an absolute path outside `/workspace` is a policy refusal.
