@@ -463,6 +463,46 @@ TOOL_CALLS = {
 }
 
 
+# -- benchmark v0.2 ------------------------------------------------------------------------------------
+def cmd_bench_prepare(args) -> None:
+    from quant_research.bench.tasks import load_tasks
+    from quant_research.bench.workspace import prepare
+
+    paths, store = _ctx(args)
+    prep = prepare(paths, store, load_tasks()[args.task], f"{args.task.lower()}-prep-{int(time.time())}")
+    _out({"session_id": prep.session_id, "workspace": str(prep.workspace), "run_dir": str(prep.run_dir)})
+
+
+def cmd_bench_run(args) -> None:
+    from quant_research.bench.adapter import ClaudeContainerAdapter
+    from quant_research.bench.runner import run_task, screen
+
+    paths, store = _ctx(args)
+    adapter = ClaudeContainerAdapter(model=args.agent_model)
+    if args.bcmd == "run":
+        out = run_task(paths, store, args.task, adapter, repeat=args.repeat, cny_per_usd=args.cny_per_usd)
+        _out({"run_dir": out["run_dir"], "status": out["result"]["status"], "score": out["detail"]["score"],
+              "cost_estimated_usd": out["result"]["cost_estimated_usd"],
+              "hard_failures": out["result"]["hard_failures"]})
+    else:
+        out = screen(paths, store, args.tasks.split(","), adapter, max_cost_usd=args.max_cost,
+                     cny_per_usd=args.cny_per_usd)
+        _out({"report": out["report"], "spent_estimated_usd": out["spent_estimated_usd"],
+              "runs": [{"task": r["task_id"], "skipped": r["skipped"]} if "skipped" in r else
+                       {"task": r["result"]["task_id"], "status": r["result"]["status"],
+                        "score": r["detail"]["score"], "cost": r["result"]["cost_estimated_usd"]}
+                       for r in out["runs"]]})
+
+
+def cmd_bench_grade(args) -> None:
+    from quant_research.bench.grader import grade
+
+    paths, store = _ctx(args)
+    g = grade(paths, store, args.task, args.session)
+    _out({"score": g.score(), "report_valid": g.report_valid, "hard_failures": g.hard_failures,
+          "attempted_violations": g.attempted_violations, "items": [i.out() for i in g.items], "notes": g.notes})
+
+
 # -- candidate registry --------------------------------------------------------------------------------
 def _candidate_call(fn):
     from quant_research.research.registry import RegistryError
@@ -798,6 +838,27 @@ def build_parser() -> argparse.ArgumentParser:
         for flags, kw in extra:
             p.add_argument(*flags, **kw)
         p.set_defaults(fn=_tool(TOOL_CALLS[name]))
+
+    bench = sub.add_parser("bench", help="benchmark v0.2 (agent container + MCP gateway + grader)").add_subparsers(
+        dest="bcmd", required=True)
+    p = bench.add_parser("prepare", help="create a task session and workspace without running an agent")
+    p.add_argument("--task", required=True)
+    p.set_defaults(fn=cmd_bench_prepare)
+    for name in ("run", "screen"):
+        p = bench.add_parser(name)
+        if name == "run":
+            p.add_argument("--task", required=True)
+            p.add_argument("--repeat", type=int, default=1)
+        else:
+            p.add_argument("--tasks", default="B02,B03,B05,B07")
+            p.add_argument("--max-cost", type=float, required=True, help="stop starting tasks past this USD estimate")
+        p.add_argument("--agent-model", help="--model passed to Claude Code (default: its environment setting)")
+        p.add_argument("--cny-per-usd", type=float, default=7.1)
+        p.set_defaults(fn=cmd_bench_run)
+    p = bench.add_parser("grade", help="re-grade a finished session")
+    p.add_argument("--task", required=True)
+    p.add_argument("--session", required=True)
+    p.set_defaults(fn=cmd_bench_grade)
 
     cand = sub.add_parser("candidate", help="candidate registry lifecycle").add_subparsers(dest="ccmd", required=True)
     p = cand.add_parser("list")

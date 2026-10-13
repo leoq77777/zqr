@@ -37,6 +37,7 @@ class GateContext(BaseModel):
     allow_weak_isolation: bool = True  # local CLI users run their own trusted code
     stop_file: Path | None = None
     reuse_duplicates: bool = True
+    agent_segments: tuple[str, ...] = ("dev",)  # the mandate may open validation to agent tools (never holdout)
 
 
 class GateDecision(BaseModel):
@@ -71,9 +72,9 @@ def check(
         return GateDecision(status="blocked", reasons=["session stop requested"])
     if segment == "holdout" and ctx.caller != "holdout":
         return GateDecision(status="blocked", reasons=["holdout data is only available to the holdout entry point"])
-    if ctx.caller == "agent_tool" and segment != "dev":
-        return GateDecision(status="blocked", reasons=[f"segment {segment!r} not allowed for agent tools; validation "
-                                                       "is reserved for the controller's acceptance evaluation"])
+    if ctx.caller == "agent_tool" and (segment not in ctx.agent_segments or segment == "holdout"):
+        return GateDecision(status="blocked", reasons=[f"segment {segment!r} not allowed for agent tools under this "
+                                                       f"mandate (allowed: {list(ctx.agent_segments)})"])
     if ctx.caller == "controller" and segment not in ("dev", "validation"):
         return GateDecision(status="blocked", reasons=[f"segment {segment!r} not allowed for {ctx.caller}"])
     if ctx.session_id and ctx.max_session_experiments is not None:

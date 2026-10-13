@@ -198,8 +198,11 @@ Rejected and failed states keep their evidence. A failed final evaluation does n
 | `plugins/` (frozen code) | rw | none | ro, single file |
 | `experiments.db` | single writer | none | none |
 
-- The agent harness runs in a container whose only mounts are `/workspace` (rw), `/data/dev.parquet` (ro) and
-  the role prompt (ro). Egress is limited to the model API and the tool gateway.
+- The agent harness runs in a container whose only mounts are `/workspace` (rw: role prompt, task brief, public
+  fixtures, deliverables) and the MCP client config with the session token (ro). Root filesystem read-only, all
+  capabilities dropped, memory/CPU/pid limits. Model credentials are passed by variable name only. Egress is not
+  yet restricted at the network level (Docker Desktop has no per-container allowlist); the container has no
+  credentials other than the model key and the session token.
 - Research tools are served by a host-side gateway (MCP over HTTP on a local port). The agent never receives
   host paths; tools take opaque ids.
 - Strategy code runs in a separate container per evaluation: `--network none`, read-only root, the plugin file
@@ -217,7 +220,7 @@ Rejected and failed states keep their evidence. A failed final evaluation does n
 | `submit_experiment` | `artifact` (template name or workspace-relative plugin file), `parameters`, `plan_id`, `idempotency_key` | `experiment_id`; gate outcome |
 | `get_experiment` | `experiment_id` | metrics, statistics, diagnosis, benchmarks, fills summary, errors, identity |
 | `compare_experiments` | `experiment_ids` | same-basis comparison; refuses mixed cost/split/engine/policy |
-| `build_report` | `research.json` path in workspace | validated report; every number must reference an experiment id |
+| `write_report` | `research.json` path in workspace | validated report; every number must reference an experiment id |
 
 Segment, dataset, split, costs and policy come from the mandate, not from tool arguments. Retries with the same
 idempotency key return the original experiment. The CLI (`quant tool ...`) stays as a thin client of the same
@@ -225,11 +228,13 @@ gateway for development.
 
 ## 10. Agent adapters and benchmark v0.2
 
-- First adapter: Claude Agent SDK, driven through the DeepSeek Anthropic-compatible endpoint configured in the
-  user's environment; credentials passed only to the agent container. Codex adapter deferred to M4.
-- Benchmark v0.2 contract: tasks keep their B01-B08 ids. B02's expected output is translated explicitly:
-  v0.1 expected targets = v0.2 exposures under `identity-v1`; a second expected series is published for the
-  default policy. v0.1 fixtures are not claimed compatible with v0.2 graders without this translation.
+- First adapter: Claude Code headless (the Claude Agent SDK runtime) in the agent container, driven through the
+  DeepSeek Anthropic-compatible endpoint configured in the user's environment; credentials passed only to the
+  agent container. Codex adapter deferred past M4.
+- Benchmark v0.2 contract (`benchmark/v0.2/`): tasks keep their B01-B08 ids. B02's expected output is translated
+  explicitly: under `policy-v1` (no volatility target, caps 1) weight = proposal, so the v0.1 golden targets
+  are the v0.2 golden exposures; the grader checks the proposals. v0.1 fixtures are not claimed compatible
+  with v0.2 graders without this translation.
 - Initial screen B02/B03/B05/B07, one run each, within the USD 10 ceiling; formal ranking is out of scope until a
   larger budget is approved.
 
@@ -244,6 +249,18 @@ experiment count covers dev exploration only), candidate registry and lifecycle 
 (one trial per procedure; folds and sensitivity reruns are recorded but not trials), and the tool gateway
 (`quant_research.gateway`, `quant tool plan/submit/get/compare/report/inspect/source/history`). Holdout of a
 walk-forward procedure is refused until re-selection through the holdout is implemented. Isolation remains M4.
+
+Done in M4: agent image (`Dockerfile.agent`, Claude Code 2.1.112 headless), MCP HTTP server over the gateway
+(`quant_research.gateway.mcp_server`, per-session bearer token, DNS-rebinding protection, fault injection
+`timeout_after_commit`), container adapter with usage/cost capture (`quant_research.bench.adapter`), benchmark
+v0.2 contract and B02 translation (`benchmark/v0.2/`), task workspaces with a private holdout continuation,
+deterministic grader and `quant bench prepare/run/screen/grade`. The mandate's `agent_segments` now governs
+both the gateway and the gatekeeper (B05 opens validation; holdout is never open to agent tools). Refusals are
+split into policy refusals (attempted violations) and malformed input (notes). Initial screen
+(`benchmark/v0.2/results/screen-2026-10-12.md`): B02/B03/B05/B07 passed with DeepSeek flash through the
+Anthropic-compatible endpoint, estimated 0.12 USD in total. One run per task on public fixtures: feasibility
+evidence, not a ranking. Not done: network-level egress allowlist for the agent container, Codex adapter,
+B01/B04/B06 (review-only) and B08 runs, repeated runs for variance.
 
 | Area | Current (engine 1.0.0) | Change |
 |---|---|---|

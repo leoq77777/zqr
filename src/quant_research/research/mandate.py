@@ -75,6 +75,7 @@ class Mandate(BaseModel):
     acceptance: AcceptanceCriteria
     budget: Budget
     holdout: HoldoutPolicy
+    agent_segments: tuple[Literal["dev", "validation"], ...] = ("dev",)  # segments agent tools may run on
     notes: str = ""
 
     def mandate_id(self) -> str:

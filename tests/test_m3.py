@@ -206,15 +206,24 @@ def test_gateway_compare_and_report_validation(paths, store, dataset):
     with pytest.raises(GatewayError, match="policy_id"):
         gw.compare_experiments([a["experiment_id"], b["experiment_id"]])
 
-    sharpe = a["metrics"]["sharpe"]
-    doc = {"conclusion": "x", "experiments": [{"experiment_id": a["experiment_id"], "metrics": {"sharpe": sharpe}}]}
+    sharpe = round(a["metrics"]["sharpe"], 3)
+    (gw.workspace / "s.py").write_text("x = 1\n")
+    digest = __import__("hashlib").sha256(b"x = 1\n").hexdigest()
+    doc = {"research_id": "r", "task_id": "t", "hypothesis": "h", "preregistered_plan": {},
+           "experiment_ids": [a["experiment_id"]],
+           "strategy_artifacts": [{"path": "/workspace/s.py", "sha256": digest}],
+           "decision": "reject", "limitations": [], "sources": [], "unresolved": [],
+           "results": [{"experiment_id": a["experiment_id"], "metrics": {"sharpe": sharpe}}]}
     (gw.workspace / "research.json").write_text(json.dumps(doc))
     assert gw.build_report() == {"valid": True, "problems": []}
-    doc["experiments"][0]["metrics"]["sharpe"] = sharpe + 1
-    doc["experiments"].append({"experiment_id": "exp-made-up"})
+    doc["results"][0]["metrics"]["sharpe"] = sharpe + 1
+    doc["experiment_ids"].append("exp-made-up")
+    doc["strategy_artifacts"][0]["sha256"] = "0" * 64
+    del doc["limitations"]
     (gw.workspace / "research.json").write_text(json.dumps(doc))
     problems = gw.build_report()["problems"]
     assert any("recorded" in p for p in problems) and any("exp-made-up" in p for p in problems)
+    assert any("sha256" in p for p in problems) and any("limitations" in p for p in problems)
 
 
 def test_gateway_budget_and_stop(paths, store, dataset):

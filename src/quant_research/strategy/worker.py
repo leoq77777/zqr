@@ -15,7 +15,11 @@ def _block_network() -> None:
     def _denied(*_a, **_k):
         raise PermissionError("network access is disabled for strategy code")
 
-    socket.socket = _denied  # type: ignore[assignment,misc]
+    class _DeniedSocket(socket.socket):  # stays a class: ssl and pyarrow subclass socket.socket at import
+        def __init__(self, *_a, **_k):
+            _denied()
+
+    socket.socket = _DeniedSocket  # type: ignore[misc]
     socket.create_connection = _denied  # type: ignore[assignment]
     socket.getaddrinfo = _denied  # type: ignore[assignment]
 

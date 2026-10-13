@@ -7,6 +7,7 @@ key: a retry with the same key returns the original experiment instead of runnin
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -31,10 +32,21 @@ from quant_research.validation.splits import load_research_segment, load_split
 
 ACTIVE = {SessionState.RUNNING, SessionState.WAITING_FOR_AGENT, SessionState.CREATED}
 CONTAINER_WORKSPACE = PurePosixPath("/workspace")
+REPORT_FIELDS = ("research_id", "task_id", "hypothesis", "preregistered_plan", "experiment_ids",
+                 "strategy_artifacts", "decision", "limitations", "sources", "unresolved")
+DECISIONS = ("continue", "revise", "reject", "insufficient_evidence")
 
 
 class GatewayError(RuntimeError):
     """A refused tool call; the message is safe to show to the agent."""
+
+
+class PolicyRefusal(GatewayError):
+    """A call that crosses a mandate or isolation boundary (as opposed to malformed input)."""
+
+
+def _brief_errors(exc: ValidationError) -> str:
+    return "; ".join(f"{'.'.join(map(str, e['loc'])) or 'plan'}: {e['msg']}" for e in exc.errors())
 
 
 def _matches(cited: Any, recorded: Any) -> bool:
@@ -82,11 +94,11 @@ class ToolGateway:
             except ValueError:
                 host = Path(artifact).resolve()
                 if self.workspace not in host.parents:
-                    raise GatewayError("plugin files must be inside the session workspace") from None
+                    raise PolicyRefusal("plugin files must be inside the session workspace") from None
                 p = PurePosixPath(host.relative_to(self.workspace).as_posix())
         code = (self.workspace / p).resolve()
         if self.workspace not in code.parents:
-            raise GatewayError("plugin path escapes the session workspace")
+            raise PolicyRefusal("plugin path escapes the session workspace")
         if not code.is_file():
             raise GatewayError(f"plugin file {p} not found in the workspace")
         try:
@@ -99,7 +111,7 @@ class ToolGateway:
         return GateContext(caller=self.caller, session_id=self.sid, max_session_experiments=b.max_experiments,
                            max_trials_per_strategy=b.max_trials_per_strategy,
                            allow_weak_isolation=self.cfg.allow_weak_isolation,
-                           stop_file=self.workspace / STOP_FILE)
+                           stop_file=self.workspace / STOP_FILE, agent_segments=tuple(self.mandate.agent_segments))
 
     def _visible(self, exp_id: str) -> dict[str, Any]:
         rec = self.store.get_experiment(exp_id)
@@ -111,13 +123,13 @@ class ToolGateway:
     def inspect_dataset(self, dataset_id: str | None = None) -> dict[str, Any]:
         dataset_id = dataset_id or self.mandate.dataset_id
         if dataset_id != self.mandate.dataset_id:
-            raise GatewayError("only the mandate's dataset is approved for this session")
+            raise PolicyRefusal("only the mandate's dataset is approved for this session")
         m = load_manifest(self.paths, dataset_id)
         split = load_split(self.paths, self.mandate.split_id)
         dev = load_research_segment(self.paths, self.mandate.split_id, "dev")
+        allowed = {s: [to_iso(split.window(s)[0]), to_iso(split.window(s)[1])] for s in self.mandate.agent_segments}
         return {"dataset_id": dataset_id, "snapshot_hash": m["data_hash"], "venue": m["venue"],
-                "instrument": m["instrument"], "granularity": m["granularity"],
-                "allowed_segments": {"dev": [to_iso(split.dev[0]), to_iso(split.dev[1])]},
+                "instrument": m["instrument"], "granularity": m["granularity"], "allowed_segments": allowed,
                 "dev_bars": int(len(dev.bars)), "columns": list(dev.bars.columns),
                 "quality": {"coverage": m["coverage"], "internal_gap_bars": m["internal_gap_bars"],
                             "fill_policy": m["fill_policy"], "has_unfilled_gaps": m["has_unfilled_gaps"]},
@@ -127,7 +139,7 @@ class ToolGateway:
 
     def read_source(self, source_id: str) -> dict[str, Any]:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", source_id):
-            raise GatewayError("invalid source id")
+            raise PolicyRefusal("invalid source id")
         path = self.paths.root / "sources" / f"{source_id}.json"
         if not path.exists():
             raise GatewayError(f"unknown source {source_id}")
@@ -140,7 +152,7 @@ class ToolGateway:
         try:
             body = ResearchPlan.model_validate(plan)
         except ValidationError as exc:
-            raise GatewayError(f"invalid plan: {exc}") from None
+            raise GatewayError(f"invalid plan: {_brief_errors(exc)}") from None
         if supersedes and (self.store.get_plan(supersedes) or {}).get("session_id") != self.sid:
             raise GatewayError(f"unknown plan {supersedes}")
         plan_id = self.store.put_plan(self.sid, self.mandate.mandate_id(), body.model_dump(), supersedes=supersedes)
@@ -148,12 +160,16 @@ class ToolGateway:
         return {"plan_id": plan_id, "plan": body.model_dump()}
 
     def submit_experiment(self, artifact: str, parameters: dict[str, Any] | None = None, plan_id: str | None = None,
-                          idempotency_key: str | None = None) -> dict[str, Any]:
+                          idempotency_key: str | None = None, segment: str = "dev") -> dict[str, Any]:
         self._require_active()
         parameters = parameters or {}
+        if segment not in self.mandate.agent_segments:
+            raise PolicyRefusal(f"segment {segment!r} is not available to agent tools under this mandate "
+                               f"(allowed: {list(self.mandate.agent_segments)})")
         if not idempotency_key:
             raise GatewayError("idempotency_key is required (reuse it when retrying the same submission)")
-        request_hash = hash_obj({"artifact": artifact, "parameters": parameters, "plan_id": plan_id})
+        request_hash = hash_obj({"artifact": artifact, "parameters": parameters, "plan_id": plan_id,
+                                 "segment": segment})
         prior = self.store.claim_request(self.sid, idempotency_key, request_hash)
         if prior is not None:
             if prior["request_hash"] != request_hash:
@@ -164,14 +180,14 @@ class ToolGateway:
             self.store.bind_request(self.sid, idempotency_key, exp_id)
             return {"replayed": True, **self.get_experiment(exp_id)}
         try:
-            return self._run_submission(artifact, parameters, plan_id, idempotency_key)
+            return self._run_submission(artifact, parameters, plan_id, idempotency_key, segment)
         except Exception:
             if self.store.experiment_for_key(self.sid, idempotency_key) is None:
                 self.store.release_request(self.sid, idempotency_key)  # nothing was recorded; a retry may run
             raise
 
     def _run_submission(self, artifact: str, parameters: dict[str, Any], plan_id: str | None,
-                        key: str) -> dict[str, Any]:
+                        key: str, segment: str) -> dict[str, Any]:
         strategy_ref, name = self._resolve_artifact(artifact)
         plan = None
         if plan_id:
@@ -184,7 +200,7 @@ class ToolGateway:
         status, deviation = plan_status(plan, artifact_name(strategy_ref, name), parameters,
                                         self.store.plan_usage(plan_id) if plan_id else 0)
         req = ExperimentRequest(strategy_ref=strategy_ref, parameters=parameters, dataset_id=self.mandate.dataset_id,
-                                split_id=self.mandate.split_id, segment="dev",
+                                split_id=self.mandate.split_id, segment=segment,
                                 engine_config=self.mandate.engine_config, policy=self.mandate.policy)
         res = run_experiment(self.paths, self.store, req, session_id=self.sid, sandbox=self.cfg.sandbox,
                              gate=self._gate(), llm_suggestion={"source": "tool gateway", "artifact": name},
@@ -258,33 +274,58 @@ class ToolGateway:
                                  "labels": [d["label"] for d in (r["diagnosis"] or {}).get("labels", [])]}
                                 for r in rows]}
 
+    def _workspace_file(self, path: str) -> Path:
+        rel = PurePosixPath(path)
+        if rel.is_absolute():
+            try:
+                rel = rel.relative_to(CONTAINER_WORKSPACE)
+            except ValueError:
+                raise PolicyRefusal(f"{path} is outside the workspace") from None
+        p = (self.workspace / rel).resolve()
+        if self.workspace not in p.parents:
+            raise PolicyRefusal(f"{path} is outside the workspace")
+        return p
+
     def build_report(self, path: str = "research.json") -> dict[str, Any]:
-        """Validate research.json in the workspace: every cited experiment exists in this session and every cited
-        number matches the recorded value."""
-        p = (self.workspace / PurePosixPath(path).relative_to("/workspace") if path.startswith("/workspace")
-             else self.workspace / path).resolve()
-        if self.workspace not in p.parents or not p.is_file():
-            raise GatewayError("report file must exist inside the session workspace")
+        """Validate research.json (benchmark research schema): every experiment id exists in this session, every
+        strategy artifact hash matches the workspace file, and every number cited under `results` matches."""
+        p = self._workspace_file(path)
+        if not p.is_file():
+            raise GatewayError(f"{path} not found in the workspace")
         try:
             doc = json.loads(p.read_text())
         except json.JSONDecodeError as exc:
             raise GatewayError(f"research.json is not valid JSON: {exc}") from None
-        problems = []
-        for key in ("conclusion", "experiments"):
-            if key not in doc:
-                problems.append(f"missing field {key!r}")
-        for i, cited in enumerate(doc.get("experiments", [])):
-            exp_id = cited.get("experiment_id")
-            rec = self.store.get_experiment(exp_id) if exp_id else None
+        if not isinstance(doc, dict):
+            raise GatewayError("research.json must be a JSON object")
+        problems = [f"missing field {k!r}" for k in REPORT_FIELDS if k not in doc]
+        if doc.get("decision") not in (None, *DECISIONS):
+            problems.append(f"decision must be one of {list(DECISIONS)}")
+        cited_ids = list(doc.get("experiment_ids") or []) + [r.get("experiment_id") for r in doc.get("results") or []]
+        for exp_id in dict.fromkeys(cited_ids):
+            rec = self.store.get_experiment(exp_id) if isinstance(exp_id, str) else None
             if rec is None or rec["session_id"] != self.sid:
-                problems.append(f"experiments[{i}]: unknown experiment {exp_id!r}")
+                problems.append(f"unknown experiment {exp_id!r}")
+        for art in doc.get("strategy_artifacts") or []:
+            try:
+                f = self._workspace_file(str(art.get("path", "")))
+            except GatewayError as exc:
+                problems.append(str(exc))
+                continue
+            if not f.is_file():
+                problems.append(f"artifact {art.get('path')!r} not found")
+            elif hashlib.sha256(f.read_bytes()).hexdigest() != art.get("sha256"):
+                problems.append(f"artifact {art.get('path')!r}: sha256 does not match the file")
+        for cited in doc.get("results") or []:
+            rec = self.store.get_experiment(cited.get("experiment_id") or "")
+            if rec is None or rec["session_id"] != self.sid:
                 continue
             recorded = {**(rec["metrics"] or {}), **(rec["statistics"] or {})}
             for name, value in (cited.get("metrics") or {}).items():
                 if name not in recorded:
-                    problems.append(f"{exp_id}: metric {name!r} was not recorded")
+                    problems.append(f"{rec['id']}: metric {name!r} was not recorded")
                 elif not _matches(value, recorded[name]):
-                    problems.append(f"{exp_id}: {name}={value!r} but recorded {recorded[name]!r}")
+                    problems.append(f"{rec['id']}: {name}={value!r} but recorded {recorded[name]!r}")
         valid = not problems
         self.store.log_session_event(self.sid, "report_validated", {"path": path, "valid": valid,
                                                                     "problems": problems})
