@@ -1,0 +1,15 @@
+{
+  "products": ["BTC-USD", "ETH-USD"],
+  "granularity": "ONE_HOUR",
+  "initial_cash": 10000,
+  "strategies": [
+    {"key": "buy_and_hold", "strategy_ref": "template:buy_and_hold", "parameters": {}},
+    {"key": "cash", "strategy_ref": "template:cash", "parameters": {}},
+    {"key": "mom24", "strategy_ref": "template:momentum", "parameters": {"lookback": 24}},
+    {"key": "mom72", "strategy_ref": "template:momentum", "parameters": {"lookback": 72}},
+    {"key": "mom168", "strategy_ref": "template:momentum", "parameters": {"lookback": 168}},
+    {"key": "sma24-96", "strategy_ref": "template:sma_cross", "parameters": {"fast": 24, "slow": 96}},
+    {"key": "sma48-192", "strategy_ref": "template:sma_cross", "parameters": {"fast": 48, "slow": 192}},
+    {"key": "breakout48-24", "strategy_ref": "template:breakout", "parameters": {"entry": 48, "exit": 24}}
+  ]
+}

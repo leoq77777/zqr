@@ -1,0 +1,108 @@
+"""Automatic promotion under the standing authorization: validated -> frozen -> holdout -> paper_approved -> roster.
+
+Every step stops at the first refusal and says why; the candidate keeps whatever state it reached.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable
+from typing import Any
+
+from quant_research.data.snapshot import load_manifest
+from quant_research.experiments.store import ExperimentStore
+from quant_research.paper.fleet import RosterEntry, add_entry, load_roster
+from quant_research.paths import Paths
+from quant_research.research import authorization as auth_mod
+from quant_research.research.authorization import AuthorizationError
+from quant_research.research.mandate import Mandate
+from quant_research.research.registry import RegistryError, freeze, transition
+from quant_research.strategy.sandbox import SandboxConfig
+from quant_research.validation.holdout import HoldoutError, run_candidate_holdout
+
+log = logging.getLogger(__name__)
+PAPER_STATES = ("paper_approved", "paper_active")
+
+
+def authorization_path(paths: Paths):
+    return paths.desk / "authorization.json"
+
+
+def roster_path(paths: Paths):
+    return paths.desk / "roster.json"
+
+
+def _paper_candidates(paths: Paths) -> int:
+    path = roster_path(paths)
+    if not path.exists():
+        return 0
+    return sum(1 for e in load_roster(path).entries if e.enabled and e.source == "candidate")
+
+
+def promote(paths: Paths, store: ExperimentStore, candidate_id: str, sandbox: SandboxConfig | None = None,
+            now: float | None = None) -> dict[str, Any]:
+    """Push a validated candidate as far as the authorization and the mandate allow."""
+    out: dict[str, Any] = {"candidate_id": candidate_id, "steps": []}
+
+    def stop(reason: str) -> dict[str, Any]:
+        cand = store.get_candidate(candidate_id)
+        return out | {"state": cand["state"] if cand else None, "stopped": reason}
+
+    cand = store.get_candidate(candidate_id)
+    if cand is None or cand["state"] != "validated":
+        return stop(f"not validated (state {cand['state'] if cand else 'unknown'})")
+    auth = auth_mod.load(authorization_path(paths))
+    if auth is None:
+        return stop("no standing authorization; waiting for a human (`quant candidate freeze`)")
+    mandate = Mandate.model_validate(store.get_mandate(cand["mandate_id"])["body"])
+    manifest = load_manifest(paths, mandate.dataset_id)
+    try:
+        auth.check(now=now, product=manifest["instrument"])
+    except AuthorizationError as exc:
+        return stop(str(exc))
+
+    try:
+        freeze(paths, store, candidate_id, "desk standing authorization", actor="desk", authorization=auth)
+        out["steps"].append("frozen")
+        res = run_candidate_holdout(paths, store, candidate_id, sandbox)
+    except (RegistryError, HoldoutError) as exc:
+        return stop(str(exc))
+    out["steps"].append("final_evaluated" if res["passed"] else "failed_final")
+    out["holdout"] = {k: v for k, v in res["candidate"]["evidence"].items() if k != "rule"}
+    if not res["passed"]:
+        return stop("holdout pass rule not met")
+
+    if _paper_candidates(paths) >= auth.max_paper_strategies:
+        return stop(f"paper roster already has {auth.max_paper_strategies} candidate strategies (authorization cap)")
+    try:
+        transition(store, candidate_id, "paper_approved", "desk", note="desk standing authorization",
+                   authorization=auth)
+    except RegistryError as exc:
+        return stop(str(exc))
+    out["steps"].append("paper_approved")
+    entry = RosterEntry(name=f"{manifest['instrument'].split('-')[0].lower()}-{candidate_id}",
+                        product=manifest["instrument"], granularity=manifest["granularity"],
+                        strategy_ref=cand["strategy_ref"], parameters=cand["parameters"], policy=mandate.policy,
+                        source="candidate", candidate_id=candidate_id)
+    add_entry(roster_path(paths), entry)
+    out["steps"].append("roster")
+    out["roster_name"] = entry.name
+    return stop("done")
+
+
+def activate_hook(paths: Paths) -> Callable[[RosterEntry], None]:
+    """Fleet callback: a candidate entry that starts trading moves paper_approved -> paper_active (actor paper)."""
+
+    def _activate(entry: RosterEntry) -> None:
+        if entry.source != "candidate" or not entry.candidate_id:
+            return
+        store = ExperimentStore(paths.db)
+        try:
+            cand = store.get_candidate(entry.candidate_id)
+            if cand and cand["state"] == "paper_approved":
+                transition(store, entry.candidate_id, "paper_active", "paper",
+                           {**(cand["evidence"] or {}), "paper_name": entry.name}, "attached to the paper fleet")
+        finally:
+            store.close()
+
+    return _activate

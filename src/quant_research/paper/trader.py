@@ -39,6 +39,14 @@ from quant_research.timeutil import granularity_seconds, periods_per_year
 log = logging.getLogger(__name__)
 
 
+def target_fraction(spec: StrategySpec, policy: PortfolioPolicy, history: pd.DataFrame, granularity: str,
+                    paths=None, sandbox: SandboxConfig | None = None) -> float | None:
+    """The policy-adjusted target for the last bar of `history`; None on an unscheduled rebalance bar."""
+    tr = compute_targets(spec, history, paths, sandbox or SandboxConfig())
+    targets, _ = strategy_weights(tr, policy, history, granularity_seconds(granularity), periods_per_year(granularity))
+    return None if pd.isna(targets[-1]) else float(targets[-1])
+
+
 class PaperConfig(BaseModel):
     name: str
     instrument: str
@@ -193,13 +201,19 @@ class PaperTrader:
 
     def warm_up(self, bars: pd.DataFrame) -> None:
         for bar in bars.to_dict("records"):
-            self._append_bar(bar)
+            if self._append_bar(bar):
+                self.ledger.record_bar(bar)
+        if len(bars):
+            avail = float(to_epoch(bars["available_at"])[-1])
+            if avail > (self.ledger.get("last_data_time") or 0):
+                self.ledger.put("last_data_time", avail)
 
     def on_bar(self, bar: dict[str, Any]) -> dict[str, Any] | None:
         """Handle one completed bar: resolve orders, reconcile, decide, risk-check, send."""
         if not self._append_bar(bar):
             self._log("INFO", "duplicate_or_old_bar_ignored", bar_open=str(bar["bar_open_time"]))
             return None
+        self.ledger.record_bar(bar)
         now = self.clock()
         avail = to_epoch(pd.Series([bar["available_at"]]))[0]
         self.ledger.put("last_bar_open", str(bar["bar_open_time"]))
@@ -209,12 +223,11 @@ class PaperTrader:
         self.resolve_orders()
         self.reconcile()
 
-        tr = compute_targets(self.spec, self.history, self.paths, self.cfg.sandbox)
-        targets, _ = strategy_weights(tr, self.cfg.policy, self.history, granularity_seconds(self.cfg.granularity),
-                                      periods_per_year(self.cfg.granularity))
-        if pd.isna(targets[-1]):  # unscheduled rebalance bar: no new instruction
+        fraction = target_fraction(self.spec, self.cfg.policy, self.history, self.cfg.granularity, self.paths,
+                                   self.cfg.sandbox)
+        if fraction is None:  # unscheduled rebalance bar: no new instruction
             return None
-        target = TargetPortfolio(instrument=self.cfg.instrument, target_fraction=float(targets[-1]),
+        target = TargetPortfolio(instrument=self.cfg.instrument, target_fraction=fraction,
                                  decided_at=float(avail), candidate_hash=self.spec.candidate_hash())
         bal = self.balances()
         equity = self.equity(close)
@@ -229,7 +242,8 @@ class PaperTrader:
                           halted_reason=self.halted_reason)
         decision = self.risk.evaluate(target, ctx)
         intent = self._size(decision, close, equity, bal, now) if decision.approved else None
-        record = {"bar_open": str(bar["bar_open_time"]), "target": target.model_dump(),
+        record = {"bar_open": str(bar["bar_open_time"]), "history_start": str(self.history["bar_open_time"].iloc[0]),
+                  "price": str(close), "equity": str(equity), "target": target.model_dump(),
                   "decision": decision.model_dump(), "intent": intent.model_dump() if intent else None}
         self.ledger.record_decision(now, record)
         if decision.reasons:

@@ -52,6 +52,10 @@ class Paths:
         return self.root / "paper"
 
     @property
+    def desk(self) -> Path:
+        return self.root / "desk"
+
+    @property
     def db(self) -> Path:
         return self.root / "experiments.db"
 
@@ -71,6 +75,7 @@ class Paths:
             self.reports,
             self.sessions,
             self.paper,
+            self.desk,
         ):
             p.mkdir(parents=True, exist_ok=True)
         return self

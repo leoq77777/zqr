@@ -9,6 +9,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from quant_research.paper.models import BrokerEvent, BrokerEventType, OrderIntent, Side
 from quant_research.paper.orders import Order, OrderState
 
@@ -22,7 +24,9 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS decisions (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL, data TEXT);
+CREATE TABLE IF NOT EXISTS bars (bar_open TEXT PRIMARY KEY, data TEXT NOT NULL);
 """
+TIME_COLUMNS = ("bar_open_time", "bar_close_time", "available_at")
 
 
 class Ledger:
@@ -99,3 +103,20 @@ class Ledger:
 
     def record_decision(self, at: float, data: dict[str, Any]) -> None:
         self._conn.execute("INSERT INTO decisions(at, data) VALUES (?, ?)", (at, json.dumps(data, default=str)))
+
+    def decisions(self) -> list[dict[str, Any]]:
+        return [{"at": at, **json.loads(d)} for at, d in
+                self._conn.execute("SELECT at, data FROM decisions ORDER BY id")]
+
+    def record_bar(self, bar: dict[str, Any]) -> None:
+        """Every bar the trader saw (warm-up and live), so its decisions can be recomputed."""
+        self._conn.execute("INSERT OR IGNORE INTO bars VALUES (?, ?)",
+                           (str(bar["bar_open_time"]), json.dumps(bar, default=str)))
+
+    def bars(self) -> pd.DataFrame:
+        rows = [json.loads(d) for (d,) in self._conn.execute("SELECT data FROM bars ORDER BY bar_open")]
+        df = pd.DataFrame(rows)
+        for col in TIME_COLUMNS:
+            if col in df:
+                df[col] = pd.to_datetime(df[col], utc=True)
+        return df

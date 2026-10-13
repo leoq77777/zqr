@@ -14,10 +14,11 @@ from quant_research import ENGINE_VERSION
 from quant_research.experiments.store import ExperimentStore
 from quant_research.hashing import hash_obj
 from quant_research.paths import Paths
+from quant_research.research.authorization import Authorization, AuthorizationError
 from quant_research.strategy.plugin import environment_lock, plugin_path
 from quant_research.strategy.spec import StrategySpec
 
-Actor = Literal["controller", "human", "evaluator", "paper"]
+Actor = Literal["controller", "human", "evaluator", "paper", "desk"]
 
 STATES = ("draft", "development", "validated", "frozen", "final_evaluated", "paper_approved", "paper_active",
           "retired", "rejected", "failed_final")
@@ -27,11 +28,11 @@ TRANSITIONS: dict[tuple[str, str], set[str]] = {
     ("draft", "rejected"): {"controller", "human"},
     ("development", "validated"): {"controller"},  # deterministic mandate acceptance, never a model's opinion
     ("development", "rejected"): {"controller", "human"},
-    ("validated", "frozen"): {"human"},
+    ("validated", "frozen"): {"human", "desk"},  # desk only under a valid standing authorization
     ("validated", "rejected"): {"human"},
     ("frozen", "final_evaluated"): {"evaluator"},
     ("frozen", "failed_final"): {"evaluator"},
-    ("final_evaluated", "paper_approved"): {"human"},
+    ("final_evaluated", "paper_approved"): {"human", "desk"},
     ("paper_approved", "paper_active"): {"human", "paper"},
 }
 
@@ -65,8 +66,17 @@ def register_candidate(store: ExperimentStore, identity: dict[str, Any], *, sess
     return cid
 
 
+def _check_desk(authorization: Authorization | None, step: tuple[str, str]) -> None:
+    if authorization is None:
+        raise RegistryError("desk transitions need a standing authorization")
+    try:
+        authorization.check(transition=step)
+    except AuthorizationError as exc:
+        raise RegistryError(str(exc)) from exc
+
+
 def transition(store: ExperimentStore, cid: str, to: str, actor: Actor, evidence: dict[str, Any] | None = None,
-               note: str = "") -> dict[str, Any]:
+               note: str = "", authorization: Authorization | None = None) -> dict[str, Any]:
     cand = store.get_candidate(cid)
     if cand is None:
         raise RegistryError(f"unknown candidate {cid}")
@@ -80,18 +90,27 @@ def transition(store: ExperimentStore, cid: str, to: str, actor: Actor, evidence
         allowed = TRANSITIONS.get((cur, to))
         raise RegistryError(f"{cur} -> {to} is not allowed for {actor}" if allowed
                             else f"illegal transition {cur} -> {to}")
+    if actor == "desk":
+        _check_desk(authorization, (cur, to))
+        evidence = {**(evidence or cand["evidence"] or {}), "authorization_hash": authorization.hash}
     store.update_candidate(cid, state=to, evidence=evidence or cand["evidence"])
     store.log_candidate_event(cid, cur, to, actor, evidence, note)
     return store.get_candidate(cid)
 
 
-def freeze(paths: Paths, store: ExperimentStore, cid: str, note: str) -> dict[str, Any]:
-    """validated -> frozen (human): copy code, identity and evidence into a read-only artifact directory."""
+def freeze(paths: Paths, store: ExperimentStore, cid: str, note: str, actor: Actor = "human",
+           authorization: Authorization | None = None) -> dict[str, Any]:
+    """validated -> frozen (human, or desk under authorization): copy code, identity and evidence into a
+    read-only artifact directory."""
     cand = store.get_candidate(cid)
     if cand is None:
         raise RegistryError(f"unknown candidate {cid}")
     if cand["state"] != "validated":
         raise RegistryError(f"only validated candidates can be frozen (state {cand['state']})")
+    if actor not in TRANSITIONS[("validated", "frozen")]:
+        raise RegistryError(f"validated -> frozen is not allowed for {actor}")
+    if actor == "desk":
+        _check_desk(authorization, ("validated", "frozen"))
     out = paths.artifacts / "candidates" / cid
     out.mkdir(parents=True, exist_ok=True)
     spec = StrategySpec(strategy_ref=cand["strategy_ref"], parameters=cand["parameters"])
@@ -104,4 +123,5 @@ def freeze(paths: Paths, store: ExperimentStore, cid: str, note: str) -> dict[st
         f.chmod(0o444)
     store.update_candidate(cid, artifact_dir=str(out))
     store.freeze_candidate(cand["candidate_hash"], cand["strategy_ref"], cand["parameters"], note)
-    return transition(store, cid, "frozen", "human", {"artifact_dir": str(out), **(cand["evidence"] or {})}, note)
+    return transition(store, cid, "frozen", actor, {"artifact_dir": str(out), **(cand["evidence"] or {})}, note,
+                      authorization=authorization)

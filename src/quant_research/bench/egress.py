@@ -40,7 +40,10 @@ def _docker(*args: str, check: bool = True, timeout: float = 60) -> subprocess.C
 
 class EgressNetwork:
     def __init__(self, log_dir: Path, allow: list[tuple[str, int]], gateway_port: int | None,
-                 image: str = PROXY_IMAGE, label: str | None = None):
+                 image: str = PROXY_IMAGE, label: str | None = None, forward_host: str = "host.docker.internal"):
+        """`forward_host` is where the proxy reaches the gateway: Docker Desktop's host alias, or an address the
+        gateway binds on (WSL eth0, docker0) when that alias does not lead to it."""
+        self.forward_host = forward_host
         self.id = uuid.uuid4().hex[:10]
         self.label = f"quant-research.run={label or self.id}"
         self.network, self.container = f"qr-net-{self.id}", f"qr-egress-{self.id}"
@@ -71,7 +74,7 @@ class EgressNetwork:
         for host, port in self.allow:
             cmd += ["--allow", f"{host}:{port}"]
         if self.gateway_port:
-            cmd += ["--forward", f"{GATEWAY_PORT}=host.docker.internal:{self.gateway_port}"]
+            cmd += ["--forward", f"{GATEWAY_PORT}={self.forward_host}:{self.gateway_port}"]
         try:
             _docker("network", "create", "--internal", "--label", self.label, self.network)
             _docker(*cmd)

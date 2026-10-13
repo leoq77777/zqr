@@ -652,6 +652,20 @@ def cmd_paper_run(args) -> None:
     _out(trader.write_health())
 
 
+def cmd_paper_fleet(args) -> None:
+    from quant_research.desk.presets import preset_roster
+    from quant_research.desk.promotion import activate_hook
+    from quant_research.paper.fleet import PaperFleet, save_roster
+
+    paths = get_paths(args.home)
+    roster = Path(args.roster) if args.roster else paths.desk / "roster.json"
+    if not roster.exists():
+        save_roster(roster, preset_roster())
+    fleet = PaperFleet(paths, roster, _client(args), on_activate=activate_hook(paths))
+    fleet.run(poll_seconds=args.poll_seconds, max_iterations=args.max_iterations)
+    _out(fleet.write_health())
+
+
 def cmd_paper_status(args) -> None:
     paths = get_paths(args.home)
     health = paths.paper / args.name / "health.json"
@@ -940,6 +954,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = paper.add_parser("status")
     p.add_argument("--name", required=True)
     p.set_defaults(fn=cmd_paper_status)
+    p = paper.add_parser("fleet", help="run every enabled roster strategy in one process (hot-reloads the roster)")
+    p.add_argument("--roster", help="default: QUANT_HOME/desk/roster.json (created from presets if missing)")
+    p.add_argument("--poll-seconds", type=float, default=30)
+    p.add_argument("--max-iterations", type=int)
+    p.set_defaults(fn=cmd_paper_fleet)
+
+    from quant_research.desk.commands import register as register_desk
+
+    register_desk(sub)
 
     p = sub.add_parser("observe-ws", help="observe Coinbase WebSocket heartbeats/disconnects")
     p.add_argument("--products", default="BTC-USD,ETH-USD")

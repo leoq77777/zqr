@@ -49,8 +49,9 @@ class AgentRun:
 class ClaudeContainerAdapter:
     name = "claude_code_container"
 
-    def __init__(self, image: str = AGENT_IMAGE, model: str | None = None, memory: str = "2g", cpus: str = "2"):
-        self.image, self.model, self.memory, self.cpus = image, model, memory, cpus
+    def __init__(self, image: str = AGENT_IMAGE, model: str | None = None, memory: str = "2g", cpus: str = "2",
+                 prompt: str = PROMPT):
+        self.image, self.model, self.memory, self.cpus, self.prompt = image, model, memory, cpus, prompt
         self._version: str | None = None
 
     def image_digest(self) -> str | None:
@@ -82,7 +83,7 @@ class ClaudeContainerAdapter:
                 cmd += ["-e", f"{k}={v}"]
         for var in MODEL_ENV:
             cmd += ["-e", var]
-        cmd += [self.image, "claude", "-p", PROMPT, "--output-format", "json",
+        cmd += [self.image, "claude", "-p", self.prompt, "--output-format", "json",
                 "--mcp-config", "/etc/quant/mcp.json", "--strict-mcp-config",
                 "--permission-mode", "dontAsk", "--allowedTools", ALLOWED_TOOLS, "--disallowedTools", DENIED_TOOLS]
         return cmd + (["--model", self.model] if self.model else [])
