@@ -124,6 +124,8 @@ class PaperFleet:
         self.entries: dict[str, RosterEntry] = {}
         self.products: dict[str, ProductSpec] = {}
         self.errors: dict[str, str] = {}
+        self._retry_at: dict[str, float] = {}
+        self._failures: dict[str, int] = {}
         self._roster_mtime: float | None = None
         self.roster = Roster()
         self.workdir = paths.paper
@@ -151,6 +153,10 @@ class PaperFleet:
                            sandbox=sandbox)
 
     def sync_roster(self) -> None:
+        self._reload_roster()
+        self._attach_missing()
+
+    def _reload_roster(self) -> None:
         try:
             mtime = self.roster_path.stat().st_mtime
         except FileNotFoundError:
@@ -168,9 +174,18 @@ class PaperFleet:
             self.traders.pop(name).ledger.close()
             self.entries.pop(name, None)
             self._log("INFO", "strategy_detached", name=name)
+        for name in [n for n in self._retry_at if n not in wanted]:
+            self._retry_at.pop(name)
+            self._failures.pop(name, None)
+            self.errors.pop(name, None)
         for name, e in wanted.items():
             if name in self.traders:
                 self._refresh(name, e)
+
+    def _attach_missing(self) -> None:
+        now = self.clock()
+        for name, e in self.roster.enabled().items():
+            if name in self.traders or now < self._retry_at.get(name, 0.0):
                 continue
             try:
                 feed = self.feeds.get((e.product, e.granularity))
@@ -183,11 +198,15 @@ class PaperFleet:
                 trader.warm_up(feed.history)
                 trader.write_health()
             except Exception as exc:  # noqa: BLE001
+                n = self._failures[name] = self._failures.get(name, 0) + 1
+                self._retry_at[name] = now + min(60.0 * 2 ** (n - 1), 1800.0)
                 self.errors[name] = f"{type(exc).__name__}: {exc}"
-                self._log("ALERT", "strategy_attach_failed", name=name, error=self.errors[name])
+                self._log("ALERT", "strategy_attach_failed", name=name, error=self.errors[name], attempt=n)
                 continue
             self.traders[name], self.entries[name] = trader, e
             self.errors.pop(name, None)
+            self._retry_at.pop(name, None)
+            self._failures.pop(name, None)
             self._log("INFO", "strategy_attached", name=name, strategy=e.strategy_ref, product=e.product)
             if self.on_activate is not None:
                 try:

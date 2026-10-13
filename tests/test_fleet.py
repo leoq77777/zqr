@@ -200,3 +200,25 @@ def test_risk_edits_reach_running_traders_and_identity_edits_are_refused(tmp_pat
     health = fleet.step()
     assert fleet.traders["btc-sma"].cfg.parameters == {"fast": 5, "slow": 20}
     assert health["errors"]["btc-sma"].startswith("config change refused")
+
+
+def test_a_failed_attach_is_retried_without_a_roster_edit(tmp_path):
+    class Flaky(FakeCoinbase):
+        attempts = 0
+
+        def candles(self, *args):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("one-off outage")
+            return super().candles(*args)
+
+    t, paths, roster, _ = _setup(tmp_path, [_entry("btc-sma")])
+    fleet = PaperFleet(paths, roster, Flaky(lambda: t["now"]), clock=lambda: t["now"], seed_bars=1000)
+    fleet.step()
+    assert "btc-sma" in fleet.errors and not fleet.traders
+    t["now"] += 30
+    fleet.step()
+    assert not fleet.traders  # backing off
+    t["now"] += 31
+    fleet.step()
+    assert "btc-sma" in fleet.traders and "btc-sma" not in fleet.errors
