@@ -10,7 +10,7 @@ from quant_research.paper.models import BrokerEvent, BrokerEventType, OrderInten
 from quant_research.paper.orders import Order, OrderError, OrderState
 from quant_research.paper.risk import RiskLimits
 from quant_research.paper.runner import make_trader, run_replay
-from quant_research.paper.trader import PaperConfig
+from quant_research.paper.trader import PaperConfig, target_fraction
 from quant_research.portfolio.policy import PortfolioPolicy
 from quant_research.strategy.compute import compute_targets
 from quant_research.strategy.spec import StrategySpec
@@ -160,3 +160,21 @@ def test_paper_honours_the_band_like_the_backtest(tmp_path):
     bt = run_backtest(bars, np.full(len(bars), 0.5),
                       policy.engine_config(EngineConfig(costs=CostConfig(fee_rate=0, slippage_bps=0))))
     assert len(trader.ledger.fills()) == len(bt.fills) == 1
+
+
+def test_breakout_position_survives_long_history_and_restart(tmp_path):
+    raw = make_raw(4000)
+    for col in ("open", "high", "low", "close"):
+        raw[col] = 100.0
+        raw.loc[100:, col] = 110.0
+    bars, _ = validate_bars(raw, "coinbase", "BTC-USD", "ONE_HOUR", T0, T0 + 4000 * HOUR)
+    cfg = _cfg(strategy_ref="template:breakout", parameters={"entry": 48, "exit": 24})
+    t1 = make_trader(cfg, tmp_path / "p", PRODUCT, clock=lambda: 0)
+    t1.warm_up(bars.iloc[:3990])
+    assert len(t1.history) == 3990
+    assert target_fraction(t1.spec, cfg.policy, t1.history, cfg.granularity) == 1.0
+    t1.ledger.close()
+    t2 = make_trader(cfg, tmp_path / "p", PRODUCT, clock=lambda: 0)  # restart
+    t2.warm_up(bars)
+    assert len(t2.history) == 4000
+    assert target_fraction(t2.spec, cfg.policy, t2.history, cfg.granularity) == 1.0

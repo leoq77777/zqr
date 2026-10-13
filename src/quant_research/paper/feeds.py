@@ -15,6 +15,8 @@ from quant_research.data.validate import validate_bars
 from quant_research.paper.models import D
 from quant_research.timeutil import granularity_seconds
 
+SEED_BARS = 17_520  # two years of hourly bars: history to fetch when no frozen dataset can seed it
+
 
 class ReplayFeed:
     """Replays completed bars from a frozen snapshot; each bar becomes available at its close."""

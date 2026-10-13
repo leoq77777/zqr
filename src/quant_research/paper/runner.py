@@ -14,7 +14,7 @@ import pandas as pd
 from quant_research.data.bars import to_epoch
 from quant_research.data.coinbase import CoinbasePublicClient
 from quant_research.paper.broker import SimulatedBroker
-from quant_research.paper.feeds import CoinbaseCandlePoller, ReplayFeed, coinbase_mid_price
+from quant_research.paper.feeds import SEED_BARS, CoinbaseCandlePoller, ReplayFeed, coinbase_mid_price
 from quant_research.paper.ledger import Ledger
 from quant_research.paper.models import D, ProductSpec
 from quant_research.paper.trader import PaperConfig, PaperTrader
@@ -60,7 +60,7 @@ def run_live(cfg: PaperConfig, workdir: Path, client: CoinbasePublicClient, prod
     trader = make_trader(cfg, workdir, product, paths=paths)
     trader.recover()
     poller = CoinbaseCandlePoller(client, cfg.instrument, cfg.granularity)
-    trader.warm_up(poller.history(min(cfg.history_bars, 1000)))
+    trader.warm_up(poller.history(cfg.history_bars or SEED_BARS))
     stop = {"flag": False}
 
     def _stop(*_):

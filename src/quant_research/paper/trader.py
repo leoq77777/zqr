@@ -57,7 +57,7 @@ class PaperConfig(BaseModel):
     policy: PortfolioPolicy = Field(default_factory=PortfolioPolicy)  # must equal the researched candidate's
     initial_quote: Decimal = Decimal("10000")
     initial_base: Decimal = Decimal("0")
-    history_bars: int = 3000
+    history_bars: int | None = None  # None keeps every bar since the feed's anchor (stateful strategies need it)
     buy_cash_buffer: float = 0.01  # headroom for price moves between decision and fill
     min_trade_notional: float = 1.0  # the engine's default; skip smaller rebalances
     reconcile_tolerance: Decimal = Decimal("0.00000001")
@@ -197,18 +197,27 @@ class PaperTrader:
             last = to_epoch(self.history["bar_open_time"])[-1]
             if to_epoch(row["bar_open_time"])[0] <= last:
                 return False
-        self.history = pd.concat([self.history, row], ignore_index=True).tail(self.cfg.history_bars)
-        self.history = self.history.reset_index(drop=True)
+        self.history = row if self.history.empty else pd.concat([self.history, row], ignore_index=True)
+        if self.cfg.history_bars:
+            self.history = self.history.tail(self.cfg.history_bars).reset_index(drop=True)
         return True
 
     def warm_up(self, bars: pd.DataFrame) -> None:
-        for bar in bars.to_dict("records"):
-            if self._append_bar(bar):
-                self.ledger.record_bar(bar)
-        if len(bars):
-            avail = float(to_epoch(bars["available_at"])[-1])
-            if avail > (self.ledger.get("last_data_time") or 0):
-                self.ledger.put("last_data_time", avail)
+        """Load history without deciding; bars at or before the last known bar are ignored."""
+        if not len(bars):
+            return
+        new = bars
+        if not self.history.empty:
+            new = bars[to_epoch(bars["bar_open_time"]) > to_epoch(self.history["bar_open_time"])[-1]]
+        if len(new):
+            self.history = (new.reset_index(drop=True) if self.history.empty
+                            else pd.concat([self.history, new], ignore_index=True))
+            if self.cfg.history_bars:
+                self.history = self.history.tail(self.cfg.history_bars).reset_index(drop=True)
+            self.ledger.record_bars(new)
+        avail = float(to_epoch(bars["available_at"])[-1])
+        if avail > (self.ledger.get("last_data_time") or 0):
+            self.ledger.put("last_data_time", avail)
 
     def on_bar(self, bar: dict[str, Any]) -> dict[str, Any] | None:
         """Handle one completed bar: resolve orders, reconcile, decide, risk-check, send."""
