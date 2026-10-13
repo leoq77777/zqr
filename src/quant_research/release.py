@@ -2,7 +2,7 @@
 
 Source code never leaves the development machine. The runtime image is tagged `zqr:<version>-<commit>` and the
 agent image `zqr-agent:<hash of Dockerfile.agent>`; both are built for the target's platform (cross-built when the
-target differs), copied with `docker save | ssh TARGET docker load` when the target lacks them, and the host
+target differs) and streamed into `ssh TARGET docker load` when the target lacks them, and the host
 wrapper (`scripts/zqr-host.sh`, installed from the image as ~/.local/bin/zqr) switches the desk container to the
 new version and remembers the previous one for `zqr rollback`.
 """
@@ -71,22 +71,25 @@ class Target:
         return HOST_WRAPPER
 
 
-def _build(dockerfile: str, image: str, platform: str | None, args: dict[str, str], labels: dict[str, str]) -> None:
-    cmd = ["docker", "buildx", "build", "--load", "-f", dockerfile, "-t", image]
+def _build(dockerfile: str, image: str, target: Target, platform: str | None, args: dict[str, str],
+           labels: dict[str, str]) -> None:
+    """Local target: load into this machine's Docker. Remote target: stream the image tarball straight into the
+    target's `docker load`, so a cross-built image never replaces a native one under the same local tag."""
+    cmd = ["docker", "buildx", "build", "-f", dockerfile, "-t", image]
     if platform:
         cmd += ["--platform", platform]
     for k, v in args.items():
         cmd += ["--build-arg", f"{k}={v}"]
     for k, v in labels.items():
         cmd += ["--label", f"{k}={v}"]
-    print(f"building {image}{f' for {platform}' if platform else ''} ...", file=sys.stderr)
-    subprocess.run([*cmd, "."], cwd=root(), check=True)
-
-
-def _ship(image: str, target: Target) -> None:
-    print(f"shipping {image} to {target.name} ...", file=sys.stderr)
-    subprocess.run(f"docker save {shlex.quote(image)} | gzip -1 | ssh {shlex.quote(target.name)} "
-                   f"'gunzip | docker load'", shell=True, check=True)
+    if target.local:
+        print(f"building {image} ...", file=sys.stderr)
+        subprocess.run([*cmd, "--load", "."], cwd=root(), check=True)
+        return
+    print(f"building {image} for {platform} and shipping it to {target.name} ...", file=sys.stderr)
+    build = shlex.join([*cmd, "--output", "type=docker,dest=-", "."])
+    subprocess.run(f"set -o pipefail; {build} | gzip -1 | ssh {shlex.quote(target.name)} 'gunzip | docker load'",
+                   shell=True, executable="/bin/bash", cwd=root(), check=True)
 
 
 def release(target_name: str, allow_dirty: bool = False, up: bool = True) -> dict:
@@ -96,19 +99,17 @@ def release(target_name: str, allow_dirty: bool = False, up: bool = True) -> dic
     version = release_version(allow_dirty)
     image, agent = f"zqr:{version}", agent_tag()
     platform = None if target.local else target.platform()
-    _build("Dockerfile.agent", agent, platform, {}, {})
-    _build("Dockerfile", image, platform, {"ZQR_VERSION": version}, {"zqr.agent": agent})
-    shipped = []
-    if not target.local:
-        for img in (agent, image):
-            if not target.has_image(img):
-                _ship(img, target)
-                shipped.append(img)
+    built = []
+    for dockerfile, img, args, labels in (("Dockerfile.agent", agent, {}, {}),
+                                          ("Dockerfile", image, {"ZQR_VERSION": version}, {"zqr.agent": agent})):
+        if target.local or not target.has_image(img):
+            _build(dockerfile, img, target, platform, args, labels)
+            built.append(img)
     wrapper = target.wrapper(image)
     if up:
         target.sh(f"{wrapper} up {shlex.quote(version)}")
     return {"version": version, "image": image, "agent_image": agent, "target": target.name,
-            "platform": platform or "native", "shipped": shipped, "started": up,
+            "platform": platform or "native", "built": built, "started": up,
             "next": f"{'zqr' if not target.local else wrapper} status"}
 
 
