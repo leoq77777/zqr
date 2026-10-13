@@ -41,6 +41,9 @@ class RosterEntry(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
     policy: PortfolioPolicy = Field(default_factory=PortfolioPolicy)
     initial_cash: float = 10_000.0
+    fee_rate: float | None = None  # None = the roster's default
+    slippage_bps: float | None = None
+    min_trade_notional: float | None = None
     source: Literal["preset", "candidate"] = "preset"
     candidate_id: str | None = None
     enabled: bool = True
@@ -67,6 +70,13 @@ class Roster(BaseModel):
 
     def enabled(self) -> dict[str, RosterEntry]:
         return {e.name: e for e in self.entries if e.enabled}
+
+
+def entry_costs(e: RosterEntry, roster: Roster) -> tuple[float, float, float]:
+    """(fee rate, slippage bps, minimum trade notional) for an entry: its own values, else the roster's."""
+    return (roster.fee_rate if e.fee_rate is None else e.fee_rate,
+            roster.slippage_bps if e.slippage_bps is None else e.slippage_bps,
+            1.0 if e.min_trade_notional is None else e.min_trade_notional)
 
 
 def load_roster(path: Path) -> Roster:
@@ -145,10 +155,12 @@ class PaperFleet:
 
     def _config(self, e: RosterEntry) -> PaperConfig:
         r = self.roster
+        fee, slip, min_notional = entry_costs(e, r)
         sandbox = SandboxConfig(isolation="docker" if e.strategy_ref.startswith("plugin:") else "subprocess")
         return PaperConfig(name=e.name, instrument=e.product, granularity=e.granularity, strategy_ref=e.strategy_ref,
                            parameters=e.parameters, policy=e.policy, initial_quote=Decimal(str(e.initial_cash)),
-                           fee_rate=Decimal(str(r.fee_rate)), slippage_bps=Decimal(str(r.slippage_bps)),
+                           fee_rate=Decimal(str(fee)), slippage_bps=Decimal(str(slip)),
+                           min_trade_notional=min_notional,
                            risk=r.risk.model_copy(update={"kill_switch_file": str(self.workdir / e.name / "KILL")}),
                            sandbox=sandbox)
 

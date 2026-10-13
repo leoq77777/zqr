@@ -1,6 +1,7 @@
 import json
 import os
 import zlib
+from decimal import Decimal
 from types import SimpleNamespace
 
 import numpy as np
@@ -222,3 +223,13 @@ def test_a_failed_attach_is_retried_without_a_roster_edit(tmp_path):
     t["now"] += 31
     fleet.step()
     assert "btc-sma" in fleet.traders and "btc-sma" not in fleet.errors
+
+
+def test_entry_costs_override_the_roster_defaults(tmp_path):
+    t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma", initial_cash=20_000.0, fee_rate=0.002,
+                                                        slippage_bps=3.0, min_trade_notional=5.0)])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
+    fleet.step()
+    cfg = fleet.traders["btc-sma"].cfg
+    assert (cfg.initial_quote, cfg.fee_rate, cfg.slippage_bps, cfg.min_trade_notional) == (
+        Decimal("20000"), Decimal("0.002"), Decimal("3.0"), 5.0)

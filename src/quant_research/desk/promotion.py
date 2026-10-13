@@ -9,6 +9,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from quant_research.backtest.engine import EngineConfig
 from quant_research.data.snapshot import load_manifest
 from quant_research.experiments.store import ExperimentStore
 from quant_research.paper.fleet import RosterEntry, add_entry, load_roster
@@ -22,6 +23,13 @@ from quant_research.validation.holdout import HoldoutError, run_candidate_holdou
 
 log = logging.getLogger(__name__)
 PAPER_STATES = ("paper_approved", "paper_active")
+# Engine settings the paper trader cannot reproduce; a candidate validated with them is not promoted.
+PAPER_UNSUPPORTED = ("execution_delay_bars", "adverse_fill", "rebalance_tolerance")
+
+
+def paper_gaps(engine: EngineConfig) -> list[str]:
+    default = EngineConfig()
+    return [f"{k}={getattr(engine, k)!r}" for k in PAPER_UNSUPPORTED if getattr(engine, k) != getattr(default, k)]
 
 
 def authorization_path(paths: Paths):
@@ -60,6 +68,10 @@ def promote(paths: Paths, store: ExperimentStore, candidate_id: str, sandbox: Sa
         auth.check(now=now, product=manifest["instrument"])
     except AuthorizationError as exc:
         return stop(str(exc))
+    gaps = paper_gaps(mandate.engine_config)
+    if gaps:
+        return stop("paper cannot run the validated configuration (" + ", ".join(gaps)
+                    + "); revalidate without these settings")
 
     try:
         freeze(paths, store, candidate_id, "desk standing authorization", actor="desk", authorization=auth)
@@ -80,9 +92,12 @@ def promote(paths: Paths, store: ExperimentStore, candidate_id: str, sandbox: Sa
     except RegistryError as exc:
         return stop(str(exc))
     out["steps"].append("paper_approved")
+    engine = mandate.engine_config
     entry = RosterEntry(name=f"{manifest['instrument'].split('-')[0].lower()}-{candidate_id}",
                         product=manifest["instrument"], granularity=manifest["granularity"],
                         strategy_ref=cand["strategy_ref"], parameters=cand["parameters"], policy=mandate.policy,
+                        initial_cash=engine.initial_cash, fee_rate=engine.costs.fee_rate,
+                        slippage_bps=engine.costs.slippage_bps, min_trade_notional=engine.min_trade_notional,
                         source="candidate", candidate_id=candidate_id)
     add_entry(roster_path(paths), entry)
     out["steps"].append("roster")

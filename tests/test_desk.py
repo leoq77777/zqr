@@ -269,3 +269,19 @@ def test_stop_request_ends_the_running_session_and_the_loop(paths, store, datase
     res = rl.read_ledger(paths)[-1]
     assert res["failure_class"] == "desk.stopped" and agent.calls == 1
     assert rl.load_state(paths)["status"] == "stopped"
+
+
+def test_promotion_carries_the_validated_capital_and_costs(paths, store, dataset):
+    engine = {"initial_cash": 20_000.0, "costs": {"fee_rate": 0.001, "slippage_bps": 2.0}}
+    cid = _validated(paths, store, dataset, holdout=EASY_HOLDOUT, engine_config=engine)
+    _authorize(paths)
+    assert promotion.promote(paths, store, cid)["stopped"] == "done"
+    entry = load_roster(promotion.roster_path(paths)).entries[-1]
+    assert (entry.initial_cash, entry.fee_rate, entry.slippage_bps) == (20_000.0, 0.001, 2.0)
+
+
+def test_promotion_refuses_settings_paper_cannot_reproduce(paths, store, dataset):
+    cid = _validated(paths, store, dataset, holdout=EASY_HOLDOUT, engine_config={"execution_delay_bars": 1})
+    _authorize(paths)
+    out = promotion.promote(paths, store, cid)
+    assert "execution_delay_bars=1" in out["stopped"] and out["state"] == "validated"
