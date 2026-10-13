@@ -1,0 +1,65 @@
+{
+  "requested_start": 1704067200,
+  "requested_end": 1704088800,
+  "as_of": 1704087000,
+  "interval_seconds": 3600,
+  "rows": [
+    {
+      "timestamp": 1704074400,
+      "open": 102,
+      "high": 104,
+      "low": 101,
+      "close": 103,
+      "volume": 12
+    },
+    {
+      "timestamp": 1704067200,
+      "open": 100,
+      "high": 102,
+      "low": 99,
+      "close": 101,
+      "volume": 10
+    },
+    {
+      "timestamp": 1704070800000,
+      "open": 101,
+      "high": 103,
+      "low": 100,
+      "close": 102,
+      "volume": 11
+    },
+    {
+      "timestamp": 1704070800000,
+      "open": 101,
+      "high": 103,
+      "low": 100,
+      "close": 102,
+      "volume": 11
+    },
+    {
+      "timestamp": 1704081600000,
+      "open": 104,
+      "high": 106,
+      "low": 103,
+      "close": 105,
+      "volume": 14
+    },
+    {
+      "timestamp": 1704085200,
+      "open": 105,
+      "high": 107,
+      "low": 104,
+      "close": 106,
+      "volume": 15
+    },
+    {
+      "timestamp": 1704088800,
+      "open": 106,
+      "high": 108,
+      "low": 105,
+      "close": 107,
+      "volume": 16
+    }
+  ],
+  "note": "timestamp field may use seconds or milliseconds; requested range is half-open"
+}

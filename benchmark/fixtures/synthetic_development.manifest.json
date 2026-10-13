@@ -1,0 +1,26 @@
+{
+  "dataset_id": "synthetic_development",
+  "kind": "synthetic_not_market_data",
+  "format": "jsonl",
+  "frequency_seconds": 3600,
+  "rows": 2048,
+  "sha256": "e88ec1019110d6ca12c324406571e2a33d1f5a28bf9c5b6f31b985598e437b21",
+  "development": [
+    0,
+    1280
+  ],
+  "validation": [
+    1280,
+    2048
+  ],
+  "final_holdout": "not_mounted",
+  "timezone": "UTC",
+  "columns": [
+    "start",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume"
+  ]
+}

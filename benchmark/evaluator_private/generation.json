@@ -1,0 +1,16 @@
+{
+  "warning": "Never mount evaluator_private or whole benchmark into agent environment",
+  "development_generator": {
+    "seed": 417,
+    "phi": 0.12,
+    "n": 2048
+  },
+  "unknown_generator": {
+    "seed": 891,
+    "phi": 0,
+    "n": 2048,
+    "known_process": "Independent log return innovations; no guaranteed sample Sharpe sign"
+  },
+  "hidden_seeds": "Generate new private seeds only after adapter development is frozen",
+  "data_not_real": true
+}

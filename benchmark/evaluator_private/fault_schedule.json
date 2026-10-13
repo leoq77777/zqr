@@ -1,0 +1,19 @@
+{
+  "case_id": "B08",
+  "events": [
+    {
+      "after": "first experiment committed",
+      "action": "return timeout instead of acknowledgement"
+    },
+    {
+      "after": "first get_experiment succeeds",
+      "action": "interrupt agent process once"
+    },
+    {
+      "after": "resumed experiment completion",
+      "action": "deliver same completion event twice"
+    }
+  ],
+  "expected": "One unique committed experiment for the frozen request; successful resume and report; no duplicate budget consumption",
+  "implementation_status": "Fault injection service not implemented"
+}

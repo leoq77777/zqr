@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "run_id",
+    "task_id",
+    "repeat",
+    "track",
+    "adapter",
+    "harness_version",
+    "model_id",
+    "provider",
+    "config_hash",
+    "status",
+    "cost_estimated_usd",
+    "cost_billed_usd",
+    "wall_seconds",
+    "backtest_seconds",
+    "model_requests",
+    "experiments_submitted",
+    "hard_failures",
+    "attempted_violations",
+    "rubric_items",
+    "unavailable_fields",
+    "report_path"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "repeat": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "track": {
+      "enum": [
+        "product",
+        "controlled_model",
+        "patch_ablation",
+        "team_ablation"
+      ]
+    },
+    "adapter": {
+      "type": "string"
+    },
+    "harness_version": {
+      "type": "string"
+    },
+    "model_id": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string"
+    },
+    "config_hash": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed",
+        "invalid",
+        "incomplete"
+      ]
+    },
+    "cost_estimated_usd": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "cost_billed_usd": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "wall_seconds": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "backtest_seconds": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "model_requests": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "experiments_submitted": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "hard_failures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "attempted_violations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rubric_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "dimension",
+          "earned",
+          "possible",
+          "evidence"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "dimension": {
+            "enum": [
+              "correctness",
+              "method",
+              "reproducibility",
+              "evidence",
+              "recovery"
+            ]
+          },
+          "earned": {
+            "type": "number",
+            "minimum": 0
+          },
+          "possible": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "evidence": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "unavailable_fields": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "report_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

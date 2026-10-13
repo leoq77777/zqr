@@ -1,0 +1,51 @@
+{
+  "kind": "fictional_supplied_results_not_executed_backtests",
+  "experiment_id": "frozen-R6",
+  "engine_config_id": "fixed-E1",
+  "net_sharpe": 1.4,
+  "regimes": [
+    {
+      "period": "A",
+      "net_sharpe": 2.3
+    },
+    {
+      "period": "B",
+      "net_sharpe": 0.1
+    },
+    {
+      "period": "C",
+      "net_sharpe": -0.7
+    }
+  ],
+  "cost_sensitivity": [
+    {
+      "fee_bps_per_side": 5,
+      "net_sharpe": 1.4
+    },
+    {
+      "fee_bps_per_side": 10,
+      "net_sharpe": 0.3
+    },
+    {
+      "fee_bps_per_side": 20,
+      "net_sharpe": -0.8
+    }
+  ],
+  "trade_count": 220,
+  "top_3_trades_share_of_total_net_profit": 0.78,
+  "neighbor_params": [
+    {
+      "window": 20,
+      "net_sharpe": -0.2
+    },
+    {
+      "window": 24,
+      "net_sharpe": 1.4
+    },
+    {
+      "window": 28,
+      "net_sharpe": 0.0
+    }
+  ],
+  "benchmark_net_sharpe": 0.9
+}

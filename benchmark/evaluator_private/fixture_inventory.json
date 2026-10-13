@@ -1,0 +1,41 @@
+{
+  "files": [
+    {
+      "path": "fixtures/frozen_results.json",
+      "sha256": "327a8cfc7900bdb2a4fff2a657b73da2933cd5c5b31d3f5618cf15cb2ea8f00e"
+    },
+    {
+      "path": "fixtures/leaky_strategy.py",
+      "sha256": "4c5ead413c3149503940916ec1fb45b2d12905d028fae1af7ab5f75d24839428"
+    },
+    {
+      "path": "fixtures/messy_bars.json",
+      "sha256": "9f5cb167d4e1a25e8a6cec8a72bdb51e54be2d0de7f39fcd70a14dd4e04b9c45"
+    },
+    {
+      "path": "fixtures/sources.md",
+      "sha256": "a49f2f72b6ea8fbe7e883201307da09eb162352552f7a1f58d282c8e36b22739"
+    },
+    {
+      "path": "fixtures/strategy_contract.md",
+      "sha256": "552cefc1a6b1998370f2401ec8f76b2536e9b1933a41653e1f81e6cd57c45eac"
+    },
+    {
+      "path": "fixtures/synthetic_development.jsonl",
+      "sha256": "e88ec1019110d6ca12c324406571e2a33d1f5a28bf9c5b6f31b985598e437b21"
+    },
+    {
+      "path": "fixtures/synthetic_development.manifest.json",
+      "sha256": "e05b7394bb5c18fa9a5753f319df68da42d9da6c00d980e97fcfce727c97da8c"
+    },
+    {
+      "path": "fixtures/synthetic_unknown.jsonl",
+      "sha256": "237569aee89398e70827b94836fcb4b4d863a9afbf56aa99266c6d11e591ae24"
+    },
+    {
+      "path": "fixtures/synthetic_unknown.manifest.json",
+      "sha256": "c6baf10bf147012d76b21804e6587bfdbe68879a179efc088ee9690ff023f444"
+    }
+  ],
+  "not_an_automatic_grader": true
+}

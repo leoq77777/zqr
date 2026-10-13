@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "research_id",
+    "task_id",
+    "hypothesis",
+    "preregistered_plan",
+    "experiment_ids",
+    "strategy_artifacts",
+    "decision",
+    "limitations",
+    "sources",
+    "unresolved"
+  ],
+  "properties": {
+    "research_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "hypothesis": {
+      "type": "string"
+    },
+    "preregistered_plan": {
+      "type": "object"
+    },
+    "experiment_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "strategy_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "sha256"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "decision": {
+      "enum": [
+        "continue",
+        "revise",
+        "reject",
+        "insufficient_evidence"
+      ]
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "unresolved": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

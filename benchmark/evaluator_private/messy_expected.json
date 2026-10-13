@@ -1,0 +1,15 @@
+{
+  "valid_starts": [
+    1704067200,
+    1704070800,
+    1704074400,
+    1704081600
+  ],
+  "gap_starts": [
+    1704078000
+  ],
+  "duplicate_start": 1704070800,
+  "incomplete_start": 1704085200,
+  "end_boundary_start": 1704088800,
+  "immutable_raw_required": true
+}
