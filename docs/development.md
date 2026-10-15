@@ -129,7 +129,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (228 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (229 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
