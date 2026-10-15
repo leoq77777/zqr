@@ -6,6 +6,7 @@ their daily returns; failed, rejected and aborted trials are indexed with `no_re
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -49,10 +50,8 @@ def _decoded(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     for k in ("engine_config", "metrics", "notes"):
         if isinstance(out.get(k), str):
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 out[k] = json.loads(out[k])
-            except json.JSONDecodeError:
-                pass
     return out
 
 

@@ -252,7 +252,7 @@ def test_without_seeds_a_family_needs_more_than_half_of_the_cluster(store):
 
 def test_an_unmapped_cluster_becomes_one_proposal(paths, store, dataset):
     from quant_research.memory import clusters
-    from quant_research.memory.families import map_clusters, propose, proposals
+    from quant_research.memory.families import map_clusters, proposals, propose
 
     for f in range(3, 9):
         run_experiment(paths, store, _req(dataset, parameters={"fast": f, "slow": 60}))
@@ -311,7 +311,8 @@ def _session_with_report(paths, store, dataset, sharpe_offset=0.0):
     res = run_experiment(paths, store, _req(dataset), session_id=sid)
     doc = {"research_id": "r", "task_id": "desk-volatility_filter", "hypothesis": "h", "preregistered_plan": {},
            "experiment_ids": [res.experiment_id], "strategy_artifacts": [], "decision": "reject",
-           "results": [{"experiment_id": res.experiment_id, "metrics": {"sharpe": res.metrics["sharpe"] + sharpe_offset}}],
+           "results": [{"experiment_id": res.experiment_id,
+                        "metrics": {"sharpe": res.metrics["sharpe"] + sharpe_offset}}],
            "limitations": ["dev only"], "sources": [], "unresolved": ["why"], "final_artifact": None}
     ws = Path(store.get_session(sid)["workspace"])
     (ws / "research.json").write_text(json.dumps(doc))
@@ -332,3 +333,45 @@ def test_import_conclusions_is_append_only_and_idempotent(paths, store, dataset)
     (ws / "research.json").write_text("{}")
     assert import_conclusions(paths, store) == {"imported": 0, "present": 2, "citation_failures": 0}
     assert {r["session_id"]: r["body"] for r in conclusions(store)}[good]["hypothesis"] == "h"
+
+
+# -- family archives -------------------------------------------------------------------------------------------
+
+def _memory_home(paths, store, dataset):
+    from quant_research.memory import clusters
+    from quant_research.memory.characterise import characterise
+    from quant_research.memory.families import tag_trials
+
+    _desk(paths, store, dataset)
+    characterise(paths, store, entries={"tsmom-1w", "tsmom-1m", "turtle-s1"})
+    for sid, f in (("sess-a", 5), ("sess-b", 10)):
+        run_experiment(paths, store, _req(dataset, parameters={"fast": f, "slow": 60}), session_id=sid)
+    _ledger(paths, {"sess-a": ("BTC-USD", "trend"), "sess-b": ("BTC-USD", "volatility_filter")})
+    tag_trials(paths, store)
+    clusters.record(store, clusters.compute(paths, store, dataset[1].split_id))
+
+
+def test_archives_are_byte_identical_on_regeneration_and_reruns_are_not_trials(paths, store, dataset):
+    from quant_research.memory.archive import write_archives
+
+    _memory_home(paths, store, dataset)
+    split = dataset[1].split_id
+    trials = store.trial_count(split_id=split)
+    first = {p.name: p.read_bytes() for p in write_archives(paths, store)}
+    assert store.trial_count(split_id=split) == trials
+    assert {p.name: p.read_bytes() for p in write_archives(paths, store)} == first
+    assert {"tsmom.json", "tsmom.md", "short_term_reversal.json", "vol_overlay.md"} <= set(first)
+
+
+def test_archive_lists_members_representative_costs_and_regimes(paths, store, dataset):
+    from quant_research.memory.archive import build_archives
+
+    _memory_home(paths, store, dataset)
+    v = build_archives(paths, store)["tsmom"]["splits"][dataset[1].split_id]
+    assert v["product"] == "BTC-USD"
+    assert {m["instance"] for m in v["members"]} == {"btc-tsmom-1w", "btc-tsmom-1m"}
+    assert v["representative"]["experiment_id"] in {m["experiment_id"] for m in v["members"]}
+    assert set(v["cost"]) >= {"sharpe_1x", "sharpe_2x"} and v["cost"]["sharpe_2x"] is not None
+    assert set(v["regimes"]) == {"trend_up", "trend_down", "high_vol", "low_vol"}
+    assert set(v["correlation"]) == {"channel_breakout"}
+    assert v["k"]["0.7"] >= 1 and v["members"][0]["split_dsr"] is not None
