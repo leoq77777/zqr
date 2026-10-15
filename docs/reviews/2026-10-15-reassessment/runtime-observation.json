@@ -1,0 +1,19 @@
+{
+  "observed_at_utc": "2026-10-15T08:22:57.520526+00:00",
+  "method": "Read-only SSH status, SQLite mode=ro, selected roster and research-ledger fields; summarized, not a complete production export",
+  "local_commit": "4c54601d9d7d1693324333b499acdd32e9dd3d5a",
+  "deployed_version": "0.1.0-1aa74c83",
+  "sessions_total": 195,
+  "booked_cost_usd_total": 6.861689,
+  "session_failure_class": {"none": 193, "desk.stopped": 2},
+  "campaign_sessions": 12,
+  "campaign_states": {"concluded": 6, "queued": 5, "running": 1},
+  "hypotheses": {"total": 4, "gate1_failed": 2, "gate2_failed": 2, "admitted": 0},
+  "gate2_failure": "Both fail sharpe_not_lower; drawdown and turnover checks pass",
+  "fleet": {"preset_controls": 16, "shadow_portfolios": 2, "approved_portfolios": 0, "reported_errors": 0},
+  "dispatch_pause_reason": "sessions per day (12) reached",
+  "today_cost_usd_status_rounded": 0.8102,
+  "latest_model": "deepseek-flash[1m]",
+  "latest_harness": "claude-code 2.1.112",
+  "validation_holdout_boundary": "Human-review artifact only. No new validation or holdout evaluation was run."
+}

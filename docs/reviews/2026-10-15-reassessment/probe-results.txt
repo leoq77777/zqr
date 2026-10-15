@@ -1,0 +1,7 @@
+{"actual_fraction": 0.36271996757852487, "backtest_equity": 29056.053015660134, "last_target": 1.0, "last_two_order_targets": [null, null], "paper_equity": 27898.99320916, "probe": "R1_cap_and_last_target"}
+.{"probe": "R2_family_quota", "quota": 1, "session_allowance": 40, "used": 2}
+.{"accepted": true, "probe": "R3_resume", "review_note": "go", "review_supplied": false}
+.{"budget_stop": false, "cost": 0.0, "probe": "R4_unknown_usage", "source": "no_tokens"}
+.{"clean_close": 315.97, "clean_low": 315.97, "clean_volume": 0.0, "original_close": 298, "original_low": 0.1, "probe": "R5_flash_crash_cleaning"}
+.
+5 passed in 3.01s
