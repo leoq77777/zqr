@@ -1,6 +1,7 @@
 # Contracts v2, appendix A: statistics and admission rules for portfolio research
 
-Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12 and amendment A13.1. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
+Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12 and amendment A13.1; amendment A13.2 is a draft
+for review. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
 for portfolio research, as decided in `docs/superpowers/specs/2026-10-13-research-library-portfolio-design.md`
 (sections 4.4, 5.3, 5.4, 5.5, 5.6 and 6.5). Takes effect for a mandate only when the mandate version names it
 (`statistics: appendix-a-v1`); mandates already stored are immutable and keep their rules.
@@ -239,3 +240,40 @@ input hash includes a rule version, so the next `zqr memory cluster` records a n
 though the returns did not change (earlier clusterings stay on record); the return index flags follow the latest
 clustering. Tests: a buy-and-hold series with a large first-day residual is passive; a series out of the coin for
 5% of days is not; the raw-residual K uses the same passive set.
+
+### A13.2 Shared clusters when seed families tie (draft 2026-10-15, for review)
+
+**Problem.** A12.4 maps a cluster with seeds to the seeds' family but does not say what happens when seeds of
+several families are equally many. The implementation broke the tie by the lowest experiment id among the seeds;
+seed experiment ids are random, so the same data gave `ewma_trend` on the local copy and `tsmom` in production for
+the same BTC cluster (454 trials at `ρ*` = 0.3; seeds: `ewma_trend` 3, `tsmom` 3, `trend_filter` 2,
+`channel_breakout` 2). Either choice leaves the other family's BTC archive empty although the cluster is equally
+its history: long/cash trend-following variants share one coin's bull and bear phases and correlate at this
+threshold.
+
+**Amended rule (adds to A12.4).**
+
+- A cluster with seeds maps to the family with the most seeds in it. When several families tie for the most seeds,
+  the cluster maps to all of them and is a **shared cluster**. No experiment id or name decides.
+- The tagged-majority rule for clusters without seeds is unchanged (a strict majority cannot tie).
+- Family archives include a shared cluster in each of its families with `is_shared: true` and the list of the
+  other families (`shared_with`). Each family archive reports its trials in total and how many of them are in
+  shared clusters. Totals across families (the clustering report's trials by family) count a shared cluster under
+  each family and also give the deduplicated number of mapped trials.
+- A conclusion without a family of its own (A12.4: topics `trend`, `multi_timeframe`) goes to the families with
+  the most cited experiments; a cited experiment in a shared cluster counts for each of its families, and a tie
+  attaches the conclusion to every tied family.
+- K, the proposals (only unmapped clusters become proposals) and the mapping threshold are unchanged.
+
+**Effect on the 2026-10-15 production data.** One cluster is shared: the BTC trend cluster above (454 trials),
+mapped to `ewma_trend` and `tsmom`. Every other cluster with seeds has a single top family (for example the ETH
+cluster with `ewma_trend` 3, `trend_filter` 2, `tsmom` 2 stays `ewma_trend`). BTC archives then hold 454 trials for
+`ewma_trend` (all shared) and 456 for `tsmom` (454 shared); deduplicated, the mapped BTC trials are 784 of 891
+with returns, as now.
+
+**Implementation.** `map_clusters` returns a list of families and a `shared` flag per cluster; the archives, the
+report and the conclusion assignment use the list. Tests: a seed tie maps to both families and marks the cluster
+shared, independent of experiment ids (the same returns under permuted ids give the same mapping); both archives
+list the cluster with `is_shared`; the report's deduplicated total equals the mapped trials. After release:
+`zqr memory cluster` (the mapping is recomputed from the recorded clustering; K does not change) and
+`zqr memory archive --sandbox docker`.
