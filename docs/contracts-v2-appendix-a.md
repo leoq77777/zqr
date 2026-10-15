@@ -321,8 +321,9 @@ a search that did not happen.
 - The child's K at each threshold is its own clustering's K plus its ancestors' (each ancestor's latest
   clustering); `K(0.7)` so obtained enters every calculation on the child (A4, A5). The child's trial count for
   the legacy DSR (contracts v2 section 6) is likewise its own plus its ancestors'.
-- The child inherits the parent's holdout closure (A13.3): a child of a closed split is closed when the lineage is
-  recorded, with a note naming the parent's closure. Holdout viewings and validation uses stay per split; the
+- The child inherits its ancestors' holdout closures (A13.3): a holdout request on the child is refused when any
+  ancestor is closed, whichever was recorded first; recording the lineage under a closed parent also records the
+  child's own closure, with a note naming the parent's. Holdout viewings and validation uses stay per split; the
   report shows the parent's next to the child's.
 - Reports show K and trials as "own + inherited (parent)". Clustering runs per split as before; the parent's trials
   are not re-run or re-clustered on the child.

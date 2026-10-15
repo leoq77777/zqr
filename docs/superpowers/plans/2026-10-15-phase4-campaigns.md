@@ -349,9 +349,19 @@ labelled with its parent).
 
 - [x] A13.4 into the appendix as approved (or as decided); `docs/development.md` commands table, invariants
   (lineage, inheritance), data section (extended datasets).
-- [ ] Full suite and ruff. Rehearsal on a copy of production data (fetch into the copy, all host steps below), the
-  production data unchanged; check that the paper bar store is not reseeded (`snapshot_seed` only runs on an empty
-  store; production has bars from 2021).
+- [x] Full suite and ruff (301 passed). Rehearsal on a copy of production data (fetch into the copy, host steps 1-8
+  below), the production data unchanged.
+- [x] Rehearsal finding, fixed: a parent closed after the lineage did not close the child; closure is now read
+  through the ancestors (`closed_refusal`), as the A13.4 text says.
+- [ ] Rehearsal finding, open: bad prints in the pre-2021 candles. BTC 2017-04-15 23:00 has open and low 0.06
+  (neighbours near 1,180); seeds that entered at that open show returns of 20,000x and more. ETH 2017-06-21 19:00
+  has low 0.10 (the GDAX flash crash; Turtle's exit channel reads it). A rule "open or low below half of
+  min(previous close, close), or open or high above twice the max" flags exactly these two bars in nine years and
+  none in the 2021+ data. Needs a decision (amendment) before the extension is frozen in production.
+- [ ] Rehearsal finding, open: the ladder liquidates and never resumes in a backtest. BTC seed portfolio liquidated
+  2020-03-12 (48% of dev in cash), ETH 2017-09-15 (84%). As gate 1's reference this is mostly zero. Without the
+  ladder: BTC Sharpe 1.89 (2015-2020) and 0.83 (2021-2024), drawdown -39%; ETH 1.54 and 1.11, drawdown -39% (still
+  with the bad prints). Needs a decision on the reference before gate 1 runs on the long dev.
 - [ ] Ask before merging and releasing.
 
 **Host steps after release 4b** (who runs each in brackets):

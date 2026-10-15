@@ -427,3 +427,25 @@ def test_split_commands(paths, store, dataset, capsys):
     main([*home, "splits"])
     listed = {s["split_id"]: s for s in json.loads(capsys.readouterr().out)}
     assert listed[new]["parent"] == split.split_id and "parent" not in listed[split.split_id]
+
+
+def test_a_parent_closed_after_the_lineage_still_closes_the_child(paths, store, dataset, monkeypatch, capsys):
+    import json
+
+    from quant_research.cli import main
+    from quant_research.validation import holdout as holdout_mod
+    from quant_research.validation.splits import link_split
+
+    manifest, split = dataset
+    child_ds, child = _extended_split(paths, manifest, split)
+    assert link_split(paths, store, child.split_id, split.split_id, "E1")["closure"] is None
+    store.close_holdout(split.split_id, "seen by the human")
+    assert store.holdout_closure(child.split_id) is None
+    req = _req(child_ds, child)
+    spec = req.spec.normalized()
+    store.freeze_candidate(spec.candidate_hash(), spec.strategy_ref, spec.parameters)
+    monkeypatch.setattr(holdout_mod, "load_holdout_data", lambda *a: pytest.fail("holdout data loaded"))
+    with pytest.raises(HoldoutError, match=f"closed through its parent {split.split_id}"):
+        run_holdout(paths, store, req, max_viewings=10)
+    main(["--home", str(paths.root), "splits"])
+    assert all(s["holdout"] == "closed" for s in json.loads(capsys.readouterr().out))

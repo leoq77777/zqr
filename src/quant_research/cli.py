@@ -194,12 +194,13 @@ def cmd_split_lineage(args) -> None:
 
 
 def cmd_splits(args) -> None:
+    from quant_research.validation.holdout import closed_refusal
     from quant_research.validation.splits import list_splits
 
     paths, store = _ctx(args)
     _out([{"split_id": s.split_id, "dataset_id": s.dataset_id, "segments": s.describe()}
           | ({"parent": p["parent_id"]} if (p := store.split_parent(s.split_id)) else {})
-          | ({"holdout": "closed"} if store.holdout_closure(s.split_id) else {})
+          | ({"holdout": "closed"} if closed_refusal(store, s.split_id) else {})
           for s in list_splits(paths)])
 
 

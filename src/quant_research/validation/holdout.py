@@ -49,9 +49,17 @@ def split_viewing_cap(store: ExperimentStore, split_id: str) -> int:
 
 
 def closed_refusal(store: ExperimentStore, split_id: str) -> str | None:
-    """Why a closed split refuses new holdout viewings (appendix A13.3), or None when it is open."""
+    """Why a closed split refuses new holdout viewings (appendix A13.3), or None when it is open.
+
+    A split whose ancestor is closed is closed too (A13.4), whichever was recorded first.
+    """
     closure = store.holdout_closure(split_id)
-    return None if closure is None else f"holdout of {split_id} is closed ({closure['note']})"
+    if closure is not None:
+        return f"holdout of {split_id} is closed ({closure['note']})"
+    for ancestor in store.split_ancestors(split_id):
+        if (closure := store.holdout_closure(ancestor)) is not None:
+            return f"holdout of {split_id} is closed through its parent {ancestor} ({closure['note']})"
+    return None
 
 
 def _repeats_a_completed_run(paths: Paths, store: ExperimentStore, request: ExperimentRequest, chash: str) -> bool:

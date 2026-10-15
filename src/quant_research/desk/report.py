@@ -29,6 +29,7 @@ from quant_research.paper.ledger import Ledger
 from quant_research.paper.parity import paper_parity
 from quant_research.paths import Paths
 from quant_research.research.mandate import Mandate
+from quant_research.validation.holdout import closed_refusal
 
 ALLOWED_LABELS = {"order_cap": "order cap", "cash_buffer": "cash buffer", "risk_adjusted": "risk limits"}
 
@@ -181,7 +182,7 @@ def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[li
             lines.append(f"| {product} | {split_trials} | {k_label(store, m.split_id)} | "
                          f"{', '.join(f'{k} {v}' for k, v in sorted(states.items())) or '-'} | "
                          f"{left}{inherited}{' **(exhausted: no more automatic promotion)**' if left <= 0 else ''}"
-                         f"{' **(closed)**' if store.holdout_closure(m.split_id) else ''}"
+                         f"{' **(closed)**' if closed_refusal(store, m.split_id) else ''}"
                          f"{' **(contaminated by override)**' if store.holdout_overrides(m.split_id) else ''} |")
         lines += versions_lines(store, cfg.mandates)
         lines.append(f"- Next split: earliest {NEXT_SPLIT_EARLIEST} (182 days validation + 182 days holdout after "

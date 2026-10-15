@@ -132,7 +132,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (300 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (301 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -346,8 +346,9 @@ Rules are in `docs/contracts-v2-appendix-a.md` (approved 2026-10-15).
   (`zqr split-lineage`, human; same product and granularity, equal validation and holdout windows, the child's
   dataset extends the parent's). K at each threshold is the split's own clustering plus its ancestors' latest
   (`clusters.k_breakdown`; `effective_k` returns the total), and the legacy DSR deflates with the trial count of
-  the split and its ancestors (`ExperimentStore.split_trial_count`). A child of a closed split is closed when the
-  lineage is recorded. Reports show K and trials as own + inherited.
+  the split and its ancestors (`ExperimentStore.split_trial_count`). A split refuses holdout requests when it or
+  any ancestor is closed (`closed_refusal`), whichever was recorded first. Reports show K and trials as own +
+  inherited.
 - **Conclusions.** `zqr memory import-conclusions` imports each session's `research.json` into the append-only
   `family_conclusions` after re-running the gateway's citation check.
 - **Archives.** `library/archives/<family>.json` and `.md`: trials, clusters, parameter ranges, the best trials
