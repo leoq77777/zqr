@@ -1,6 +1,7 @@
 # Contracts v2, appendix A: statistics and admission rules for portfolio research
 
-Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
+Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12; amendment A13.1 is a draft
+for review. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
 for portfolio research, as decided in `docs/superpowers/specs/2026-10-13-research-library-portfolio-design.md`
 (sections 4.4, 5.3, 5.4, 5.5, 5.6 and 6.5). Takes effect for a mandate only when the mandate version names it
 (`statistics: appendix-a-v1`); mandates already stored are immutable and keep their rules.
@@ -184,3 +185,57 @@ forward. The daily report shows the earliest cut date.
    portfolio over the 90 days.
 7. **Seed portfolio validation standard** (A6): Sharpe ≥ 0.5 and maximum drawdown no worse than −25%.
 8. **Split schedule segment lengths** (A11): 182 days of validation and 182 days of holdout.
+
+## A13. Amendments
+
+Amendments change the rule text above only once approved; until then the approved text applies.
+
+### A13.1 Passive series measured on the winsorised residual (draft 2026-10-15, for review)
+
+**Problem.** Under A2 a buy-and-hold series is not passive when its first day deviates from the coin enough. The
+residual of holding the coin is almost entirely one day, the entry day (fee, slippage and entry at the first bar's
+close instead of its open), and that single day sets `sd(ε) ≈ |ε_first| / sqrt(T)`. On the 2026-10-15 copy of
+production data the first-day residual is 0.0092 on BTC and 0.0035 on ETH, so the same strategy measures
+`sd(ε)` = 2.6e-4 on BTC (not passive) and 9.9e-5 on ETH (passive). The 37 BTC buy-and-hold trials then form an
+ordinary cluster, which at `ρ*` = 0.3 is mapped to `vol_overlay` by session tags, and they would enter that
+family's archive.
+
+**Amended rule (replaces the passive bullet of A2).**
+
+- Passive series: not flat, and `sd(ε_w) < 1e-4` per day, where `ε_w` is the residual after the A2 winsorising
+  (clipped once at `mean(ε) ± 3·sd(ε)`). The passive set is computed from `ε_w` also when a report clusters raw
+  residuals, so raw and winsorised K differ only in the correlation input. All passive trials form one cluster.
+- Property, stated so the rule is understood: for k isolated days that deviate from holding the coin by about `a`
+  each (and are clipped), `sd(ε_w) ≈ 3·k·a / T`. With T = 1,267, a series is passive when its few deviations add up
+  to less than about 4.2% over the dev window (one day under 4.2%, two days under 2.1% each). Persistent
+  deviations (timing, partial exposure) are not clipped away and stay far above the threshold.
+- The threshold (1e-4), the flat rule, winsorising and A3 are unchanged.
+
+**Effect on the 2026-10-15 copy of production data.**
+
+| | BTC | ETH |
+|---|---|---|
+| Passive trials, A2 as approved | 0 | 34 |
+| Passive trials, amended | 37 | 38 |
+| Largest `sd(ε_w)` among passive / smallest among the rest | 6.2e-5 / 4.9e-4 | 5.3e-5 / 2.8e-4 |
+| `K(0.3)`, `K(0.5)`, `K(0.7)` as approved | 41, 100, 232 | 41, 99, 241 |
+| `K(0.3)`, `K(0.5)`, `K(0.7)` amended | 42, 100, 231 | 40, 98, 240 |
+
+- Every newly passive trial has `|β − 1| < 0.001` and at most two days with `|ε| > 0.1%`; no trial lies between
+  the passive group and the rest (the nearest is 5 to 8 times the threshold), so the rule does not hinge on the
+  exact threshold.
+- The BTC cluster mapped to `vol_overlay` at 0.3 (38 trials) keeps one non-passive trial; the ETH cluster mapped to
+  `vol_overlay` (4 trials, all buy and hold) disappears. Flat and passive trials map to no family, so neither
+  family archive contains buy-and-hold trials any more.
+- One near-buy-and-hold trial per product stays non-passive (BTC none; ETH `exp-2e7c9b46a79a`, β 0.997, three
+  deviating days, `sd(ε_w)` = 2.8e-4): it trades, and it remains an ordinary trial.
+
+**Alternative considered: drop the first day.** Refitting without day 1 gives nearly the same set (BTC 36, ETH
+38) but misses a BTC buy-and-hold variant that deviates on two days, and it only handles the entry day, not an
+entry delayed by a warm-up. Rejected in favour of the winsorised measure, which A2 already defines.
+
+**Implementation.** `memory/residuals.py` computes `residual_sd` and the passive flag from `ε_w`; the clustering
+input hash includes a rule version, so the next `zqr memory cluster` records a new clustering for every split even
+though the returns did not change (earlier clusterings stay on record); the return index flags follow the latest
+clustering. Tests: a buy-and-hold series with a large first-day residual is passive; a series out of the coin for
+5% of days is not; the raw-residual K uses the same passive set.
