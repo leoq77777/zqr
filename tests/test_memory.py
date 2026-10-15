@@ -293,3 +293,42 @@ def test_characterise_runs_each_seed_instance_once_on_dev(paths, store, dataset)
     tag_trials(paths, store)
     tags = {r["tag_source"]: r["family_tag"] for r in store.query("SELECT * FROM return_index")}
     assert tags == {"seed:tsmom-1w": "tsmom", "seed:turtle-s1": "channel_breakout"}
+
+
+# -- session conclusions ---------------------------------------------------------------------------------------
+
+def _session_with_report(paths, store, dataset, sharpe_offset=0.0):
+    import json
+    from pathlib import Path
+
+    from quant_research.controller.agent import ManualRunner
+    from quant_research.controller.controller import ResearchController, SessionConfig
+    from quant_research.strategy.sandbox import SandboxConfig
+    from tests.conftest import make_mandate
+
+    sid = ResearchController(paths, store, ManualRunner()).create_session(
+        SessionConfig(mandate=make_mandate(dataset), sandbox=SandboxConfig(isolation="subprocess")))
+    res = run_experiment(paths, store, _req(dataset), session_id=sid)
+    doc = {"research_id": "r", "task_id": "desk-volatility_filter", "hypothesis": "h", "preregistered_plan": {},
+           "experiment_ids": [res.experiment_id], "strategy_artifacts": [], "decision": "reject",
+           "results": [{"experiment_id": res.experiment_id, "metrics": {"sharpe": res.metrics["sharpe"] + sharpe_offset}}],
+           "limitations": ["dev only"], "sources": [], "unresolved": ["why"], "final_artifact": None}
+    ws = Path(store.get_session(sid)["workspace"])
+    (ws / "research.json").write_text(json.dumps(doc))
+    return sid, ws
+
+
+def test_import_conclusions_is_append_only_and_idempotent(paths, store, dataset):
+    from quant_research.memory.conclusions import conclusions, import_conclusions
+
+    good, ws = _session_with_report(paths, store, dataset)
+    bad, _ = _session_with_report(paths, store, dataset, sharpe_offset=0.5)
+    _ledger(paths, {good: ("BTC-USD", "volatility_filter"), bad: ("BTC-USD", "trend")})
+    assert import_conclusions(paths, store) == {"imported": 2, "present": 0, "citation_failures": 1}
+    rows = {r["session_id"]: r for r in conclusions(store)}
+    assert rows[good]["citations_ok"] == 1 and rows[good]["family_id"] == "vol_overlay"
+    assert rows[good]["body"]["decision"] == "reject" and rows[good]["body"]["topic"] == "volatility_filter"
+    assert rows[bad]["citations_ok"] == 0 and "sharpe" in rows[bad]["problems"][0]
+    (ws / "research.json").write_text("{}")
+    assert import_conclusions(paths, store) == {"imported": 0, "present": 2, "citation_failures": 0}
+    assert {r["session_id"]: r["body"] for r in conclusions(store)}[good]["hypothesis"] == "h"
