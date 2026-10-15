@@ -977,6 +977,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     register_library(sub)
 
+    from quant_research.memory.commands import register as register_memory
+
+    register_memory(sub)
+
     from quant_research.release import register as register_release
 
     register_release(sub)

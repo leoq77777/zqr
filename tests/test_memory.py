@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -375,3 +376,32 @@ def test_archive_lists_members_representative_costs_and_regimes(paths, store, da
     assert set(v["regimes"]) == {"trend_up", "trend_down", "high_vol", "low_vol"}
     assert set(v["correlation"]) == {"channel_breakout"}
     assert v["k"]["0.7"] >= 1 and v["members"][0]["split_dsr"] is not None
+
+
+# -- commands and report ---------------------------------------------------------------------------------------
+
+def test_memory_run_end_to_end_writes_the_clustering_report(paths, store, dataset, capsys):
+    import json
+
+    from quant_research.cli import main
+
+    _desk(paths, store, dataset)
+    sid, _ = _session_with_report(paths, store, dataset)
+    for f in (5, 15, 25):
+        run_experiment(paths, store, _req(dataset, parameters={"fast": f, "slow": 70}), session_id=sid)
+    _ledger(paths, {sid: ("BTC-USD", "trend")})
+    home = str(paths.root)
+    main(["--home", home, "memory", "run", "--sandbox", "subprocess"])
+    out = json.loads(capsys.readouterr().out)
+    split = dataset[1].split_id
+    assert out["characterise"]["runs"] == 12 and out["import-conclusions"]["imported"] == 1
+    assert out["cluster"][split]["counts"]["trials"] == store.trial_count(split_id=split) == 16
+    text = Path(out["report"]["report"]).read_text()
+    assert "| K (winsorised, used) |" in text and "Seed placement:" in text and "btc-tsmom-12m" in text
+    assert "## Session conclusions" in text
+    main(["--home", home, "memory", "run", "--sandbox", "subprocess"])
+    again = json.loads(capsys.readouterr().out)
+    assert again["characterise"]["runs"] == 0 and again["cluster"][split]["clustering"] == \
+        out["cluster"][split]["clustering"]
+    main(["--home", home, "memory", "status"])
+    assert json.loads(capsys.readouterr().out)[split]["k"] == out["cluster"][split]["k"]
