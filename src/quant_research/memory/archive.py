@@ -182,6 +182,17 @@ def _families_of_conclusion(c: dict[str, Any], trial_families: dict[str, list[st
     return sorted(f for f, n in votes.items() if n == top) if top else []
 
 
+def conclusion_entry(c: dict[str, Any], shared_with: list[str]) -> dict[str, Any]:
+    """A conclusion as the archive lists it; a campaign's also carries its gate verdict (states only)."""
+    b = c["body"]
+    entry = {"session_id": c["session_id"], "product": c["product"], "topic": b["topic"], "decision": b["decision"],
+             "hypothesis": b["hypothesis"], "unresolved": b["unresolved"], "citations_ok": bool(c["citations_ok"]),
+             "shared_with": shared_with}
+    if c.get("source") == "campaign":
+        entry |= {"campaign_id": b.get("campaign_id"), "gates": b.get("gates")}
+    return entry
+
+
 def build_archives(paths: Paths, store: ExperimentStore, catalog: Catalog | None = None,
                    sandbox: SandboxConfig | None = None) -> dict[str, dict[str, Any]]:
     catalog = catalog or load_catalog()
@@ -203,10 +214,7 @@ def build_archives(paths: Paths, store: ExperimentStore, catalog: Catalog | None
     for c in conclusions(store):
         fams_c = [f for f in _families_of_conclusion(c, trial_families) if f in concl]
         for fam in fams_c:
-            concl[fam].append({"session_id": c["session_id"], "product": c["product"], "topic": c["body"]["topic"],
-                               "decision": c["body"]["decision"], "hypothesis": c["body"]["hypothesis"],
-                               "unresolved": c["body"]["unresolved"], "citations_ok": bool(c["citations_ok"]),
-                               "shared_with": [f for f in fams_c if f != fam]})
+            concl[fam].append(conclusion_entry(c, [f for f in fams_c if f != fam]))
     out = {}
     for f in families:
         out[f] = {"family": f, **fams[f],
@@ -259,21 +267,48 @@ def render_md(a: dict[str, Any]) -> str:
         lines += ["## Conclusions", ""]
         for c in a["conclusions"]:
             flag = "" if c["citations_ok"] else " (citation check failed)"
-            lines.append(f"- `{c['session_id']}` {c['product']} {c['topic']}: {c['decision']}{flag}. {c['hypothesis']}")
+            gates = f" Gates: {c['gates']}." if c.get("gates") else ""
+            lines.append(f"- `{c['session_id']}` {c['product']} {c['topic']}: {c['decision']}{flag}. "
+                         f"{c['hypothesis']}{gates}")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def archives_dir(paths: Paths) -> Path:
+    return paths.library / "archives"
+
+
+def _write(paths: Paths, fam: str, a: dict[str, Any]) -> list[Path]:
+    d = archives_dir(paths)
+    d.mkdir(parents=True, exist_ok=True)
+    written = []
+    for suffix, text in ((".json", json.dumps(a, indent=2, sort_keys=True, ensure_ascii=False) + "\n"),
+                         (".md", render_md(a))):
+        p = d / f"{fam}{suffix}"
+        tmp = p.with_suffix(suffix + ".tmp")
+        tmp.write_text(text)
+        os.replace(tmp, p)
+        written.append(p)
+    return written
 
 
 def write_archives(paths: Paths, store: ExperimentStore, catalog: Catalog | None = None,
                    sandbox: SandboxConfig | None = None) -> list[Path]:
-    d = paths.library / "archives"
-    d.mkdir(parents=True, exist_ok=True)
     written = []
     for fam, a in build_archives(paths, store, catalog, sandbox).items():
-        for suffix, text in ((".json", json.dumps(a, indent=2, sort_keys=True, ensure_ascii=False) + "\n"),
-                             (".md", render_md(a))):
-            p = d / f"{fam}{suffix}"
-            tmp = p.with_suffix(suffix + ".tmp")
-            tmp.write_text(text)
-            os.replace(tmp, p)
-            written.append(p)
+        written += _write(paths, fam, a)
     return written
+
+
+def append_conclusion(paths: Paths, family: str, conclusion: dict[str, Any]) -> bool:
+    """Append one conclusion to a written archive (the next full regeneration lists it from the records too).
+    False when the family has no archive yet."""
+    p = archives_dir(paths) / f"{family}.json"
+    if not p.exists():
+        return False
+    a = json.loads(p.read_text())
+    entry = conclusion_entry(conclusion, [])
+    if any(c["session_id"] == entry["session_id"] for c in a["conclusions"]):
+        return False
+    a["conclusions"].append(entry)
+    _write(paths, family, a)
+    return True

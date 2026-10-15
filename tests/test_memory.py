@@ -347,6 +347,9 @@ def test_characterise_runs_each_seed_instance_once_on_dev(paths, store, dataset)
     assert characterise(paths, store, entries={"tsmom-1w", "turtle-s1"}) == []
     assert set(seed_runs(store, split)) == {"btc-tsmom-1w", "btc-turtle-s1"}
     assert store.trial_count(split_id=split) == 2
+    with pytest.raises(FileNotFoundError, match="research_ledger"):
+        tag_trials(paths, store)  # without the ledger every session tag would be cleared
+    _ledger(paths, {})
     tag_trials(paths, store)
     tags = {r["tag_source"]: r["family_tag"] for r in store.query("SELECT * FROM return_index")}
     assert tags == {"seed:tsmom-1w": "tsmom", "seed:turtle-s1": "channel_breakout"}

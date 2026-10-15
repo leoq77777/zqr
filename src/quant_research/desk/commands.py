@@ -185,6 +185,7 @@ def _age(ts: float | None) -> str:
 
 
 def desk_status(paths) -> dict:
+    from quant_research.campaign import budget
     from quant_research.desk import research as rl
     from quant_research.desk.config import load_check, load_config
     from quant_research.desk.supervisor import state_file
@@ -206,7 +207,10 @@ def desk_status(paths) -> dict:
         "research": {**{k: v for k, v in rl.load_state(paths).items() if k != "updated_at"},
                      "today_sessions": len(ledger), "today_cost_usd": round(sum(r.get("cost_usd") or 0
                                                                                for r in ledger), 4),
-                     "daily_cap_usd": cfg.daily_cost_cap_usd},
+                     "daily_cap_usd": budget.limits(cfg)["daily_usd"],
+                     "month_cost_usd": round(rl.spent_in_month(paths, budget.month_of(today)), 4),
+                     "monthly_cap_usd": budget.limits(cfg)["monthly_usd"],
+                     "budget_stop": (budget.active_stop(paths) or {}).get("reason")},
         "fleet": {"updated": _age(fleet.get("ts")), "strategies": len(fleet.get("strategies", {})),
                   "stale": sorted(n for n, h in fleet.get("strategies", {}).items() if h.get("stale")),
                   "halted": sorted(n for n, h in fleet.get("strategies", {}).items() if h.get("halted_reason")),

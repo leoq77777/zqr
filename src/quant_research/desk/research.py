@@ -1,13 +1,16 @@
-"""The desk's research loop: one isolated agent session at a time, around the clock.
+"""The desk's research loop: one isolated agent session at a time, taken from the campaign queue (design 6.3, D4).
 
-Each session: pick a topic -> fresh session on the product's real-data mandate (agent tools see `dev` only) ->
-agent container behind the M5 egress proxy and tool gateway -> freeze the workspace -> audit -> the declared
-`final_artifact` is registered and evaluated deterministically on validation (DSR counts every trial on the
-split) -> a validated candidate goes through automatic promotion. Every session leaves a record in
-`desk/sessions/<run_id>/result.json` and a line in `desk/research_ledger.jsonl`.
+Each step: the running campaign, or the next one the human approved (idle, with no model calls, when there is
+none) -> the budget reservation against the campaign, the UTC day and the month (D7) -> a fresh session on the
+product's real-data mandate (agent tools see `dev` only) with the campaign brief -> agent container behind the M5
+egress proxy and tool gateway -> freeze the workspace -> audit -> book the cost -> the session's notes go to the
+campaign; a registered hypothesis goes through the gates of release 4c; a written conclusion, or a cap reached,
+ends the campaign. Every session leaves `desk/sessions/<run_id>/result.json` and a line in
+`desk/research_ledger.jsonl`. Single candidates are no longer evaluated or promoted from the loop (D8).
 
-Guards: a daily cost cap, a per-session wall clock and experiment budget (the mandate's), exponential backoff on
-failures, and a pause with the reason shown in `desk status` when the environment (model, Docker) is at fault.
+Guards: the reservation caps, a per-session wall clock and experiment allowance, exponential backoff on failures,
+a pause with the reason shown in `desk status` when the environment (model, Docker) is at fault, and the budget
+stop (an unpriced model call, or a session costing more than its reservation) until the human clears it.
 """
 
 from __future__ import annotations
@@ -27,46 +30,40 @@ from typing import Any
 from quant_research.bench.adapter import MODEL_ENV, AgentRun
 from quant_research.bench.audit import audit_session, recover_session
 from quant_research.bench.egress import GATEWAY_PORT, PROXY_ALIAS, EgressNetwork, cleanup_run, model_endpoint, summarize
-from quant_research.bench.runner import TRANSCRIPT_DIR, _pricing, freeze_submission
+from quant_research.bench.runner import TRANSCRIPT_DIR, freeze_submission
 from quant_research.bench.tasks import CONTRACT_V02, benchmark_dir
+from quant_research.campaign import budget
+from quant_research.campaign.model import VERDICTS, Conclusion
+from quant_research.campaign.store import CampaignStore
 from quant_research.controller.agent import ManualRunner, usage_from_transcripts
 from quant_research.controller.controller import ResearchController, SessionConfig, SessionState
-from quant_research.data.snapshot import load_manifest
 from quant_research.desk import softstop
 from quant_research.desk.config import DeskConfig, effective_network, load_check
-from quant_research.desk.promotion import promote
 from quant_research.desk.supervisor import CREDENTIAL_FILE, read_env_file
-from quant_research.experiments.gatekeeper import GateContext
-from quant_research.experiments.runner import ExperimentRequest
 from quant_research.experiments.store import ExperimentStore
-from quant_research.gateway import ToolGateway
 from quant_research.gateway.mcp_server import GatewayHTTPServer
 from quant_research.paths import Paths
-from quant_research.research.evaluate import evaluate_candidate
 from quant_research.research.mandate import Mandate
-from quant_research.research.plans import ResearchPlan
-from quant_research.research.registry import candidate_identity, register_candidate, transition
 from quant_research.runtime import version
 from quant_research.strategy.sandbox import SandboxConfig
-from quant_research.strategy.spec import StrategySpec
 
 log = logging.getLogger(__name__)
 
-TOPICS: list[tuple[str, str]] = [
-    ("trend", "Trend following / time-series momentum: does a persistent-trend rule on hourly bars survive "
-              "costs and a one-bar delay?"),
-    ("mean_reversion", "Short-horizon mean reversion: do hourly overreactions revert enough to pay for costs "
-                       "while staying long-or-cash?"),
-    ("volatility_filter", "Volatility regime filter: does reducing or exiting exposure in high-volatility regimes "
-                          "improve the risk-adjusted return of a simple long rule?"),
-    ("multi_timeframe", "Multi-timeframe confirmation: does requiring agreement between a slow (multi-day) and a "
-                        "fast (hourly) signal reduce whipsaw and improve net returns?"),
-]
 ENV_FAILURES = {"environment.model_unreachable", "environment.docker", "harness.error"}
 PROMPT = ("You are the research desk's strategy researcher working inside /workspace. Read /workspace/ROLE.md "
-          "(your role) and /workspace/TASK.md (the question, budget, tools and deliverables), then do the research "
+          "(your role) and /workspace/TASK.md (the campaign, budget, tools and deliverables), then do the research "
           "using only the `quant` MCP tools for experiments. Write all deliverables under /workspace and validate "
           "research.json with the write_report tool before you finish.")
+CAMPAIGN_FIELDS = {
+    "notes": {"type": "string", "minLength": 1,
+              "description": "What this session did and found, and what the next session should do."},
+    "conclusion": {"description": "null to continue the campaign; an object to end it.", "oneOf": [
+        {"type": "null"},
+        {"type": "object", "additionalProperties": False, "required": ["verdict", "summary"],
+         "properties": {"verdict": {"enum": list(VERDICTS)}, "summary": {"type": "string"},
+                        "evidence": {"type": "array", "items": {"type": "string"}},
+                        "open_questions": {"type": "array", "items": {"type": "string"}}}}]},
+}
 
 
 def sessions_dir(paths: Paths) -> Path:
@@ -103,6 +100,10 @@ def spent_on(paths: Paths, day: str) -> float:
     return sum(r.get("cost_usd") or 0.0 for r in read_ledger(paths) if r.get("day") == day)
 
 
+def spent_in_month(paths: Paths, month: str) -> float:
+    return sum(r.get("cost_usd") or 0.0 for r in read_ledger(paths) if (r.get("day") or "").startswith(month))
+
+
 def load_state(paths: Paths) -> dict[str, Any]:
     p = state_path(paths)
     return json.loads(p.read_text()) if p.exists() else {"sessions_started": 0, "consecutive_failures": 0}
@@ -116,72 +117,15 @@ def _save_state(paths: Paths, state: dict[str, Any], **update: Any) -> dict[str,
     return state
 
 
-def candidates_summary(store: ExperimentStore, mandate_id: str, limit: int = 15) -> list[str]:
-    rows = [c for c in store.list_candidates() if c["mandate_id"] == mandate_id]
-    out = []
-    for c in rows[-limit:]:
-        ev = c["evidence"] or {}
-        metrics = ev.get("metrics") or {}
-        sharpe = metrics.get("sharpe")
-        out.append(f"- `{c['id']}` {c['state']}: {c['strategy_ref'][:20]} params={json.dumps(c['parameters'])[:80]}"
-                   + (f" validation sharpe {sharpe:.2f}" if isinstance(sharpe, (int, float)) else "")
-                   + (f"; reasons: {'; '.join(ev.get('reasons') or [])[:160]}" if ev.get("reasons") else ""))
-    return out
+def _next_day(now: float) -> float:
+    today = datetime.fromtimestamp(now, tz=UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    return (today + timedelta(days=1)).timestamp() - now + 1
 
 
-def task_brief(run_id: str, product: str, topic: tuple[str, str], mandate: Mandate, prior: list[str]) -> str:
-    b, acc = mandate.budget, mandate.acceptance
-    prior_txt = "\n".join(prior) if prior else "- (none yet)"
-    return f"""# Desk research session
-
-research_id: `{run_id}`  task_id: `desk-{topic[0]}`
-
-## Question
-
-{product}, hourly bars, long-or-cash spot. {topic[1]}
-
-Find at most one strategy worth submitting, or conclude that the evidence does not support one. A null result is a
-valid outcome; do not manufacture alpha.
-
-## What happens to your submission
-
-The controller re-runs your declared `final_artifact` on the **validation** segment (which you cannot see) and
-accepts it only if all of these hold: {mandate.primary_metric} >= {acc.min_primary}; deflated Sharpe
-{f">= {acc.min_dsr}" if acc.min_dsr is not None else "waived"} counting **every trial ever run on this split**
-(each extra experiment you run lowers everyone's DSR); at least {acc.min_round_trips} round trips; max drawdown
-not worse than {acc.max_drawdown:.0%}; {"still profitable with doubled costs; " if acc.require_costs_x2 else ""}
-{"still profitable with a one-bar delay." if acc.require_delay else ""}
-Accepted candidates may later be tested once on a sealed holdout and then paper traded.
-
-## Earlier candidates on this mandate (avoid repeating them)
-
-{prior_txt}
-
-## Budget (enforced)
-
-- Experiments: {b.max_experiments} on the `dev` segment. Wall clock: {int(b.max_wall_seconds or 0)} s.
-
-## Tools (MCP server `quant`)
-
-- `inspect_dataset` -> dataset identity, schema, allowed segments, costs and policy.
-- `submit_plan(plan)` -> plan_id. Preregister hypothesis, mechanism, falsification, artifact, parameter_ranges,
-  planned_experiments before running experiments.
-- `submit_experiment(artifact, idempotency_key, parameters, plan_id, segment)` -> experiment record. `artifact` is
-  a `.py` file under `/workspace/` implementing `/workspace/fixtures/strategy_contract.md`. Use a new idempotency
-  key per intended experiment and the same key when retrying after a timeout.
-- `get_experiment(experiment_id)`, `compare_experiments(experiment_ids)`, `history()`.
-- `write_report("research.json")` validates your research.json.
-
-There is no shell and no network besides these tools. Files you may write: anything under `/workspace/`.
-
-## Deliverables
-
-- `/workspace/research.json` following `/workspace/research.schema.json`; list every experiment id you ran.
-- `/workspace/report.md`: what you did, what the evidence supports and does not, all attempts, next step.
-- `final_artifact` in research.json: `{{"path", "sha256", "parameters", "experiment_id"}}` where the experiment is a
-  completed `dev` run of exactly that file with exactly those parameters, or `null` if you recommend nothing.
-Call `write_report` before finishing and fix any problem it reports. The workspace is frozen when you finish.
-"""
+def _next_month(now: float) -> float:
+    d = datetime.fromtimestamp(now, tz=UTC)
+    first = datetime(d.year + (d.month == 12), d.month % 12 + 1, 1, tzinfo=UTC)
+    return first.timestamp() - now + 1
 
 
 class ResearchLoop:
@@ -195,18 +139,31 @@ class ResearchLoop:
         self.isolate_network, self.require_check = isolate_network, require_check
         self.clock, self.sleep = clock, sleep
         self.stop_requested = False
+        self.adapter_model = getattr(adapter, "model", None)
         sessions_dir(paths).mkdir(parents=True, exist_ok=True)
         self.state = load_state(paths)
+        self.campaigns = CampaignStore(store)
 
     # -- scheduling ------------------------------------------------------------------------------
-    def pick_topic(self, n: int) -> tuple[str, tuple[str, str]]:
-        products = [p for p in self.cfg.products if p in self.cfg.mandates]
-        return products[n % len(products)], TOPICS[(n // len(products)) % len(TOPICS)]
-
     def _wait(self, status: str, reason: str, seconds: float) -> dict[str, Any]:
         self.state = _save_state(self.paths, self.state, status=status, reason=reason,
                                  resume_at=self.clock() + seconds)
         return {"ran": False, "status": status, "reason": reason, "wait": seconds}
+
+    def _cap_reason(self, cid: str) -> str | None:
+        """Why the campaign cannot run another session (P1, P3), if it cannot."""
+        rem = self.campaigns.remaining(cid)
+        if rem["sessions"] <= 0:
+            return "session cap reached"
+        if rem["usd"] < self.cfg.session_reserve_usd:
+            return "dollar cap reached"
+        if rem["experiments"] <= 0:
+            return "trial cap reached"
+        row = self.campaigns.require(cid)
+        q = self.campaigns.quota(self.paths, row["split_id"], row["family"])
+        if q["room"] <= 0:
+            return f"family quota reached ({q['used']} of {q['quota']:.0f} trials)"
+        return None
 
     def step(self) -> dict[str, Any]:
         """Run one session if allowed, otherwise say how long to wait and why."""
@@ -221,25 +178,59 @@ class ResearchLoop:
             return self._wait("blocked", "isolation probe has not passed; run `zqr desk check`", 600)
         if self.require_check and not _have_credentials():
             return self._wait("blocked", f"no model credential; run `zqr secrets set` ({CREDENTIAL_FILE})", 60)
+        if (stop := budget.active_stop(self.paths)) is not None:
+            return self._wait("budget_stop", f"budget stop: {stop['reason']} (human: `zqr campaign budget clear "
+                                             "--note`)", 600)
         resume_at = self.state.get("resume_at") or 0
         if self.state.get("status") in ("paused", "backoff") and now < resume_at:
             return {"ran": False, "status": self.state["status"], "reason": self.state.get("reason"),
                     "wait": resume_at - now}
-        day = utc_day(now)
+        camp = self.campaigns.running()
+        if camp is not None and self._pending_gates(camp["id"]):
+            return self._settled(camp["id"], self._settle(camp["id"]))
+        camp = camp or self.campaigns.next_queued()
+        if camp is None:
+            return self._wait("idle", "no running or queued campaign (`zqr campaign generate`, then approve)", 600)
+        cid = camp["id"]
+        mid = self.cfg.mandates.get(camp["product"])
+        if mid is None:
+            return self._wait("blocked", f"{cid} is for {camp['product']}, which has no desk mandate", 600)
+        mandate = Mandate.model_validate(self.store.get_mandate(mid)["body"])
+        if mandate.split_id != camp["split_id"]:
+            return self._wait("blocked", f"{cid} is for {camp['split_id']} but the desk mandate is on "
+                                         f"{mandate.split_id}; the human cancels it", 600)
+        if camp["state"] == "queued":
+            self.campaigns.transition(cid, "running", "controller")
+        if (reason := self._cap_reason(cid)) is not None:
+            return self._settled(cid, self._settle(cid, reason))
+        lim, day = budget.limits(self.cfg), utc_day(now)
+        reserve = lim["session_reserve_usd"]
         spent = spent_on(self.paths, day)
-        if spent >= self.cfg.daily_cost_cap_usd:
-            tomorrow = datetime.fromtimestamp(now, tz=UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-            wait = (tomorrow + timedelta(days=1)).timestamp() - now + 1
-            return self._wait("cost_cap", f"daily cost cap reached ({spent:.2f} >= {self.cfg.daily_cost_cap_usd} USD)",
-                              wait)
-        if sum(r.get("day") == day for r in read_ledger(self.paths)) >= self.cfg.max_sessions_per_day:
-            return self._wait("cost_cap", f"max_sessions_per_day ({self.cfg.max_sessions_per_day}) reached", 3600)
-        res = self.run_session()
+        if spent + reserve > lim["daily_usd"]:
+            return self._wait("cost_cap", f"daily cap: {spent:.2f} booked + {reserve:.2f} reserved > "
+                                          f"{lim['daily_usd']} USD", _next_day(now))
+        month = spent_in_month(self.paths, budget.month_of(day))
+        if month + reserve > lim["monthly_usd"]:
+            return self._wait("cost_cap", f"monthly cap: {month:.2f} booked + {reserve:.2f} reserved > "
+                                          f"{lim['monthly_usd']} USD", _next_month(now))
+        if sum(r.get("day") == day for r in read_ledger(self.paths)) >= lim["sessions_per_day"]:
+            return self._wait("cost_cap", f"sessions per day ({lim['sessions_per_day']:.0f}) reached", 3600)
+        model = camp["body"].get("model") or budget.default_model(self.cfg)
+        if model is None:
+            return self._wait("blocked", "no model configured (desk config `model` or ANTHROPIC_MODEL)", 600)
+        if budget.price_for(self.cfg, [model]) is None:
+            return self._wait("blocked", f"model {model} has no price; add it to desk config `campaign_models`",
+                              600)
+        res = self.run_session(camp, mandate, model, reserve)
         failure = res["failure_class"]
         n = self.state.get("consecutive_failures", 0) + 1 if failure != "none" else 0
         if failure == "desk.stopped":
             return {"ran": True, "status": "stopping", "result": res}
-        if failure in ENV_FAILURES:
+        if (res.get("campaign") or {}).get("gates_error"):
+            self.state = _save_state(self.paths, self.state, status="paused", consecutive_failures=n,
+                                     reason=f"gates: {res['campaign']['gates_error'][:300]}",
+                                     resume_at=self.clock() + self.cfg.backoff_max_seconds)
+        elif failure in ENV_FAILURES:
             delay = min(self.cfg.backoff_base_seconds * 2 ** (n - 1), self.cfg.backoff_max_seconds)
             self.state = _save_state(self.paths, self.state, status="paused", consecutive_failures=n,
                                      reason=f"{failure}: {'; '.join(res['failure_details'])[:300]}",
@@ -273,32 +264,90 @@ class ResearchLoop:
                 waited += 5.0
         self.state = _save_state(self.paths, self.state, status="stopped", current_run=None)
 
+    # -- campaign bookkeeping --------------------------------------------------------------------
+    def _pending_gates(self, cid: str) -> str | None:
+        from quant_research.campaign.conclude import campaign_hypothesis
+        from quant_research.hypothesis.store import HypothesisStore
+
+        hid = campaign_hypothesis(self.store, cid)
+        if hid is None:
+            return None
+        hs = HypothesisStore(self.store)
+        g1 = hs.event(hid, "gate1")
+        return hid if g1 is None or (g1["evidence"]["passed"] and hs.event(hid, "gate2") is None) else None
+
+    def _settle(self, cid: str, cap_reason: str | None = None) -> dict[str, Any]:
+        """Gates for a registered hypothesis (with top-ups on passes), then the end of the campaign if a session
+        wrote a conclusion or a cap is reached."""
+        from quant_research.campaign.conclude import finish_campaign
+        from quant_research.hypothesis.gates import run_gates, verdict
+
+        out: dict[str, Any] = {"campaign_id": cid}
+        if (hid := self._pending_gates(cid)) is not None:
+            try:
+                gates = run_gates(self.paths, self.store, hid, self.sandbox)
+            except Exception as exc:  # noqa: BLE001 - recorded; the loop pauses and retries the gates later
+                msg = f"{type(exc).__name__}: {exc}"
+                self.campaigns.record(cid, "gates_error", "controller", {"hypothesis_id": hid, "error": msg[:500]})
+                return out | {"gates_error": msg}
+            out["gates"] = verdict(self.store, hid)
+            self.campaigns.record(cid, "gates", "controller", out["gates"])
+            if gates["gate1"]["passed"]:
+                self.campaigns.topup(cid, "gate1")
+            if gates["state"] == "admitted":
+                self.campaigns.topup(cid, "gate2")
+        written = self.campaigns.event(cid, "conclusion_written")
+        if written is not None:
+            out["end"] = finish_campaign(self.paths, self.store, cid, "concluded",
+                                         Conclusion.model_validate(written["data"]["conclusion"]),
+                                         f"written by session {written['data']['session_id']}")
+        elif (reason := cap_reason or self._cap_reason(cid)) is not None:
+            out["end"] = finish_campaign(self.paths, self.store, cid, "exhausted", None, reason)
+        return out
+
+    def _settled(self, cid: str, out: dict[str, Any]) -> dict[str, Any]:
+        if out.get("gates_error"):
+            return self._wait("paused", f"gates of {cid}: {out['gates_error'][:300]}", self.cfg.backoff_max_seconds)
+        return {"ran": False, "status": "running", "reason": f"campaign {cid} settled", "wait": 0, "campaign": out}
+
     # -- one session -----------------------------------------------------------------------------
     def _workspace(self, ws: Path, brief: str) -> None:
         root = benchmark_dir()
         (ws / "fixtures").mkdir(exist_ok=True)
         shutil.copyfile(root / "role_prompt.md", ws / "ROLE.md")
-        shutil.copyfile(root / "v0.2" / "research.schema.json", ws / "research.schema.json")
+        schema = json.loads((root / "v0.2" / "research.schema.json").read_text())
+        schema["properties"] |= CAMPAIGN_FIELDS
+        schema["required"] = [*schema["required"], "notes"]
+        (ws / "research.schema.json").write_text(json.dumps(schema, indent=2))
         shutil.copyfile(root / CONTRACT_V02, ws / "fixtures" / "strategy_contract.md")
         (ws / "TASK.md").write_text(brief)
 
-    def run_session(self) -> dict[str, Any]:
+    def run_session(self, camp: dict[str, Any], mandate: Mandate, model: str, reserve: float) -> dict[str, Any]:
+        from quant_research.campaign.brief import session_brief
+
+        cid = camp["id"]
         n = self.state.get("sessions_started", 0)
-        product, topic = self.pick_topic(n)
-        mandate = Mandate.model_validate(self.store.get_mandate(self.cfg.mandates[product])["body"])
+        rem = self.campaigns.remaining(cid)
+        b = mandate.budget.max_experiments
+        allowance = int(min(b, rem["experiments"]))
+        last = rem["sessions"] <= 1 or rem["usd"] - reserve < reserve
         run_id = f"desk-{datetime.fromtimestamp(self.clock(), tz=UTC):%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
+        brief = session_brief(self.paths, self.store, cid, run_id, mandate, allowance, last)
         sess_cfg = SessionConfig(mandate=mandate, sandbox=self.sandbox, allow_weak_isolation=self.allow_weak)
         sid = ResearchController(self.paths, self.store, ManualRunner()).create_session(sess_cfg)
+        self.campaigns.start_session(cid, sid, run_id, allowance, reserve, last)
         ws = Path(self.store.get_session(sid)["workspace"])
-        self._workspace(ws, task_brief(run_id, product, topic, mandate,
-                                       candidates_summary(self.store, mandate.mandate_id())))
+        self._workspace(ws, brief)
         run_dir = sessions_dir(self.paths) / run_id
         run_dir.mkdir(parents=True)
-        meta = {"run_id": run_id, "session_id": sid, "product": product, "topic": topic[0],
+        meta = {"run_id": run_id, "session_id": sid, "product": camp["product"], "topic": "campaign",
+                "campaign_id": cid, "family": camp["family"], "model": model, "reserved_usd": reserve,
                 "mandate_id": mandate.mandate_id(), "started_at": self.clock()}
         (run_dir / "run.json").write_text(json.dumps(meta, indent=2))
         self.state = _save_state(self.paths, self.state, sessions_started=n + 1, current_run=run_id,
-                                 status="running", reason=f"session {run_id} ({product}, {topic[0]})")
+                                 status="running", reason=f"session {run_id} ({cid}, {camp['family']})")
+        if hasattr(self.adapter, "model"):
+            self.adapter.model = camp["body"].get("model") or self.adapter_model
         allow = [model_endpoint()]
         run: AgentRun | None = None
         harness_error, egress_records = None, []
@@ -327,11 +376,12 @@ class ResearchLoop:
             (run_dir / "harness_error.txt").write_text(traceback.format_exc())
             recover_session(self.store, sid, f"harness error: {harness_error[:200]}")
             cleanup_run(run_id)
-        return self.finish(run_dir, meta, mandate, run=run, egress_records=egress_records,
-                           harness_error=harness_error)
+        return self.finish(run_dir, meta, run=run, egress_records=egress_records, harness_error=harness_error)
 
-    def finish(self, run_dir: Path, meta: dict[str, Any], mandate: Mandate, *, run: AgentRun | None,
+    def finish(self, run_dir: Path, meta: dict[str, Any], *, run: AgentRun | None,
                egress_records: list[dict[str, Any]], harness_error: str | None, crash: bool = False) -> dict[str, Any]:
+        from quant_research.campaign.conclude import parse_conclusion
+
         sid = meta["session_id"]
         audit = audit_session(self.store, sid)
         egress = summarize(egress_records) if (self.isolate_network and egress_records) else None
@@ -355,48 +405,63 @@ class ResearchLoop:
                       + [f"[gatekeeper] {e['id']}: {e['failure_reason']}" for e in exps if e["status"] == "blocked"]
                       + [f"[network] {d}" for d in (egress or {}).get("denied", [])
                          if d.split(" ", 1)[-1].split(":", 1)[0] not in model_host])
-        outcome: dict[str, Any] = {"verdict": None}
-        if failure == "none":
-            outcome = self._evaluate(meta, mandate, research)
-            if outcome.get("candidate_id") and outcome["verdict"] == "accepted":
-                outcome["promotion"] = promote(self.paths, self.store, outcome["candidate_id"], self.sandbox)
+        n_exp = sum(e["status"] != "blocked" for e in exps
+                    if e["kind"] not in ("sensitivity",) and e["segment"] == "dev")
+        models = (", ".join(run.extra.get("models") or []) if run else None) or (u.model if u else None)
+        reserved = meta.get("reserved_usd")
+        if cost_source == "unpriced":
+            budget.stop(self.paths, f"model call without a configured price ({models})", run_id=meta["run_id"])
+        elif reserved is not None and cost > reserved:
+            budget.stop(self.paths, f"session {meta['run_id']} cost {cost:.4f} USD, above its reservation "
+                                    f"{reserved:.2f} USD", run_id=meta["run_id"], cost_usd=cost)
         finished = self.clock()
         result = {
             "run_id": meta["run_id"], "session_id": sid, "product": meta["product"], "topic": meta["topic"],
+            "campaign_id": meta.get("campaign_id"), "family": meta.get("family"),
             "mandate_id": meta["mandate_id"], "started_at": meta["started_at"], "finished_at": finished,
             "day": utc_day(meta["started_at"]), "wall_seconds": round(finished - meta["started_at"], 1),
             "status": "ok" if failure == "none" else "failed", "failure_class": failure,
             "failure_details": [str(d) for d in details if d][:5],
-            "cost_usd": cost, "cost_source": cost_source, "usage": u.model_dump() if u else None,
-            "zqr_version": version(), "harness": run.harness_version if run else None,
-            "model": (", ".join(run.extra.get("models") or []) if run else None) or (u.model if u else None),
-            "experiments": sum(e["status"] != "blocked" for e in exps
-                               if e["kind"] not in ("sensitivity",) and e["segment"] == "dev"),
+            "cost_usd": cost, "cost_source": cost_source, "reserved_usd": reserved,
+            "usage": u.model_dump() if u else None, "zqr_version": version(),
+            "harness": run.harness_version if run else None, "model": models, "experiments": n_exp,
             "audit_ok": audit["ok"], "audit_problems": audit["problems"], "violations": violations,
-            "egress": egress, **outcome,
+            "egress": egress,
         }
+        cid = meta.get("campaign_id")
+        if cid:
+            conclusion, problems = parse_conclusion(research) if failure == "none" else (None, [])
+            notes = (research or {}).get("notes")
+            self.campaigns.finish_session(sid, cost, n_exp, notes if isinstance(notes, str) else None, failure)
+            if conclusion is not None:
+                self.campaigns.record(cid, "conclusion_written", "agent_tool",
+                                      {"session_id": sid, "conclusion": conclusion.model_dump(mode="json")})
+            result["campaign"] = ({"campaign_id": cid, "conclusion_problems": problems} if crash
+                                  else self._settle(cid) | {"conclusion_problems": problems})
         (run_dir / "result.json").write_text(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+        camp = result.get("campaign") or {}
         with open(ledger_path(self.paths), "a") as f:
             f.write(json.dumps({k: result.get(k) for k in (
-                "run_id", "day", "product", "topic", "status", "failure_class", "cost_usd", "cost_source",
-                "experiments", "audit_ok", "verdict", "candidate_id", "session_id", "zqr_version", "harness",
+                "run_id", "day", "product", "topic", "campaign_id", "family", "status", "failure_class", "cost_usd",
+                "cost_source", "reserved_usd", "experiments", "audit_ok", "session_id", "zqr_version", "harness",
                 "model")}
-                | {"violations": len(violations),
-                   "promotion": (result.get("promotion") or {}).get("stopped")}, default=str) + "\n")
+                | {"violations": len(violations), "gates": (camp.get("gates") or {}).get("state"),
+                   "campaign_end": (camp.get("end") or {}).get("state")}, default=str) + "\n")
         self.state = _save_state(self.paths, self.state, current_run=None, last_run_id=meta["run_id"])
         return result
 
     def _cost(self, run: AgentRun | None, u) -> tuple[float, str]:
-        pricing = _pricing((run.extra.get("models") if run else None) or (u.model.split(",") if u and u.model
-                                                                           else []), self.cfg.cny_per_usd)
+        models = (run.extra.get("models") if run else None) or (u.model.split(",") if u and u.model else [])
+        pricing = budget.price_for(self.cfg, models)
         if u and pricing:
             return round(pricing.cost(u.input_tokens, u.output_tokens, u.cache_read_tokens, ts=time.time()), 6), \
                 "priced_usage"
-        if run is not None and run.cli_cost_usd is not None:
-            return round(float(run.cli_cost_usd), 6), "cli_estimate"
-        if u is None or (u.input_tokens + u.output_tokens) == 0:
+        if u is not None and (u.input_tokens + u.output_tokens) == 0:
             return 0.0, "no_tokens"
-        return 0.0, "unpriced"
+        estimate = run.cli_cost_usd if run is not None else None
+        if u is None and estimate is None:
+            return 0.0, "no_tokens"
+        return round(float(estimate or 0.0), 6), "unpriced"
 
     @staticmethod
     def _classify(run: AgentRun | None, audit: dict, egress: dict | None, harness_error: str | None,
@@ -419,50 +484,10 @@ class ResearchLoop:
                                             run.result_text[-200:]]
         return "none", []
 
-    def _evaluate(self, meta: dict[str, Any], mandate: Mandate, research: dict[str, Any]) -> dict[str, Any]:
-        sid = meta["session_id"]
-        declared = research.get("final_artifact")
-        if declared is None:
-            return {"verdict": "no_candidate", "reasons": ["final_artifact is null"]}
-        submission = sessions_dir(self.paths) / meta["run_id"] / "submission"
-        problems = ToolGateway(self.paths, self.store, sid, workspace=submission).final_artifact_problems(declared)
-        if problems:
-            return {"verdict": "artifact_mismatch", "reasons": problems}
-        rec = self.store.get_experiment(declared["experiment_id"])
-        params = declared["parameters"] or {}
-        plan_id = rec.get("plan_id")
-        if not plan_id:
-            hyp = research.get("hypothesis") if isinstance(research.get("hypothesis"), str) else ""
-            plan = ResearchPlan(hypothesis=hyp if len(hyp) >= 10 else "(no hypothesis stated)",
-                                mechanism="not stated", falsification="not stated", artifact=str(declared["path"]),
-                                parameter_ranges={k: {"values": [v]} for k, v in params.items()},
-                                planned_experiments=1, primary_metric=mandate.primary_metric)
-            plan_id = self.store.put_plan(sid, mandate.mandate_id(), plan.model_dump(), retrospective=True)
-        spec = StrategySpec(strategy_ref=rec["strategy_ref"], parameters=params).normalized()
-        identity = candidate_identity(spec, load_manifest(self.paths, mandate.dataset_id)["data_hash"],
-                                      mandate.split_id, mandate.engine_config.config_id(),
-                                      mandate.policy.policy_id(), mandate.mandate_id())
-        cid = register_candidate(self.store, identity, session_id=sid, plan_id=plan_id, actor="controller",
-                                 evidence={"dev_experiment": rec["id"], "desk_run": meta["run_id"]})
-        state = self.store.get_candidate(cid)["state"]
-        if state != "development":
-            return {"candidate_id": cid, "verdict": f"resubmission ({state})",
-                    "reasons": ["identical candidate already evaluated; its first verdict stands"]}
-        base = ExperimentRequest(strategy_ref=rec["strategy_ref"], parameters=params, dataset_id=mandate.dataset_id,
-                                 split_id=mandate.split_id, engine_config=mandate.engine_config, policy=mandate.policy)
-        gate = GateContext(caller="controller", session_id=sid, allow_weak_isolation=self.allow_weak)
-        ev = evaluate_candidate(self.paths, self.store, mandate, base, gate=gate, sandbox=self.sandbox,
-                                session_id=sid, parent_id=rec["id"],
-                                record={"plan_id": plan_id, "artifact": declared["path"]})
-        accepted = ev.metrics is not None and ev.verdict == "accepted"
-        transition(self.store, cid, "validated" if accepted else "rejected", "controller", ev.evidence(),
-                   "desk validation" if ev.metrics is not None else "evaluation did not complete")
-        return {"candidate_id": cid, "verdict": ev.verdict, "reasons": ev.reasons, "validation_primary": ev.primary,
-                "validation_dsr": (ev.statistics or {}).get("dsr"), "evaluation_experiments": ev.experiments}
-
 
 def recover_desk_runs(paths: Paths, store: ExperimentStore, cfg: DeskConfig) -> list[dict[str, Any]]:
-    """Close out sessions whose desk process died: clean up containers, recover the session, record it."""
+    """Close out sessions whose desk process died: clean up containers, recover the session, record it. Gates and
+    the end of the campaign wait for the loop's next step."""
     out = []
     loop = ResearchLoop(paths, store, cfg, adapter=None, require_check=False)
     for run_json in sorted(sessions_dir(paths).glob("*/run.json")):
@@ -475,8 +500,7 @@ def recover_desk_runs(paths: Paths, store: ExperimentStore, cfg: DeskConfig) -> 
         ws = Path(store.get_session(meta["session_id"])["workspace"])
         if ws.exists() and not (run_dir / "submission").exists():
             freeze_submission(ws, run_dir / "submission")
-        mandate = Mandate.model_validate(store.get_mandate(meta["mandate_id"])["body"])
-        res = loop.finish(run_dir, meta, mandate, run=None, egress_records=[],
+        res = loop.finish(run_dir, meta, run=None, egress_records=[],
                           harness_error=f"desk process died; cleaned up {removed}", crash=True)
         out.append({"run_id": meta["run_id"], "failure_class": res["failure_class"], "removed": removed})
     _save_state(paths, load_state(paths), current_run=None)

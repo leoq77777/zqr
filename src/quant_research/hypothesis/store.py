@@ -38,6 +38,20 @@ class HypothesisError(ValueError):
     pass
 
 
+def check_citations(store: ExperimentStore, citations, split_id: str) -> None:
+    """Cited experiments exist and are dev runs on the split or the splits it extends."""
+    splits = [split_id, *store.split_ancestors(split_id)]
+    for c in citations:
+        if c.kind != "experiment":
+            continue
+        row = store.get_experiment(c.ref)
+        if row is None:
+            raise HypothesisError(f"cited experiment {c.ref} does not exist")
+        if row["split_id"] not in splits or row["segment"] != "dev":
+            raise HypothesisError(f"cited experiment {c.ref} is not a dev experiment on {split_id} or the "
+                                  "splits it extends")
+
+
 class HypothesisStore:
     def __init__(self, store: ExperimentStore):
         self.store = store
@@ -55,6 +69,12 @@ class HypothesisStore:
             raise HypothesisError(f"no gate 1 reference for {product} on {split_id} "
                                   "(`zqr portfolio dev <vid> --reference`)")
         self._check_family(paths, hypothesis.family)
+        from quant_research.campaign.store import CampaignStore
+
+        q = CampaignStore(self.store).quota(paths, split_id, hypothesis.family)
+        if q["room"] <= 0:
+            raise HypothesisError(f"{hypothesis.family} is at its quota on {split_id} ({q['used']} of "
+                                  f"{q['quota']} trials, P1)")
         variants = self._normalized_variants(paths, hypothesis)
         self._check_citations(hypothesis, split_id)
         if hypothesis.campaign_id and self.store.query("SELECT id FROM hypotheses WHERE campaign_id=?",
@@ -102,16 +122,7 @@ class HypothesisStore:
         return tuple(out)
 
     def _check_citations(self, hypothesis: Hypothesis, split_id: str) -> None:
-        splits = [split_id, *self.store.split_ancestors(split_id)]
-        for c in hypothesis.citations:
-            if c.kind != "experiment":
-                continue
-            row = self.store.get_experiment(c.ref)
-            if row is None:
-                raise HypothesisError(f"cited experiment {c.ref} does not exist")
-            if row["split_id"] not in splits or row["segment"] != "dev":
-                raise HypothesisError(f"cited experiment {c.ref} is not a dev experiment on {split_id} or the "
-                                      "splits it extends")
+        check_citations(self.store, hypothesis.citations, split_id)
 
     # -- events and queries ------------------------------------------------------------------------
     def record(self, hid: str, event: str, actor: str, evidence: dict[str, Any] | None = None) -> None:

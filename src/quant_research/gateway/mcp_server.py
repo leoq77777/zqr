@@ -107,6 +107,28 @@ def build_server(gw: ToolGateway, faults: list[str] | None = None) -> MCPServer:
     def write_report(path: str = "research.json") -> dict[str, Any]:
         return call("write_report", {"path": path}, lambda: gw.build_report(path))
 
+    @server.tool(description="A family's archive (dev statistics, parameters tried, conclusions, gate verdicts).")
+    def family_archive(family: str) -> dict[str, Any]:
+        return call("family_archive", {"family": family}, lambda: gw.family_archive(family))
+
+    @server.tool(description="The reference portfolio's members with dev statistics, and its own dev run.")
+    def portfolio_members() -> dict[str, Any]:
+        return call("portfolio_members", {}, gw.portfolio_members)
+
+    @server.tool(description="Regress a completed dev experiment's daily returns on the reference portfolio's dev "
+                             "returns: beta, alpha, appraisal ratio, hedged Sharpe per period. Counts as a trial.")
+    def marginal_eval(experiment_id: str) -> dict[str, Any]:
+        return call("marginal_eval", {"experiment_id": experiment_id}, lambda: gw.marginal_eval(experiment_id))
+
+    @server.tool(description="Register the campaign's one hypothesis (immutable). prior: text; citations: "
+                             '[{"kind": "published" | "experiment", "ref": "..."}]; variants: 1-3 of '
+                             '{"artifact": template name or /workspace/*.py, "parameters": {...}}. The controller '
+                             "runs the gates after the session; you get the verdict only.")
+    def register_hypothesis(prior: str, citations: list[dict[str, Any]],
+                            variants: list[dict[str, Any]]) -> dict[str, Any]:
+        args = {"prior": prior, "citations": citations, "variants": variants}
+        return call("register_hypothesis", args, lambda: gw.register_hypothesis(prior, citations, variants))
+
     return server
 
 

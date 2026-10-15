@@ -13,7 +13,7 @@ from typing import Any
 
 from quant_research.experiments.store import ExperimentStore
 from quant_research.gateway.service import GatewayError, PolicyRefusal, ToolGateway
-from quant_research.memory.families import LEGACY_TOPICS, session_topics
+from quant_research.memory.families import session_family, session_topics
 from quant_research.memory.schema import ensure
 from quant_research.paths import Paths
 
@@ -43,13 +43,42 @@ def import_conclusions(paths: Paths, store: ExperimentStore) -> dict[str, int]:
                 problems = [str(exc)]
         meta = topics.get(sid, {})
         body = {k: doc.get(k) for k in KEPT} | {"topic": meta.get("topic"), "run_id": meta.get("run_id")}
+        if meta.get("campaign_id"):
+            body |= {"campaign_id": meta["campaign_id"], "notes": doc.get("notes")}
         store.execute("INSERT OR IGNORE INTO family_conclusions (family_id, product, source, session_id, body, "
                       "citations_ok, problems, created_at) VALUES (?,?,?,?,?,?,?,?)",
-                      (LEGACY_TOPICS.get(meta.get("topic")), meta.get("product"), "session", sid,
+                      (session_family(meta), meta.get("product"), "session", sid,
                        json.dumps(body, ensure_ascii=False), int(not problems), json.dumps(problems), time.time()))
         counts["imported"] += 1
         counts["citation_failures"] += bool(problems)
     return counts
+
+
+def evidence_problems(store: ExperimentStore, split_id: str, experiment_ids: list[str]) -> list[str]:
+    """Cited experiments must exist and be dev runs on the split or the splits it extends."""
+    splits = [split_id, *store.split_ancestors(split_id)]
+    problems = []
+    for exp_id in dict.fromkeys(experiment_ids):
+        rec = store.get_experiment(exp_id) if isinstance(exp_id, str) else None
+        if rec is None:
+            problems.append(f"unknown experiment {exp_id!r}")
+        elif rec["split_id"] not in splits or rec["segment"] != "dev":
+            problems.append(f"{exp_id} is not a dev experiment on {split_id}")
+    return problems
+
+
+def add_campaign_conclusion(store: ExperimentStore, campaign_id: str, family: str | None, product: str,
+                            split_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """The campaign's conclusion (design 6.3), once per campaign; its citations are checked here."""
+    ensure(store)
+    problems = evidence_problems(store, split_id, list(body.get("experiment_ids") or []))
+    key = f"campaign:{campaign_id}"
+    store.execute("INSERT OR IGNORE INTO family_conclusions (family_id, product, source, session_id, body, "
+                  "citations_ok, problems, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                  (family, product, "campaign", key, json.dumps(body, ensure_ascii=False, default=str),
+                   int(not problems), json.dumps(problems), time.time()))
+    row = store.query("SELECT * FROM family_conclusions WHERE session_id=?", (key,))[0]
+    return row | {"body": json.loads(row["body"]), "problems": json.loads(row["problems"] or "[]")}
 
 
 def conclusions(store: ExperimentStore) -> list[dict[str, Any]]:

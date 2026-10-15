@@ -27,7 +27,8 @@ MIN_PROPOSAL = 5
 
 
 def session_topics(paths: Paths) -> dict[str, dict[str, str]]:
-    """session id -> {product, topic, run_id} from the desk research ledger."""
+    """session id -> {product, topic, run_id, family, campaign_id} from the desk research ledger (campaign sessions
+    carry their campaign's family; `exploration` is no family)."""
     ledger = paths.desk / "research_ledger.jsonl"
     out: dict[str, dict[str, str]] = {}
     if ledger.exists():
@@ -35,8 +36,15 @@ def session_topics(paths: Paths) -> dict[str, dict[str, str]]:
             row = json.loads(line)
             if row.get("session_id"):
                 out[row["session_id"]] = {"product": row.get("product"), "topic": row.get("topic"),
-                                          "run_id": row.get("run_id")}
+                                          "run_id": row.get("run_id"), "family": row.get("family"),
+                                          "campaign_id": row.get("campaign_id")}
     return out
+
+
+def session_family(meta: dict[str, Any]) -> str | None:
+    if meta.get("campaign_id"):
+        return None if meta.get("family") in (None, "exploration") else meta["family"]
+    return LEGACY_TOPICS.get(meta.get("topic"))
 
 
 def _seed_entry(notes: Any) -> str | None:
@@ -47,8 +55,12 @@ def _seed_entry(notes: Any) -> str | None:
 
 
 def tag_trials(paths: Paths, store: ExperimentStore, catalog: Catalog | None = None) -> Counter:
-    """Fill `return_index.family_tag` / `tag_source`; returns counts by source."""
+    """Fill `return_index.family_tag` / `tag_source`; returns counts by source. Refused without the desk research
+    ledger, which would clear every session's tag."""
     ensure(store)
+    if not (paths.desk / "research_ledger.jsonl").exists():
+        raise FileNotFoundError(f"{paths.desk / 'research_ledger.jsonl'} not found; tagging without it would "
+                                "clear the session tags")
     catalog = catalog or load_catalog()
     family_of = {e.id: e.family for e in catalog.entries}
     topics = session_topics(paths)
@@ -61,8 +73,9 @@ def tag_trials(paths: Paths, store: ExperimentStore, catalog: Catalog | None = N
         if entry:
             tag, source = family_of.get(entry), f"seed:{entry}"
         elif r["session_id"] in topics:
-            topic = topics[r["session_id"]]["topic"]
-            tag, source = LEGACY_TOPICS.get(topic), f"topic:{topic}"
+            meta = topics[r["session_id"]]
+            tag = session_family(meta)
+            source = f"campaign:{meta['campaign_id']}" if meta.get("campaign_id") else f"topic:{meta['topic']}"
         store.execute("UPDATE return_index SET family_tag=?, tag_source=? WHERE experiment_id=?",
                       (tag, source, r["experiment_id"]))
         counts[(source or "untagged").split(":")[0]] += 1

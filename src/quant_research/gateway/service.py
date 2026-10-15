@@ -109,9 +109,24 @@ class ToolGateway:
         except Exception as exc:
             raise GatewayError(self._sanitize(str(exc))) from None
 
+    def _campaign(self) -> dict[str, Any] | None:
+        from quant_research.campaign.store import CampaignStore
+
+        cs = CampaignStore(self.store)
+        cid = cs.campaign_of_session(self.sid)
+        return cs.get(cid) if cid else None
+
+    def _allowance(self) -> int:
+        """The mandate's experiment budget, lowered to what the session's campaign had left when it started."""
+        from quant_research.campaign.store import CampaignStore
+
+        row = CampaignStore(self.store).session(self.sid)
+        b = self.mandate.budget.max_experiments
+        return min(b, row["allowance"]) if row else b
+
     def _gate(self) -> GateContext:
         b = self.mandate.budget
-        return GateContext(caller=self.caller, session_id=self.sid, max_session_experiments=b.max_experiments,
+        return GateContext(caller=self.caller, session_id=self.sid, max_session_experiments=self._allowance(),
                            max_trials_per_strategy=b.max_trials_per_strategy,
                            allow_weak_isolation=self.cfg.allow_weak_isolation,
                            stop_file=self.workspace / STOP_FILE, agent_segments=tuple(self.mandate.agent_segments))
@@ -274,7 +289,7 @@ class ToolGateway:
         usage = Usage.model_validate(self.store.get_session(self.sid)["usage"])
         usage.experiments = self.store.session_usage_count(self.sid)
         return {"usage": usage.model_dump(),
-                "remaining_experiments": self.mandate.budget.max_experiments - usage.experiments,
+                "remaining_experiments": self._allowance() - usage.experiments,
                 "plans": [{"plan_id": p["id"], "retrospective": bool(p["retrospective"]),
                            "superseded_by": p["superseded_by"], "artifact": p["body"]["artifact"],
                            "planned_experiments": p["body"]["planned_experiments"],
@@ -342,11 +357,141 @@ class ToolGateway:
                     problems.append(f"{rec['id']}: metric {name!r} was not recorded")
                 elif not _matches(value, recorded[name]):
                     problems.append(f"{rec['id']}: {name}={value!r} but recorded {recorded[name]!r}")
+        if self._campaign() is not None:
+            problems += self._campaign_report_problems(doc)
         valid = not problems
         if record:
             self.store.log_session_event(self.sid, "report_validated", {"path": path, "valid": valid,
                                                                         "problems": problems})
         return {"valid": valid, "problems": problems}
+
+    def _campaign_report_problems(self, doc: dict[str, Any]) -> list[str]:
+        from quant_research.campaign.conclude import parse_conclusion
+        from quant_research.memory.conclusions import evidence_problems
+
+        problems = []
+        if not isinstance(doc.get("notes"), str) or not doc["notes"].strip():
+            problems.append("notes: a non-empty string is required in campaign sessions")
+        conclusion, bad = parse_conclusion(doc)
+        problems += bad
+        if conclusion is not None:
+            problems += [f"conclusion evidence: {p}" for p in
+                         evidence_problems(self.store, self.mandate.split_id, list(conclusion.evidence))]
+        return problems
+
+    # -- campaign tools (design 6.4; dev data and verdicts only) ---------------------------------------
+    def family_archive(self, family: str) -> dict[str, Any]:
+        """The family's archive as written by `zqr memory archive`: dev statistics, conclusions and gate verdicts,
+        holdout viewings as a count."""
+        from quant_research.memory.archive import archives_dir
+
+        if not re.fullmatch(r"[a-z0-9_-]+", family or ""):
+            raise GatewayError("invalid family id")
+        p = archives_dir(self.paths) / f"{family}.json"
+        if not p.exists():
+            known = sorted(f.stem for f in archives_dir(self.paths).glob("*.json"))
+            raise GatewayError(f"no archive for {family!r}; archives: {known}")
+        return json.loads(p.read_text())
+
+    def _reference(self) -> tuple[str, dict[str, Any]]:
+        from quant_research.hypothesis.gates import _reference_dev
+        from quant_research.hypothesis.store import HypothesisError
+        from quant_research.portfolio.evaluate import gate1_reference
+
+        product = load_manifest(self.paths, self.mandate.dataset_id)["instrument"]
+        vid = gate1_reference(self.store, product, self.mandate.split_id)
+        if vid is None:
+            raise GatewayError(f"no reference portfolio for {product} on this split")
+        try:
+            return vid, _reference_dev(self.store, vid)
+        except HypothesisError as exc:
+            raise GatewayError(str(exc)) from None
+
+    def portfolio_members(self) -> dict[str, Any]:
+        """The reference portfolio's members with their seed runs' dev statistics, and its own dev run."""
+        from quant_research.portfolio.evaluate import _summary
+        from quant_research.portfolio.version import VersionStore
+
+        vid, dev = self._reference()
+        version = VersionStore(self.store).version(vid)
+        keys = ("sharpe", "total_return", "max_drawdown", "turnover", "n_round_trips", "exposure")
+        members = []
+        for m in version.members:
+            seed = self.store.query("SELECT id, metrics FROM experiments WHERE kind='seed' AND split_id=? AND "
+                                    "segment='dev' AND status='completed' AND (json_extract(notes, '$.instance')=? "
+                                    "OR json_extract(notes, '$.library_entry')=?) ORDER BY created_at DESC LIMIT 1",
+                                    (self.mandate.split_id, m.entry_id, m.entry_id))
+            metrics = json.loads(seed[0]["metrics"]) if seed and seed[0]["metrics"] else {}
+            members.append({"entry_id": m.entry_id, "family": m.family, "strategy_ref": m.strategy_ref,
+                            "parameters": m.parameters, "dev_experiment": seed[0]["id"] if seed else None,
+                            "dev": {k: metrics.get(k) for k in keys}})
+        return {"reference_id": vid, "segment": "dev", "members": members,
+                "overlay": version.overlay.model_dump(mode="json") if version.overlay else None,
+                "dev_run": _summary(dev)}
+
+    def marginal_eval(self, experiment_id: str) -> dict[str, Any]:
+        """Gate 1's regression without a verdict, for a completed dev experiment of this session or its campaign;
+        each distinct experiment counts once against the campaign's trials."""
+        from quant_research.campaign.store import CampaignStore
+        from quant_research.hypothesis.gates import marginal
+        from quant_research.hypothesis.store import HypothesisError
+
+        self._require_active()
+        rec = self.store.get_experiment(experiment_id)
+        camp = self._campaign()
+        cs = CampaignStore(self.store)
+        allowed = {self.sid} | ({s["session_id"] for s in cs.sessions(camp["id"])} if camp else set())
+        if rec is None or rec["session_id"] not in allowed:
+            raise GatewayError(f"unknown experiment {experiment_id}")
+        if camp and experiment_id not in cs.marginal_evals(camp["id"]) and cs.remaining(camp["id"])["experiments"] <= 0:
+            raise PolicyRefusal("the campaign's trial cap is reached")
+        try:
+            out = marginal(self.paths, self.store, experiment_id)
+        except HypothesisError as exc:
+            raise GatewayError(str(exc)) from None
+        self.store.log_session_event(self.sid, "marginal_eval", {"experiment_id": experiment_id})
+        return out | {"counted_as_trial": True}
+
+    def register_hypothesis(self, prior: str, citations: list[dict[str, Any]],
+                            variants: list[dict[str, Any]]) -> dict[str, Any]:
+        """Register the campaign's one hypothesis (appendix A6); plugin variants are frozen by content hash."""
+        from quant_research.campaign.model import EXPLORATION
+        from quant_research.campaign.store import CampaignStore
+        from quant_research.desk.config import load_config
+        from quant_research.hypothesis.model import Hypothesis
+        from quant_research.hypothesis.store import HypothesisError, HypothesisStore
+
+        self._require_active()
+        camp = self._campaign()
+        if camp is None:
+            raise PolicyRefusal("register_hypothesis is available in campaign sessions only")
+        if camp["family"] == EXPLORATION:
+            raise PolicyRefusal("exploration campaigns cannot register a hypothesis (a new family is the human's "
+                                "decision)")
+        if load_config(self.paths).mandates.get(camp["product"]) != self.mandate.mandate_id():
+            raise PolicyRefusal("the desk mandate changed since this session started")
+        if not isinstance(variants, list) or not all(isinstance(v, dict) for v in variants):
+            raise GatewayError("variants: a list of {artifact, parameters} objects")
+        resolved = []
+        for i, v in enumerate(variants):
+            if not isinstance(v.get("artifact"), str):
+                raise GatewayError(f"variant {i + 1}: artifact (template name or /workspace/*.py) is required")
+            ref, _ = self._resolve_artifact(v["artifact"])
+            resolved.append({"strategy_ref": ref, "parameters": v.get("parameters") or {}})
+        try:
+            h = Hypothesis.model_validate({"product": camp["product"], "family": camp["family"], "prior": prior,
+                                           "citations": citations, "variants": resolved, "campaign_id": camp["id"]})
+            row = HypothesisStore(self.store).register(self.paths, h, "agent_tool",
+                                                       note=f"campaign {camp['id']}, session {self.sid}")
+        except ValidationError as exc:
+            raise GatewayError(f"invalid hypothesis: {_brief_errors(exc)}") from None
+        except HypothesisError as exc:
+            raise GatewayError(self._sanitize(str(exc))) from None
+        CampaignStore(self.store).record(camp["id"], "registered", "agent_tool",
+                                         {"hypothesis_id": row["id"], "session_id": self.sid})
+        self.store.log_session_event(self.sid, "hypothesis_registered", {"hypothesis_id": row["id"]})
+        return {"hypothesis_id": row["id"], "state": row["state"], "variants": row["body"]["variants"],
+                "next": "the controller runs the gates after this session; later briefs show the verdict only"}
 
     def final_artifact_problems(self, final: Any) -> list[str]:
         """The declared final artifact must be exactly what a completed experiment of this session ran."""

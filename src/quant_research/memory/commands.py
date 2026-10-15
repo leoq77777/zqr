@@ -75,6 +75,8 @@ def cmd_step(args) -> None:
     paths, store = _open(args)
     try:
         _out(STEPS[args.mcmd](paths, store, args))
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from None
     finally:
         store.close()
 
@@ -83,6 +85,8 @@ def cmd_run(args) -> None:
     paths, store = _open(args)
     try:
         _out({name: fn(paths, store, args) for name, fn in STEPS.items()})
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from None
     finally:
         store.close()
 

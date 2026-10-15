@@ -1065,6 +1065,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     register_hypothesis(sub)
 
+    from quant_research.campaign.commands import register as register_campaign
+
+    register_campaign(sub)
+
     from quant_research.library.commands import register as register_library
 
     register_library(sub)

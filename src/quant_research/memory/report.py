@@ -124,7 +124,12 @@ def split_section(paths: Paths, store: ExperimentStore, split_id: str) -> list[s
     rejected = proposals(store, split_id, status="rejected")
     if rejected:
         lines += ["", f"Rejected proposals ({len(rejected)}; the clusters stay unmapped):", ""]
-        lines += [f"- `{p['id']}`: {p['body']['size']} trials; {p['reason']}" for p in rejected]
+        for p in rejected:
+            b = p["body"]
+            members = ", ".join(f"`{m}`" for m in b["members"][:10])
+            more = f" and {len(b['members']) - 10} more" if len(b["members"]) > 10 else ""
+            lines.append(f"- `{p['id']}`: cluster `{b['label']}`, {b['size']} trials; topics "
+                         f"{json.dumps(b['topics'])}; members {members}{more}; reason: {p['reason']}")
     top = sorted((r for r in index.values() if r["sharpe"] is not None and not r["flat"]),
                  key=lambda r: -r["sharpe"])[:10]
     lines += ["", "Top 10 non-flat trials by dev Sharpe (daily), split DSR against the legacy DSR:", "",

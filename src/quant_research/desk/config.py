@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pydantic import BaseModel, Field, NonNegativeFloat, PositiveFloat, PositiveInt
+from pydantic import BaseModel, Field, NonNegativeFloat, PositiveFloat, PositiveInt, field_validator
 
+from quant_research.controller.budget import PRICING_PRESETS
 from quant_research.paths import Paths
 
 
@@ -37,7 +38,10 @@ def effective_network(cfg: DeskConfig) -> NetworkConfig:
 class DeskConfig(BaseModel):
     products: list[str] = Field(default_factory=lambda: ["BTC-USD", "ETH-USD"])
     mandates: dict[str, str] = Field(default_factory=dict)  # product -> mandate_id
-    daily_cost_cap_usd: NonNegativeFloat = 20.0
+    daily_cost_cap_usd: NonNegativeFloat = 5.0
+    monthly_cost_cap_usd: NonNegativeFloat = 83.33
+    session_reserve_usd: PositiveFloat = 0.25
+    campaign_models: dict[str, str] = Field(default_factory=dict)  # model name -> pricing preset
     session_wall_seconds: PositiveFloat = 1800
     backoff_base_seconds: PositiveFloat = 300
     backoff_max_seconds: PositiveFloat = 3600
@@ -48,9 +52,17 @@ class DeskConfig(BaseModel):
     cny_per_usd: PositiveFloat = 7.1
     agent_memory: str = "2g"
     agent_cpus: str = "2"
-    max_sessions_per_day: PositiveInt = 200
+    max_sessions_per_day: PositiveInt = 12
     research_enabled: bool = True
     network: NetworkConfig = Field(default_factory=NetworkConfig)
+
+    @field_validator("campaign_models")
+    @classmethod
+    def _known_presets(cls, v: dict[str, str]) -> dict[str, str]:
+        unknown = sorted(set(v.values()) - set(PRICING_PRESETS))
+        if unknown:
+            raise ValueError(f"unknown pricing presets {unknown}; known: {sorted(PRICING_PRESETS)}")
+        return v
 
 
 def config_path(paths: Paths) -> Path:

@@ -573,93 +573,128 @@ candidates (D8).
 
 Files: new `src/quant_research/campaign/__init__.py`, `store.py`, `commands.py`; `cli.py`; tests.
 
-- [ ] Fields of design 6.1: id, product, split, family (or `exploration`), goal, prior with citations, source
+- [x] Fields of design 6.1: id, product, split, family (or `exploration`), goal, prior with citations, source
       (`generator` with its diagnostic, or `human`), model, caps (P3), state, created/updated.
-- [ ] States: `proposed` → `queued` (human approval, P5) → `running` → `concluded` | `cancelled`; `exhausted` when
+- [x] States: `proposed` → `queued` (human approval, P5) → `running` → `concluded` | `cancelled`; `exhausted` when
       a cap is reached without a conclusion. One campaign `running` at a time.
-- [ ] CLI: `zqr campaign list/show`, `add --file` (human; a prior with citations is required, D6), `approve`
+- [x] CLI: `zqr campaign list/show`, `add --file` (human; a prior with citations is required, D6), `approve`
       (human), `cancel --note` (human).
 
 ### D2. Generator and family quotas
 
 Files: new `campaign/generate.py`; tests.
 
-- [ ] Inputs, dev data only (D6): the reference version's dev run without the ladder (period statistics,
+- [x] Inputs, dev data only (D6): the reference version's dev run without the ladder (period statistics,
       `family_contribution`), the family archives (`memory/archive.build_archives`), conclusions, trials per
       family on the split.
-- [ ] Proposals: regime gaps (periods where the reference's hedged contribution is weakest), concentration (all
+- [x] Proposals: regime gaps (periods where the reference's hedged contribution is weakest), concentration (all
       four sleeves are trend; the reference's return is mostly one family), cost (archive `sharpe_2x` falling
       against `sharpe`), open questions in conclusions; exploration about 20% of each batch.
-- [ ] Ranking: gap size × room left in the family quota; deterministic for the same inputs (tested).
-- [ ] Quotas (P1): trials per family per product split counted from the split's own trials (inherited trials not
+- [x] Ranking: gap size × room left in the family quota; deterministic for the same inputs (tested).
+- [x] Quotas (P1): trials per family per product split counted from the split's own trials (inherited trials not
       counted); a family at quota gets no campaign; registration is refused once a campaign's family is at quota.
-- [ ] `zqr campaign generate --product [--n 6]` writes `proposed` campaigns and prints them.
+- [x] `zqr campaign generate --product [--n 6]` writes `proposed` campaigns and prints them.
 
 ### D3. Budget reservation (D7)
 
 Files: `desk/research.py` (session loop and research ledger), `desk/config.py`, tests.
 
-- [ ] Before a session: reserve `session_reserve_usd` (P2) against the campaign, the day ($5) and the month
+- [x] Before a session: reserve `session_reserve_usd` (P2) against the campaign, the day ($5) and the month
       ($83.33); refuse if any does not fit; release the difference after the session from the booked cost.
-- [ ] A model call without a configured price stops the loop with the model name in the report (`_cost` no longer
+- [x] A model call without a configured price stops the loop with the model name in the report (`_cost` no longer
       books "unpriced" as $0).
-- [ ] Campaign top-ups: +$2 after a gate 1 pass, +$2 after a gate 2 pass, at most $5; caps in sessions and trials
+- [x] Campaign top-ups: +$2 after a gate 1 pass, +$2 after a gate 2 pass, at most $5; caps in sessions and trials
       grow with them (P3).
-- [ ] `daily_cost_cap_usd` default 5. Tests: refusal at each cap; an overrun beyond the reservation stops the
+- [x] `daily_cost_cap_usd` default 5. Tests: refusal at each cap; an overrun beyond the reservation stops the
       loop; unpriced stops.
 
 ### D4. Loop change
 
 Files: `desk/research.py`, tests.
 
-- [ ] `step` takes the running campaign, or starts the next `queued`; idle with no model calls when none.
-- [ ] Session brief: campaign goal and prior, family archive (agent view), one-line summaries of other families,
+- [x] `step` takes the running campaign, or starts the next `queued`; idle with no model calls when none.
+- [x] Session brief: campaign goal and prior, family archive (agent view), one-line summaries of other families,
       earlier session notes of the campaign, remaining budget in dollars, sessions and trials.
-- [ ] Progress notes: each session writes `notes` into `research.json`; the controller appends them to the
+- [x] Progress notes: each session writes `notes` into `research.json`; the controller appends them to the
       campaign.
-- [ ] Remove topic rotation (`TOPICS`, `pick_topic`) and single-candidate promotion (`_evaluate`) from the loop
+- [x] Remove topic rotation (`TOPICS`, `pick_topic`) and single-candidate promotion (`_evaluate`) from the loop
       (D8); the single-candidate code stays for controls and benchmarks.
-- [ ] After a session that registered a hypothesis, the controller runs `zqr hypothesis test` logic (with the
+- [x] After a session that registered a hypothesis, the controller runs `zqr hypothesis test` logic (with the
       docker sandbox) before the next session.
 
 ### D5. Gateway tools
 
 Files: `gateway/service.py` (`ToolGateway`), `gateway/mcp_server.py`, tests.
 
-- [ ] `family_archive(family)`: the agent view (dev only, holdout-viewing counts).
-- [ ] `portfolio_members()`: the reference's members with dev statistics.
-- [ ] `marginal_eval(experiment_id)`: C4's `marginal`, counted as a trial.
-- [ ] `register_hypothesis(...)`: C1 with the campaign id; plugin variants from workspace artifacts frozen as the
+- [x] `family_archive(family)`: the agent view (dev only, holdout-viewing counts).
+- [x] `portfolio_members()`: the reference's members with dev statistics.
+- [x] `marginal_eval(experiment_id)`: C4's `marginal`, counted as a trial.
+- [x] `register_hypothesis(...)`: C1 with the campaign id; plugin variants from workspace artifacts frozen as the
       gateway already freezes final artifacts. The result of the later gates reaches the agent as verdicts only.
-- [ ] Tests: no validation or holdout number in any tool output (scan of the payloads).
+- [x] Tests: no validation or holdout number in any tool output (scan of the payloads).
 
 ### D6. Conclusions and archive write-back
 
-- [ ] The campaign's last session (concluded, exhausted or after the gates) writes a conclusion through
+- [x] The campaign's last session (concluded, exhausted or after the gates) writes a conclusion through
       `memory/conclusions.py`; citations checked (experiment ids exist on the split and are dev).
-- [ ] The conclusion record is appended to the family archive (dev data and gate verdicts only).
+- [x] The conclusion record is appended to the family archive (dev data and gate verdicts only).
 
 ### D7. Report
 
-- [ ] Research section: campaigns by state, registrations and gate verdicts, admitted versions, budget used against
+- [x] Research section: campaigns by state, registrations and gate verdicts, admitted versions, budget used against
       the day and month caps, sessions and trials used against quotas, cost per conclusion.
 
 ### D8. Debts
 
-- [ ] Topic tagging refuses to run without `desk/research_ledger.jsonl` (it cleared tags in the phase 3
+- [x] Topic tagging refuses to run without `desk/research_ledger.jsonl` (it cleared tags in the phase 3
       rehearsal).
-- [ ] The rejected-proposals section of the clustering report lists the clusters' sizes, members and the reason.
+- [x] The rejected-proposals section of the clustering report lists the clusters' sizes, members and the reason.
 
 ### D9. Tests, docs, rehearsal, release 4d and checkpoint
 
-- [ ] FakeAgent end to end: several sessions of one campaign, registration, both gates, conclusion, citation check,
-      archive record; quota exhaustion; cap refusals; closed-holdout refusal; shadow trader replay.
-- [ ] Docs: `docs/development.md`, the design's campaign sections cross-referenced, appendix amendment if any rule
-      changes.
-- [ ] Full suite, ruff, rehearsal on a copy of production with the fake agent and one real session on the
-      configured model (cost booked).
+- [x] FakeAgent end to end: several sessions of one campaign, registration, both gates, conclusion, citation check,
+      archive record; quota exhaustion; cap refusals; closed-holdout refusal; shadow trader replay
+      (`tests/test_campaign.py`, 27 tests; on a closed split campaigns and gates run and only holdout runs are
+      refused (D1, D3), since both desk splits inherit the 4a closures; 4d does not touch paper, so the shadow trader stays covered by
+      `tests/test_portfolio_paper.py`'s replay and parity tests).
+- [x] Docs: `docs/development.md` (sections 5.1, 5.11, configuration, commands), the design's campaign sections
+      cross-referenced; no appendix rule changes (interpretations below, for the human's review).
+- [x] Full suite, ruff, rehearsal on a copy of production with the fake agent and one real session on the
+      configured model (cost booked). 350 passed. Rehearsal 2026-10-15 on a read-only backup of production
+      (`/tmp/zqr-4d-rehearsal`): `campaign generate` gave 6 proposals per product; the fake agent ran a BTC `tsmom`
+      campaign through the real loop and gates (explore, register, gate 1 failed with AR -3.0, conclusion,
+      archive appended, report); one real session (deepseek-flash, Claude Code 2.1.112, docker isolation) on a BTC
+      `ewma_trend` campaign ran 12 experiments and 6 marginal evaluations, registered two plugin variants, gate 1
+      failed in the docker sandbox; 0.066 USD booked against the 0.25 reservation, audit clean, no violations,
+      no containers left. Findings, fixed: (1) campaigns were refused on closed splits, but both desk splits inherit
+      the 4a closures and the closure only stops holdout runs; (2) every regime gap went to the alphabetically first
+      family (equal quota room), and bull years dominated the absolute shortfall: now a log shortfall, years go round
+      the families; (3) the brief cut the family archive at 8,000 characters across both products, losing the
+      campaign's own split: now the product's sections, own split first; (4) a CLI cost estimate without a price
+      was booked as priced; now it is `unpriced` and stops the loop; (5) report tables ran into the next list line;
+      (6) unknown price presets in `campaign_models` are refused when the config loads.
 - [ ] Ask before merging and releasing. After release: `zqr campaign generate` for both products; the human
       reviews and approves the queue, then sets `research_enabled = true`.
+
+### Interpretations taken while building 4d (for the human's review)
+
+- **Exploration quota.** "Exploration capped at 25%" (P1) is 25% of the sum of the sleeve families' quotas
+  (0.25 × 100 × 4 = 100 trials per split), not a share of campaign trials (a share would refuse the first
+  exploration campaign).
+- **Caps are ceilings in code.** Day $5, month $83.33 and 12 sessions per day are constants (`campaign/budget.py`
+  `CEILINGS`); the desk config may only lower them. Production's config still holds 20 and 200 from before.
+- **After the gates.** A campaign continues after its gates on the top-ups; it ends when a session writes a
+  conclusion or a cap is reached. Design 6.3 ends a campaign once its hypothesis is tested; D7's top-ups after
+  gate passes only make sense if it goes on, so the code follows D7 (to confirm). On a cap without a conclusion the controller writes an `inconclusive` one from
+  the last notes.
+- **Last session.** The brief asks for a conclusion when at most one session is left or the dollars left after
+  this reservation cannot pay another.
+- **Uncounted sessions.** Environment failures, harness errors and crashes, and stops do not count against the
+  session cap (their cost still does).
+- **`marginal_eval`** counts each distinct experiment once as a campaign trial.
+- **Conclusions** of campaigns are `family_conclusions` rows with session id `campaign:<id>`; the benchmark's
+  `research.schema.json` is unchanged, the desk workspace's copy adds `notes` (required) and `conclusion`.
+- **Not built:** automatic generation after each campaign or daily; `zqr campaign generate` is manual.
 
 ## Proposals (approved 2026-10-15)
 

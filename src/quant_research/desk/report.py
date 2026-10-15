@@ -155,6 +155,9 @@ def hypothesis_lines(store: ExperimentStore, next_split: str) -> list[str]:
 
 
 def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[list[str], dict[str, Any]]:
+    from quant_research.campaign.budget import month_of
+    from quant_research.campaign.report import budget_lines, campaign_lines, session_rows
+
     cfg = load_config(paths)
     rows = [r for r in rl.read_ledger(paths) if r.get("day") == day]
     cost = sum(r.get("cost_usd") or 0.0 for r in rows)
@@ -162,11 +165,13 @@ def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[li
     state = rl.load_state(paths)
     lines = ["## Research", "",
              f"- Sessions: {len(rows)} ({', '.join(f'{k} {v}' for k, v in failures.items()) or 'none'}); "
-             f"estimated model cost {cost:.2f} USD (daily cap {cfg.daily_cost_cap_usd} USD)",
+             f"estimated model cost {cost:.2f} USD",
+             *budget_lines(paths, cfg, day, cost, rl.spent_in_month(paths, month_of(day))),
              f"- Loop status now: {state.get('status', '-')}" + (f" ({state['reason']})" if state.get("reason")
                                                                   else ""),
              f"- Violations: {sum(r.get('violations') or 0 for r in rows)}; audit failures: "
-             f"{sum(not r.get('audit_ok', True) for r in rows)}"]
+             f"{sum(not r.get('audit_ok', True) for r in rows)}",
+             *campaign_lines(paths, store, cfg, day)]
     summary = {"sessions": len(rows), "cost_usd": round(cost, 4), "failures": dict(failures)}
     mandate_ids = set(cfg.mandates.values())
     if mandate_ids:
@@ -192,8 +197,9 @@ def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[li
                          f"{' **(contaminated by override)**' if store.holdout_overrides(m.split_id) else ''} |")
         lines += versions_lines(store, cfg.mandates)
         lines += hypothesis_lines(store, NEXT_SPLIT_EARLIEST)
-        lines.append(f"- Next split: earliest {NEXT_SPLIT_EARLIEST} (182 days validation + 182 days holdout after "
-                     "the current holdout; appendix A11)")
+        lines += ["", f"- Next split: earliest {NEXT_SPLIT_EARLIEST} (182 days validation + 182 days holdout "
+                      "after the current holdout; appendix A11)"]
+    lines += session_rows(rows)
     produced = [r for r in rows if r.get("candidate_id") or r.get("verdict")]
     if produced:
         lines += ["", "| run | product | topic | verdict | candidate | promotion | cost |",

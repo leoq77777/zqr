@@ -323,6 +323,9 @@ Portfolio diagnostics (drawdowns by regime, concentration, weak periods) feed ca
 
 ## 6. Campaigns
 
+Built in phase 4 release 4d: `docs/development.md` section 5.11; decisions and interpretations in
+`docs/superpowers/plans/2026-10-15-phase4-campaigns.md` (D1-D9, P1-P5). Budgets (6.5) follow investment policy 5.
+
 ### 6.1 Campaign record
 
 | Field | Example |
