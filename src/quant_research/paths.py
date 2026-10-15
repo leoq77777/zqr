@@ -56,6 +56,11 @@ class Paths:
         return self.root / "desk"
 
     @property
+    def library(self) -> Path:
+        """Research memory: return archives, family archives, clustering reports."""
+        return self.root / "library"
+
+    @property
     def db(self) -> Path:
         return self.root / "experiments.db"
 

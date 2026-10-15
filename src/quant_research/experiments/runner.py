@@ -23,6 +23,7 @@ from quant_research.evaluation.metrics import compute_metrics
 from quant_research.evaluation.statistics import deflate, sharpe_statistics
 from quant_research.experiments.gatekeeper import GateContext, GateDecision, check, gaps_in_range
 from quant_research.experiments.store import NON_TRIAL_KINDS, ExperimentStore, new_id
+from quant_research.memory.returns import archive_new
 from quant_research.paths import Paths
 from quant_research.portfolio.policy import PortfolioPolicy
 from quant_research.strategy.compute import TargetResult, check_positions, compute_targets, strategy_weights
@@ -273,7 +274,9 @@ def run_experiment(
     decision = check(paths, store, request, gate, sandbox, data.window if data is not None else None,
                      "holdout" if segment == "holdout" else segment.split(":")[0])
     if not decision.allowed:
-        return _record_gate(paths, store, request, decision, base)
+        result = _record_gate(paths, store, request, decision, base)
+        archive_new(paths, store, [result.experiment_id])
+        return result
     exp_id = store.start_experiment(**base)
     try:
         computed = compute_experiment(paths, request, sandbox, data)
@@ -281,8 +284,11 @@ def run_experiment(
         store.finish_experiment(exp_id, "aborted", failure_reason="interrupted by user")
         raise
     except Exception as exc:
-        return _fail(store, exp_id, exc)
-    return _persist(paths, store, exp_id, computed, request.split_id, kind)
+        result = _fail(store, exp_id, exc)
+    else:
+        result = _persist(paths, store, exp_id, computed, request.split_id, kind)
+    archive_new(paths, store, [exp_id])
+    return result
 
 
 def _worker(args: tuple[Paths, ExperimentRequest, SandboxConfig | None]) -> dict[str, Any]:
@@ -347,4 +353,5 @@ def run_many(
             except KeyboardInterrupt:
                 _abort_rest()
                 raise
+    archive_new(paths, store, [r.experiment_id for r in results.values()])
     return [results[i] for i in range(len(requests))]

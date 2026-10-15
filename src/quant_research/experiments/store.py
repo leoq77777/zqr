@@ -125,6 +125,16 @@ class ExperimentStore:
     def close(self) -> None:
         self._conn.close()
 
+    def ensure_schema(self, sql: str) -> None:
+        with self._lock:
+            self._conn.executescript(sql)
+
+    def execute(self, sql: str, args: tuple | list = ()) -> int:
+        return self._exec(sql, args).rowcount
+
+    def query(self, sql: str, args: tuple | list = ()) -> list[dict[str, Any]]:
+        return [dict(r) for r in self._exec(sql, args).fetchall()]
+
     # -- helpers ---------------------------------------------------------------------------------
     def _exec(self, sql: str, args: tuple | list = ()) -> sqlite3.Cursor:
         with self._lock:
