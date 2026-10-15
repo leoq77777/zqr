@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+
 import pandas as pd
 
 from quant_research import ENGINE_VERSION
@@ -133,3 +136,65 @@ def run_candidate_holdout(paths: Paths, store: ExperimentStore, candidate_id: st
         passed = False
     cand = transition(store, candidate_id, "final_evaluated" if passed else "failed_final", "evaluator", evidence)
     return {"candidate": cand, "result": result, "prior": prior, "passed": passed}
+
+
+PORTFOLIO_GATE_3 = {"min_sharpe_daily": 0.5, "min_total_return": 0.0}  # total return must exceed it
+VERSION_BATCH_SECONDS = 7 * 86_400
+
+
+def run_portfolio_holdout(paths: Paths, store: ExperimentStore, version_id: str, override_reason: str | None = None,
+                          now: Callable[[], float] = time.time) -> dict:
+    """frozen -> final_evaluated | failed_final on gate 3 (A6), under the split's viewing cap and the A9 batching
+    rule: at most one portfolio version per split every 7 days. A version already viewed gets its recorded result
+    back without a new viewing. `override_reason` lifts the cap and the batching rule; it is recorded and marks the
+    split's holdout as contaminated."""
+    from quant_research.portfolio.evaluate import record_run
+    from quant_research.portfolio.version import VersionStore
+
+    vs = VersionStore(store)
+    row = vs.get(version_id)
+    if row is None:
+        raise HoldoutError(f"unknown portfolio version {version_id}")
+    version = vs.version(version_id)
+    runs = store.holdout_runs(version.split_id)
+    earlier = next((r for r in runs if r["candidate_hash"] == version_id), None)
+    if earlier is None and row["state"] != "frozen":
+        raise HoldoutError(f"only a frozen version is evaluated on the holdout ({version_id} is {row['state']})")
+    if earlier is not None:
+        exp = store.get_experiment(earlier["experiment_id"])
+        prior = earlier["prior_runs_on_split"]
+    else:
+        cap = split_viewing_cap(store, version.split_id)
+        recent = [r for r in runs if r["candidate_hash"].startswith("pv-")
+                  and now() - r["run_at"] < VERSION_BATCH_SECONDS]
+        refusal = (f"holdout of {version.split_id} already viewed {len(runs)} time(s); the limit is {cap}"
+                   if len(runs) >= cap else
+                   f"portfolio version {recent[-1]['candidate_hash']} viewed this split's holdout less than 7 days "
+                   "ago (A9)" if recent else None)
+        if refusal and not override_reason:
+            raise HoldoutError(refusal)
+        data = load_holdout_data(paths, version.split_id)
+        exp = record_run(paths, store, version, "holdout", "holdout", data.bars, data.window)
+        prior = store.record_holdout_run(version.split_id, version_id, exp["id"])
+        if refusal:
+            store.record_holdout_override(version.split_id, exp["id"], override_reason)
+            note = f"{refusal}; overridden ({override_reason}); this split's holdout is contaminated"
+        elif prior == 0:
+            note = "first holdout viewing on this split"
+        else:
+            note = f"holdout already viewed {prior} time(s) on this split; result is no longer an untouched test"
+        store.set_notes(exp["id"], note)
+    m = exp["metrics"]
+    passed = (m["sharpe_daily"] >= PORTFOLIO_GATE_3["min_sharpe_daily"]
+              and m["total_return"] > PORTFOLIO_GATE_3["min_total_return"])
+    evidence = {"holdout_experiment": exp["id"], "prior_viewings": prior, "rule": PORTFOLIO_GATE_3,
+                "sharpe_daily": m["sharpe_daily"], "total_return": m["total_return"],
+                "max_drawdown": m["max_drawdown"], "max_drawdown_no_ladder": m["max_drawdown_no_ladder"],
+                "benchmarks": exp.get("benchmarks")}
+    if vs.get(version_id)["state"] == "frozen":
+        vs.transition(version_id, "final_evaluated" if passed else "failed_final", "evaluator", evidence)
+        repeat = False
+    else:
+        repeat = earlier is not None
+    return {"version_id": version_id, "state": vs.get(version_id)["state"], "passed": passed, "repeat": repeat,
+            **evidence}

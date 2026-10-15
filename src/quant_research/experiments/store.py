@@ -97,9 +97,9 @@ MIGRATIONS = {"experiments": {"statistics": "TEXT", "diagnosis": "TEXT", "policy
 # `blocked` = refused by the gatekeeper before any computation; not a trial and not budget usage.
 NOT_A_TRIAL = ("blocked",)
 # Kinds recorded in full but not counted as research selection trials: re-evaluations of an already selected
-# candidate (final test, cost/delay sensitivity, sub-periods) and the inner folds of a walk-forward procedure
-# (the procedure itself, kind `walkforward`, is one trial).
-NON_TRIAL_KINDS = ("holdout", "sensitivity", "walkforward_fold")
+# candidate (final test, cost/delay sensitivity, sub-periods), the inner folds of a walk-forward procedure
+# (the procedure itself, kind `walkforward`, is one trial) and portfolio validation runs (appendix A14).
+NON_TRIAL_KINDS = ("holdout", "sensitivity", "walkforward_fold", "portfolio_validation")
 _KIND_FILTER = f"kind NOT IN ({','.join(repr(k) for k in NON_TRIAL_KINDS)})"
 
 

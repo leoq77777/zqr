@@ -219,3 +219,202 @@ def test_ladder_liquidates_a_crash_in_the_backtest():
     first_halved = run.log.index[run.log["level"] == "halved"][0]
     assert run.log["order_target"][first_halved] == pytest.approx(0.5)
     assert pd.isna(run.log["order_target"].iloc[-1])
+
+
+# -- dev and validation runs, seed portfolio (T5, T6) ----------------------------------------------------------
+
+def _desk(paths, store, dataset):
+    from quant_research.desk.config import DeskConfig, save_config
+    from quant_research.library.catalog import load_catalog
+    from quant_research.library.store import LibraryStore
+    from tests.conftest import make_mandate
+
+    m = make_mandate(dataset)
+    store.put_mandate(m.mandate_id(), m.model_dump(mode="json"))
+    save_config(paths, DeskConfig(mandates={"BTC-USD": m.mandate_id()}))
+    lib = LibraryStore(paths.db)
+    lib.import_catalog(load_catalog())
+    lib.close()
+
+
+def _seeded(paths, store, dataset):
+    from quant_research.portfolio.seed import define_seed
+
+    _desk(paths, store, dataset)
+    return define_seed(paths, store, "BTC-USD")
+
+
+def test_seed_portfolio_takes_every_member_and_the_overlay(paths, store, dataset):
+    from quant_research.portfolio.seed import seed_version
+
+    _desk(paths, store, dataset)
+    v = seed_version(paths, store, "BTC-USD")
+    manifest, split = dataset
+    assert v.dataset_id == manifest["dataset_id"] and v.split_id == split.split_id
+    assert v.overlay is not None and v.overlay.strategy_ref == "template:vol_target"
+    assert {m.family for m in v.members} == {"tsmom", "ewma_trend", "channel_breakout", "trend_filter"}
+    assert len(v.members) == 11 and v.band == 0.10 and v.ladder == Ladder()
+    assert member_shares(v)["btc-tsmom-1w"] == pytest.approx(0.0625)
+    assert all(m.entry_id.startswith("btc-") for m in v.members)
+    assert v.engine_config.rebalance_tolerance == 0.0
+    assert seed_version(paths, store, "BTC-USD").version_id() == v.version_id()
+    with pytest.raises(VersionError, match="no desk mandate"):
+        seed_version(paths, store, "ETH-USD")
+
+
+def test_dev_run_is_an_archived_trial_and_validation_is_counted(paths, store, dataset):
+    from quant_research.memory.returns import ReturnArchive
+    from quant_research.portfolio.evaluate import run_segment
+
+    vid = _seeded(paths, store, dataset)
+    split_id = dataset[1].split_id
+    trials = store.trial_count(split_id)
+    dev = run_segment(paths, store, vid, "dev")
+    assert store.trial_count(split_id) == trials + 1
+    assert dev["kind"] == "portfolio" and dev["strategy_ref"] == f"portfolio:{vid}" and dev["segment"] == "dev"
+    assert dev["candidate_hash"] == vid and dev["status"] == "completed"
+    for key in ("sharpe_daily", "max_drawdown_no_ladder", "ladder_time", "family_contribution", "mean_target"):
+        assert key in dev["metrics"]
+    assert "buy_and_hold" in dev["benchmarks"]
+    archived = ReturnArchive(paths, store).index(dataset[1].split_id)
+    assert [r["experiment_id"] for r in archived] == [dev["id"]] and archived[0]["n_days"] > 0
+    val = run_segment(paths, store, vid, "validation")
+    assert val["kind"] == "portfolio_validation" and val["segment"] == "validation"
+    assert store.trial_count(split_id) == trials + 1
+    vs = VersionStore(store)
+    assert vs.validation_uses(dataset[1].split_id) == 1
+    assert (paths.results / val["id"] / "decisions.parquet").exists()
+    again = run_segment(paths, store, vid, "validation")
+    assert again["id"] == val["id"] and vs.validation_uses(dataset[1].split_id) == 1
+    assert run_segment(paths, store, vid, "dev")["id"] == dev["id"]
+
+
+def test_validate_applies_the_seed_standard(paths, store, dataset, monkeypatch):
+    from quant_research.portfolio import evaluate
+
+    vid = _seeded(paths, store, dataset)
+    monkeypatch.setitem(evaluate.SEED_STANDARD, "min_sharpe_daily", -100.0)
+    monkeypatch.setitem(evaluate.SEED_STANDARD, "min_max_drawdown", -1.0)
+    out = evaluate.validate(paths, store, vid)
+    assert out["state"] == "validated" and out["passed"]
+    assert out["validation"]["experiment_id"] != out["dev"]["experiment_id"]
+    assert "max_drawdown_no_ladder" in out["validation"] and "sharpe_daily" in out["dev"]
+    with pytest.raises(VersionError, match="only a draft"):
+        evaluate.validate(paths, store, vid)
+    assert VersionStore(store).get(vid)["evidence"]["validation"]["sharpe_daily"] == out["validation"]["sharpe_daily"]
+
+
+def test_validate_fails_below_the_standard(paths, store, dataset, monkeypatch):
+    from quant_research.portfolio import evaluate
+
+    vid = _seeded(paths, store, dataset)
+    monkeypatch.setitem(evaluate.SEED_STANDARD, "min_sharpe_daily", 100.0)
+    out = evaluate.validate(paths, store, vid)
+    assert out["state"] == "failed_validation" and not out["passed"]
+
+
+def _lenient(monkeypatch):
+    from quant_research.portfolio import evaluate
+
+    monkeypatch.setitem(evaluate.SEED_STANDARD, "min_sharpe_daily", -100.0)
+    monkeypatch.setitem(evaluate.SEED_STANDARD, "min_max_drawdown", -1.0)
+
+
+def test_portfolio_commands_end_to_end(paths, store, dataset, capsys, monkeypatch):
+    import json
+
+    from quant_research.cli import main
+
+    _desk(paths, store, dataset)
+    _lenient(monkeypatch)
+    home = str(paths.root)
+    main(["--home", home, "portfolio", "seed", "--product", "BTC-USD"])
+    seeded = json.loads(capsys.readouterr().out)
+    vid = seeded["version_id"]
+    assert seeded["state"] == "draft" and seeded["shares"]["btc-turtle-s1"] == pytest.approx(0.125)
+    with pytest.raises(SystemExit, match="draft"):
+        main(["--home", home, "portfolio", "freeze", vid, "--note", "too early"])
+    with pytest.raises(SystemExit):
+        main(["--home", home, "portfolio", "freeze", vid])
+    capsys.readouterr()
+    main(["--home", home, "portfolio", "validate", vid])
+    assert json.loads(capsys.readouterr().out)["state"] == "validated"
+    main(["--home", home, "portfolio", "list", "--product", "BTC-USD"])
+    assert [r["id"] for r in json.loads(capsys.readouterr().out)] == [vid]
+    main(["--home", home, "portfolio", "freeze", vid, "--note", "seed portfolio approved"])
+    capsys.readouterr()
+    main(["--home", home, "portfolio", "show", vid])
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["state"] == "frozen" and [e["to_state"] for e in shown["events"]] == ["draft", "validated", "frozen"]
+
+
+def _frozen(paths, store, dataset, monkeypatch, notes=""):
+    from quant_research.portfolio.evaluate import validate
+    from quant_research.portfolio.seed import seed_version
+
+    _lenient(monkeypatch)
+    vs = VersionStore(store)
+    vid = vs.put(seed_version(paths, store, "BTC-USD").model_copy(update={"notes": notes}))
+    validate(paths, store, vid)
+    vs.transition(vid, "frozen", "human", note="test")
+    return vid
+
+
+def test_portfolio_holdout_needs_a_frozen_version(paths, store, dataset):
+    from quant_research.validation.holdout import HoldoutError, run_portfolio_holdout
+
+    vid = _seeded(paths, store, dataset)
+    with pytest.raises(HoldoutError, match="only a frozen version"):
+        run_portfolio_holdout(paths, store, vid)
+    assert store.holdout_runs(dataset[1].split_id) == []
+
+
+def test_portfolio_holdout_records_a_viewing_and_applies_gate_3(paths, store, dataset, monkeypatch):
+    from quant_research.validation import holdout
+
+    _desk(paths, store, dataset)
+    vid = _frozen(paths, store, dataset, monkeypatch)
+    out = holdout.run_portfolio_holdout(paths, store, vid)
+    runs = store.holdout_runs(dataset[1].split_id)
+    assert [r["candidate_hash"] for r in runs] == [vid] and out["prior_viewings"] == 0
+    exp = store.get_experiment(out["holdout_experiment"])
+    assert exp["kind"] == "holdout" and exp["segment"] == "holdout" and exp["window_start"] == dataset[1].holdout[0]
+    m = exp["metrics"]
+    passed = m["sharpe_daily"] >= 0.5 and m["total_return"] > 0
+    assert out["passed"] == passed and out["state"] == ("final_evaluated" if passed else "failed_final")
+    assert VersionStore(store).get(vid)["evidence"]["holdout_experiment"] == exp["id"]
+    again = holdout.run_portfolio_holdout(paths, store, vid)
+    assert again["repeat"] and again["holdout_experiment"] == exp["id"]
+    assert len(store.holdout_runs(dataset[1].split_id)) == 1
+
+
+def test_one_version_per_split_per_seven_days(paths, store, dataset, monkeypatch):
+    import time
+
+    from quant_research.validation import holdout
+    from quant_research.validation.holdout import HoldoutError, run_portfolio_holdout
+
+    _desk(paths, store, dataset)
+    monkeypatch.setattr(holdout, "split_viewing_cap", lambda store, split_id: 10)
+    first = _frozen(paths, store, dataset, monkeypatch, notes="first")
+    second = _frozen(paths, store, dataset, monkeypatch, notes="second")
+    run_portfolio_holdout(paths, store, first)
+    with pytest.raises(HoldoutError, match="7 days"):
+        run_portfolio_holdout(paths, store, second)
+    later = run_portfolio_holdout(paths, store, second, now=lambda: time.time() + 8 * 86_400)
+    assert later["prior_viewings"] == 1 and store.holdout_overrides(dataset[1].split_id) == []
+
+
+def test_portfolio_holdout_respects_the_split_cap_and_override(paths, store, dataset, monkeypatch):
+    from quant_research.validation import holdout
+
+    _desk(paths, store, dataset)
+    monkeypatch.setattr(holdout, "split_viewing_cap", lambda store, split_id: 1)
+    store.record_holdout_run(dataset[1].split_id, "some-candidate", "exp-x")
+    vid = _frozen(paths, store, dataset, monkeypatch)
+    with pytest.raises(holdout.HoldoutError, match="the limit is 1"):
+        holdout.run_portfolio_holdout(paths, store, vid)
+    out = holdout.run_portfolio_holdout(paths, store, vid, override_reason="human decision")
+    assert out["prior_viewings"] == 1
+    assert [o["reason"] for o in store.holdout_overrides(dataset[1].split_id)] == ["human decision"]
+    assert "contaminated" in store.get_experiment(out["holdout_experiment"])["notes"]
