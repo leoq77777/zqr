@@ -1,6 +1,6 @@
 # Contracts v2, appendix A: statistics and admission rules for portfolio research
 
-Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12 and amendments A13.1 and A13.2. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
+Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12, amendments A13.1 and A13.2, and the phase 3 decisions in A14. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
 for portfolio research, as decided in `docs/superpowers/specs/2026-10-13-research-library-portfolio-design.md`
 (sections 4.4, 5.3, 5.4, 5.5, 5.6 and 6.5). Takes effect for a mandate only when the mandate version names it
 (`statistics: appendix-a-v1`); mandates already stored are immutable and keep their rules.
@@ -276,3 +276,23 @@ shared, independent of experiment ids (the same returns under permuted ids give 
 list the cluster with `is_shared`; the report's deduplicated total equals the mapped trials. After release:
 `zqr memory cluster` (the mapping is recomputed from the recorded clustering; K does not change) and
 `zqr memory archive --sandbox docker`.
+
+## A14. Portfolio layer decisions (approved 2026-10-15)
+
+Decided with the phase 3 plan (`docs/superpowers/plans/2026-10-15-phase3-portfolio.md`, D4-D7); the investment
+policy records D1-D3.
+
+1. **The drawdown ladder is part of every portfolio version** and runs in dev, validation and holdout backtests and
+   in paper through one function (`portfolio/decide.py`). It does not change the seed validation verdict: the
+   ladder acts only at −25% or worse, so a portfolio whose drawdown never reaches −25% runs identically with or
+   without it, and one that reaches −25% fails the A6 standard either way. Reports also show the drawdown without
+   the ladder.
+2. **Portfolio dev runs count as trials.** Each version's dev run is an experiment of kind `portfolio`, counted on
+   the split and added to the return archive without a family tag (consistent with A8: a construction change
+   counts as a trial). Validation runs (kind `portfolio_validation`) and holdout runs (kind `holdout`) are not
+   trials; each validation run is counted per split (`validation_uses`) and shown in the report (A6).
+3. **Version transitions after validation are human-only** in phase 3: freeze, holdout and approval to paper. The
+   standing authorization covers single candidates, not portfolio versions.
+4. **Gate statistics use A4.** Sharpe in the seed validation standard and in gate 3 is the A4 daily Sharpe of the
+   version's daily returns (A1 day grid); maximum drawdown is measured on bar-close equity; total return is final
+   over initial equity.
