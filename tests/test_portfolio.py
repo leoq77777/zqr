@@ -97,6 +97,39 @@ def test_blend_matches_hand_calculation_and_the_overlay_scales_it():
     assert np.allclose(flat.target, 0.0) and np.allclose(flat.pre_overlay, 0.75)
 
 
+def test_plugin_members_run_only_in_the_docker_sandbox(monkeypatch):
+    from quant_research.portfolio import blend as blend_mod
+    from quant_research.portfolio.blend import BlendError, has_plugin
+    from quant_research.strategy.compute import TargetResult
+    from quant_research.strategy.sandbox import SandboxConfig
+
+    bars = _bars(200)
+    v = _version([_member("a", "f"), _member("p", "g", "plugin:" + "a" * 64)], member_cap=1.0)
+    assert has_plugin(v) and not has_plugin(_version([_member("a", "f")]))
+    with pytest.raises(BlendError, match="docker sandbox"):
+        blend(v, bars)
+    with pytest.raises(BlendError, match="docker sandbox"):
+        blend(v, bars, sandbox=SandboxConfig())
+    seen = []
+
+    def fake(spec, bars_, paths, sandbox=None, positions=None):
+        seen.append((spec.kind, sandbox.isolation if sandbox else None))
+        return TargetResult(np.full(len(bars_), 0.5 if spec.kind == "plugin" else 1.0))
+    monkeypatch.setattr(blend_mod, "compute_targets", fake)
+    bl = blend(v, bars, sandbox=SandboxConfig(isolation="docker"))
+    assert np.allclose(bl.target, 0.75) and ("plugin", "docker") in seen
+
+
+def test_paper_refuses_plugin_versions(paths, store):
+    from quant_research.portfolio.paper import start_shadow
+
+    vs = VersionStore(store)
+    vid = vs.put(_version([_member("a", "f"), _member("p", "g", "plugin:" + "a" * 64)]))
+    vs.transition(vid, "failed_validation", "controller")
+    with pytest.raises(VersionError, match="paper runs template strategies only"):
+        start_shadow(paths, store, vid, "forward evidence")
+
+
 def test_blend_has_no_lookahead():
     bars = _bars(1500)
     v = _version([_member("a", "f", "template:sma_cross", fast=5, slow=20), _member("b", "g")],

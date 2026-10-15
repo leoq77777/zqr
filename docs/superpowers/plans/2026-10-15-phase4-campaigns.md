@@ -402,7 +402,8 @@ labelled with its parent).
 
 ## Release 4c: registered hypotheses and the two gates (human CLI, no agent)
 
-Draft for review, 2026-10-15. No code before approval.
+Approved 2026-10-15 with proposals P1-P6 as written. The gate details are appendix A13.7; P6 is in the investment
+policy, section 3.
 
 **Goal.** A human registers a hypothesis on a product's current mandate split; one controller command runs gate 1
 and, if a variant passes, gate 2; a passing version becomes `admitted` and waits for the next split. No agent and
@@ -436,103 +437,112 @@ no campaign: research stays disabled. Release 4d's agent calls the same function
 Files: new `src/quant_research/hypothesis/__init__.py`, `model.py`, `store.py`, `commands.py`; `cli.py`;
 `tests/test_hypothesis.py`.
 
-- [ ] `model.Hypothesis` (pydantic, frozen, `extra="forbid"`): `product`, `family`, `prior` (1-2,000
-      characters), `citations` (at least one; each `{kind: "published", ref}` or `{kind: "experiment", id}`),
+- [x] `model.Hypothesis` (pydantic, frozen, `extra="forbid"`): `product`, `family`, `prior` (1-2,000
+      characters), `citations` (at least one; each `{kind: "published"|"experiment", ref}`),
       `variants` (1-3 of `{strategy_ref, parameters}`), `campaign_id` (optional). Id `hy-` + hash of the body plus
       the split and reference (below).
-- [ ] `store.HypothesisStore` on the experiments database (like `VersionStore`): tables `hypotheses` (id, product,
-      split_id, reference_id, family, body, campaign_id, registered_by, note, at) and `hypothesis_events`
-      (append only: gate results, admission). No update or delete path.
-- [ ] Registration fixes the split (the product's desk mandate split) and the reference (`gate1_reference`) and
-      records them, so a later mandate change does not move a registered hypothesis.
-- [ ] Refusals, each with its own message: no mandate or no reference for the product; 0 or more than 3 variants;
+- [x] `store.HypothesisStore` on the experiments database (like `VersionStore`): tables `hypotheses` (id, product,
+      split_id, mandate_id, reference_id, family, campaign_id, body, registered_by, note, at) and
+      `hypothesis_events` (append only: registration, gate results). No update or delete path.
+- [x] Registration fixes the split (the product's desk mandate split), the mandate and the reference
+      (`gate1_reference`) and records them, so a later mandate change does not move a registered hypothesis.
+- [x] Refusals, each with its own message: no mandate or no reference for the product; 0 or more than 3 variants;
       two variants with the same normalised spec; unknown family or a family without a sleeve; unknown template or
       invalid parameters; a plugin hash not registered; an experiment citation that does not exist or is not a dev
-      experiment on the hypothesis split; a second registration with the same `campaign_id`; an identical body
-      already registered.
-- [ ] State derived from events: `registered` → `gate1_failed` | `gate2_failed` | `admitted`.
-- [ ] CLI (human): `zqr hypothesis register --file h.yaml --note ...` (plugin variants as `plugin_file: path`,
+      experiment on the hypothesis split (or a split it extends, A13.4); a second registration with the same
+      `campaign_id`; an identical body already registered.
+- [x] State derived from events: `registered` → `gate1_failed` | `gate2_failed` | `admitted`.
+- [x] CLI (human): `zqr hypothesis register --file h.yaml --note ...` (plugin variants as `plugin_file: path`,
       frozen with `strategy/plugin.register_plugin` to `plugin:<sha256>`); `zqr hypothesis list [--product]
       [--state]`; `zqr hypothesis show <hid>` (body, events, gate evidence).
-- [ ] Tests: every refusal; the stored body is the registered body; a plugin file edited after registration does
+- [x] Tests: every refusal; the stored body is the registered body; a plugin file edited after registration does
       not change the variant.
 
 ### C2. Plugin members in portfolio backtests
 
-Files: `portfolio/blend.py`, `portfolio/evaluate.py`, `tests/test_portfolio.py`.
+Files: `portfolio/blend.py`, `portfolio/backtest.py`, `portfolio/evaluate.py`, `portfolio/paper.py`,
+`tests/test_portfolio.py`.
 
-- [ ] `blend(version, bars, paths, sandbox=None)`: `_targets` passes `plugin:` refs to `compute_targets` with the
-      sandbox; without a sandbox a plugin member is refused as today ("plugin members need the sandbox").
-- [ ] `run_segment` / `record_run` / `validate` take the sandbox setting from the caller; `zqr portfolio dev` and
-      the gate commands take `--sandbox docker` (the setting the memory commands use).
-- [ ] Paper (roster load in `paper/fleet.py`) refuses a version with a plugin member, with the reason.
-- [ ] Tests: a fake sandbox runner; a template-only version runs unchanged (same equity hash as before).
+- [x] `blend(version, bars, paths, sandbox=None)`: `_targets` passes `plugin:` refs to `compute_targets` with the
+      sandbox; a plugin member without the docker sandbox is refused.
+- [x] `run_segment` / `record_run` / `run_dev` / `validate` take the sandbox setting from the caller;
+      `zqr portfolio dev|validate` take `--sandbox docker` (default none), `zqr hypothesis test` defaults to docker.
+- [x] Paper refuses a version with a plugin member or overlay, with the reason: `approve` and `shadow` check
+      before the roster entry is written (the trader's blend has no sandbox and would refuse it anyway).
+- [x] Tests: a fake sandbox runner; template-only versions run unchanged (the existing portfolio tests).
 
 ### C3. Candidate library entries and families
 
-Files: `library/store.py`, `library/commands.py`, `tests/test_library.py`.
+Files: `library/store.py`, `library/commands.py`, `portfolio/seed.py`, `tests/test_hypothesis.py`.
 
-- [ ] `LibraryStore.add_candidate(product, family, strategy_ref, parameters, source, actor)`: entry id
-      `<family>-h<hash8>-<product base>`, status `candidate`, `meta.source = "hypothesis:<hid>"`; idempotent on
-      identical identity. Templates keep `template_version`; plugins record the hash.
-- [ ] `LibraryStore.add_family(id, name, thesis, sleeve, actor="human", note)` and `zqr library family add`
-      (human). A new family is how a hypothesis outside the four trend sleeves becomes registrable.
-- [ ] Tests: idempotence; a candidate never appears in `seed` imports; the catalog hash is unchanged.
+- [x] `LibraryStore.add_candidate(product, family, strategy_ref, parameters, source, actor)`: entry id
+      `<product base>-<family>-h<hash8>` (like the seed ids), status `candidate`, source `hypothesis:<hid>`;
+      idempotent on identical identity. Templates keep `template_version`; plugins carry the hash in the ref.
+- [x] `LibraryStore.add_family(family, note)` and `zqr library family add` (human). A new family is how a
+      hypothesis outside the four trend sleeves becomes registrable.
+- [x] The seed portfolio takes seed-catalog entries only (source `seed`), so a gate 2 candidate never changes
+      `zqr portfolio seed`.
+- [x] Tests: idempotence; the seed portfolio is unchanged by a candidate; family add is unique and needs a note.
 
 ### C4. Gate 1: marginal value on dev
 
-Files: new `src/quant_research/hypothesis/gates.py`; `tests/test_gates.py`.
+Files: new `src/quant_research/hypothesis/gates.py`; `tests/test_hypothesis.py`.
 
-- [ ] `variant_run(paths, store, hypothesis, variant, sandbox)`: one dev experiment of the variant alone, with the
-      reference version's engine config (costs, cash, long only), on the hypothesis split; kind `registered` (not
-      in `NON_TRIAL_KINDS`), so it counts as a trial on the split. Reruns of a recorded variant reuse the experiment.
-- [ ] `gate1(paths, store, hid, sandbox)`: for each variant, daily returns on the A1 grid of the variant run
+- [x] `variant_run(paths, store, hid, index, sandbox)`: one dev experiment of the variant alone, with the
+      reference version's engine config (costs, cash, long only) and the mandate's policy, on the hypothesis
+      split; kind `registered` (not in `NON_TRIAL_KINDS`), so it counts as a trial on the split; plugins need
+      docker (`allow_weak_isolation=False`). Reruns of a recorded variant reuse the experiment.
+- [x] `gate1(paths, store, hid, sandbox)`: for each variant, daily returns on the A1 grid of the variant run
       (`R_c`) and of the reference's dev run without the ladder (`R_p`), aligned on common days;
       `appraisal_test(R_c, R_p, k=len(variants))`. Event `gate1` with per-variant `beta`, `alpha_daily`,
-      `appraisal_ratio`, `statistic`, `passed`, experiment ids. The best passing variant (highest statistic) goes
+      `appraisal_ratio`, `statistic`, `passed`, experiment ids. The best passing variant (highest AR, A6) goes
       on; none passing ends the hypothesis (`gate1_failed`, A6: recorded, not adjusted and retried).
-- [ ] Diagnostic (proposal P4): the hedged series' Sharpe per period, the review's cuts (BTC 2015-2020 /
+- [x] Diagnostic (proposal P4): the hedged series' Sharpe per period, the review's cuts (BTC 2015-2020 /
       2021-2024, ETH 2016-2020 / 2021-2024), stored with the event; it does not decide.
-- [ ] `marginal(paths, store, experiment_id)`: the same regression for any completed dev experiment on the split
+- [x] `marginal(paths, store, experiment_id)`: the same regression for any completed dev experiment on the split
       against the reference, without a verdict and without registration (4d's gateway tool; humans via
-      `zqr hypothesis marginal <experiment>`). It reads only dev data.
-- [ ] Tests: synthetic `R_c = 0.5 R_p + noise` fails, `R_c` with independent positive drift passes at the bar for
+      `zqr hypothesis marginal <experiment>`). It reads only dev data. In 4c it records nothing; counting the
+      agent's calls as trials is part of D5.
+- [x] Tests: synthetic `R_c = 0.5 R_p + noise` fails, `R_c` with independent positive drift passes at the bar for
       its K; K follows the variant count; the reference's no-ladder file is the one read.
 
 ### C5. Gate 2: do no harm on validation
 
-Files: `hypothesis/gates.py`, `portfolio/version.py`, `tests/test_gates.py`.
+Files: `hypothesis/gates.py`, `portfolio/version.py`, `portfolio/evaluate.py` (`turnover_no_ladder`),
+`tests/test_hypothesis.py`.
 
-- [ ] `gate2(paths, store, hid, sandbox)`: the passing variant becomes a candidate library entry (C3) and a new
+- [x] `gate2(paths, store, hid, sandbox)`: the passing variant becomes a candidate library entry (C3) and a new
       version = the reference's members plus this member at full weight (status `member`), parent = reference,
       blended by the normal rules (a new family becomes a new sleeve). Both versions run on validation; measures
       without the ladder (A13.6).
-- [ ] Rule (outline Task 5): candidate Sharpe ≥ reference Sharpe, candidate max drawdown at most 2 points worse,
-      candidate turnover at most 25% higher. Each validation run is recorded in `validation_uses` (the
-      reference's once per split, the candidate's every time).
-- [ ] Event `gate2` on the hypothesis with both sets of measures and the verdict; the agent-facing result (4d)
-      carries the verdict only.
-- [ ] Tests: each of the three conditions failing alone; validation uses counted; repeated `gate2` on the same
+- [x] Rule (outline Task 5): candidate Sharpe ≥ reference Sharpe, candidate max drawdown at most 2 points worse,
+      candidate turnover at most 25% higher (turnover of the run without the ladder, a new metric; a validation
+      run recorded before 4c lacks it and gate 2 refuses to compare it). Each validation run is recorded in
+      `validation_uses` (the reference's once per split, the candidate's every time).
+- [x] Event `gate2` on the hypothesis with both sets of measures and the verdict; `gates.verdict` is the
+      agent-facing result (state and failed gate only).
+- [x] Tests: each of the three conditions failing alone; validation uses counted; repeated `gate2` on the same
       hypothesis refused.
 
 ### C6. Admitted versions
 
 Files: `portfolio/version.py`, `portfolio/commands.py`, `hypothesis/commands.py`, `desk/report.py`, tests.
 
-- [ ] State `admitted` (not terminal): `("draft", "admitted")` and `("draft", "failed_validation")` by the
+- [x] State `admitted` (not terminal): `("draft", "admitted")` and `("draft", "failed_validation")` by the
       controller with the gate evidence. `admitted` leads nowhere in phase 4; at the next split the version is
       re-run there (design D5), outside this phase.
-- [ ] `zqr hypothesis test <hid> [--sandbox docker]` (controller; anyone may trigger it): gate 1 then, if a
+- [x] `zqr hypothesis test <hid> [--sandbox docker|none]` (controller; anyone may trigger it): gate 1 then, if a
       variant passes, gate 2; prints the hypothesis state and, for the human, the measures.
-- [ ] `zqr portfolio list --state admitted`; the daily report lists admitted versions with the hypothesis, the
-      family, gate 1's appraisal ratio and the next split date.
-- [ ] Tests: the state machine; `admitted` cannot be frozen, approved or shadowed.
+- [x] `zqr portfolio list --state admitted` (existing filter); the daily report's research section lists every
+      hypothesis with family, state, gate 1's best appraisal ratio and the version, and the next split date when
+      a version is admitted.
+- [x] Tests: the state machine; `admitted` cannot be frozen, approved or shadowed.
 
 ### C7. Docs, suite, rehearsal, release 4c
 
-- [ ] `docs/development.md`: hypotheses, gates, admitted, new commands; the plan's checkboxes.
-- [ ] Appendix A amendment A13.7 (needs approval): gate 2's numbers as above and the reference's validation run
-      as a counted use; the per-period diagnostic of P4.
+- [x] `docs/development.md`: hypotheses, gates, admitted, new commands (section 5.10); the plan's checkboxes.
+- [x] Appendix A amendment A13.7 (approved with the plan): gate 2's numbers as above and the reference's
+      validation run as a counted use; the per-period diagnostic of P4.
 - [ ] Full suite, ruff; rehearsal on a copy of production: register one hypothesis per product written by the
       human (or drafted by the agent and approved by the human), run `zqr hypothesis test`, check trials, K,
       validation uses and the report.
@@ -640,7 +650,7 @@ Files: `gateway/service.py` (`ToolGateway`), `gateway/mcp_server.py`, tests.
 - [ ] Ask before merging and releasing. After release: `zqr campaign generate` for both products; the human
       reviews and approves the queue, then sets `research_enabled = true`.
 
-## Proposals for decision (2026-10-15)
+## Proposals (approved 2026-10-15)
 
 **P1. Family quotas per product split.** 100 trials per family per product split (four trend sleeves: 400 per
 product); exploration (new or non-sleeve families) at most 25% of a split's campaign trials. A family at quota gets

@@ -25,7 +25,7 @@ def seed_version(paths: Paths, store: ExperimentStore, product: str) -> Portfoli
     lib = LibraryStore(paths.db)
     try:
         sleeves = {f["id"] for f in lib.families() if f["sleeve"]}
-        entries = [e for e in lib.entries(product=product) if e["status"] != "retired"]
+        entries = [e for e in lib.entries(product=product) if e["status"] != "retired" and e["source"] == "seed"]
     finally:
         lib.close()
     members = tuple(Member(entry_id=e["id"], family=e["family"], strategy_ref=e["strategy_ref"],

@@ -1,6 +1,6 @@
 # Contracts v2, appendix A: statistics and admission rules for portfolio research
 
-Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12, amendments A13.1 to A13.6, and the phase 3 decisions in A14. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
+Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12, amendments A13.1 to A13.7, and the phase 3 decisions in A14. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
 for portfolio research, as decided in `docs/superpowers/specs/2026-10-13-research-library-portfolio-design.md`
 (sections 4.4, 5.3, 5.4, 5.5, 5.6 and 6.5). Takes effect for a mandate only when the mandate version names it
 (`statistics: appendix-a-v1`); mandates already stored are immutable and keep their rules.
@@ -404,6 +404,38 @@ that the ladder does not change the seed verdict holds for a validation segment,
 **Implementation.** `portfolio/evaluate.py`: the dev run writes the run without the ladder next to the run with it
 (`equity_no_ladder.parquet`); the archive and `period_stats` read it; gate 1 and gate 2 read it when they are built
 (phase 4 Tasks 3-16). Tests: a dev run that liquidates archives the series without the ladder; periods show both.
+
+### A13.7 How the gates are run (approved 2026-10-15 with the phase 4 plan, releases 4c and 4d)
+
+**Problem.** A6 states the gates; it leaves open which portfolio is the reference, how the candidate portfolio is
+built, how validation uses are counted for the reference, and what else gate 1 reports.
+
+**Rule (details A6; uses A13.6).**
+
+- **Reference.** A hypothesis is registered on its product's desk mandate split; gate 1's reference (D4, recorded
+  by `zqr portfolio dev <vid> --reference`) is fixed at registration and recorded with it. Both gates use it,
+  even if the mandate changes later.
+- **Scope.** Variants are sleeve members (template or plugin) of one family on one product. A different overlay
+  changes the reference itself and is not registered as a hypothesis.
+- **Gate 1.** `R_c` is the variant alone on the full dev of the split, with the reference's engine configuration
+  (costs, cash, long only); `R_p` is the reference's dev run without the ladder; both on the A1 day grid, common
+  days only. Each variant run is a trial (kind `registered`). Ties are broken by A6 (highest AR).
+- **Gate 1 diagnostic.** The hedged series' Sharpe is also recorded per period (the cuts of the long-dev review:
+  before 2021 and 2021 onwards). It is shown to the human and, being dev data, may be shown to agents. It never
+  changes the verdict.
+- **Gate 2.** The candidate version is the reference's members and overlay plus the variant as a member at full
+  weight (status `member`, a new library entry with status `candidate`), blended by the normal rules (a new family
+  is a new sleeve); parent = reference. Both versions run on validation without the ladder. Pass only if the
+  candidate's A4 Sharpe ≥ the reference's, its maximum drawdown ≥ the reference's − 0.02, and its turnover ≤ 1.25
+  × the reference's.
+- **Validation uses.** The reference's validation run is recorded once per split and counted once; every
+  candidate's validation run is counted.
+- **Outcome.** A passing candidate version goes from `draft` to `admitted` (controller); a failing one to
+  `failed_validation`. `admitted` versions wait for the next split (design D5); they cannot be frozen, approved
+  or shadowed on the split where they were admitted.
+
+**Caveat.** The human has seen the seed portfolios' validation results (the seed review), so on the current
+splits gate 2 is a harm check, not independent evidence; the next split's holdout is the independent test.
 
 ## A14. Portfolio layer decisions (approved 2026-10-15)
 

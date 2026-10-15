@@ -34,6 +34,7 @@ TERMINAL = {"failed_validation", "failed_final", "retired"}
 TRANSITIONS: dict[tuple[str, str], set[str]] = {
     ("draft", "validated"): {"controller"},
     ("draft", "failed_validation"): {"controller"},
+    ("draft", "admitted"): {"controller"},  # passed gates 1 and 2; waits for the next split (A13.7)
     ("validated", "frozen"): {"human"},
     ("frozen", "final_evaluated"): {"evaluator"},
     ("frozen", "failed_final"): {"evaluator"},

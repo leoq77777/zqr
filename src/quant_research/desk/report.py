@@ -148,6 +148,12 @@ def paper_section(paths: Paths, day: str) -> tuple[list[str], dict[str, Any]]:
     return lines, summary
 
 
+def hypothesis_lines(store: ExperimentStore, next_split: str) -> list[str]:
+    from quant_research.hypothesis.gates import report_lines
+
+    return report_lines(store, next_split)
+
+
 def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[list[str], dict[str, Any]]:
     cfg = load_config(paths)
     rows = [r for r in rl.read_ledger(paths) if r.get("day") == day]
@@ -185,6 +191,7 @@ def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[li
                          f"{' **(closed)**' if closed_refusal(store, m.split_id) else ''}"
                          f"{' **(contaminated by override)**' if store.holdout_overrides(m.split_id) else ''} |")
         lines += versions_lines(store, cfg.mandates)
+        lines += hypothesis_lines(store, NEXT_SPLIT_EARLIEST)
         lines.append(f"- Next split: earliest {NEXT_SPLIT_EARLIEST} (182 days validation + 182 days holdout after "
                      "the current holdout; appendix A11)")
     produced = [r for r in rows if r.get("candidate_id") or r.get("verdict")]

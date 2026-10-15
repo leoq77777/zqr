@@ -14,6 +14,7 @@ from quant_research.paper.fleet import RosterEntry, add_entry, load_roster
 from quant_research.paper.ledger import Ledger
 from quant_research.paper.portfolio_trader import RESUME_FILE, STATE_KEY
 from quant_research.paths import Paths
+from quant_research.portfolio.blend import has_plugin
 from quant_research.portfolio.version import VersionError, VersionStore
 
 SHADOW_STATES = {"validated", "failed_validation", "failed_final"}
@@ -36,6 +37,14 @@ def _entry(version, vid: str, name: str, shadow: bool) -> RosterEntry:
                        source="portfolio", portfolio_version=vid, shadow=shadow)
 
 
+def _paper_ready(vs: VersionStore, vid: str):
+    version = vs.version(vid)
+    if has_plugin(version):
+        raise VersionError(f"{vid} has a plugin member or overlay; paper runs template strategies only (plugins run "
+                           "in the docker sandbox in backtests)")
+    return version
+
+
 def start_shadow(paths: Paths, store: ExperimentStore, vid: str, note: str) -> dict[str, Any]:
     """Run a version that is not approved for paper as the shadow trader `shadow-<product>` (phase 4, D2): forward
     evidence only. The version's state and the library statuses do not change; the start is a version event."""
@@ -47,7 +56,7 @@ def start_shadow(paths: Paths, store: ExperimentStore, vid: str, note: str) -> d
         raise VersionError(f"unknown portfolio version {vid}")
     if row["state"] not in SHADOW_STATES:
         raise VersionError(f"a shadow runs a version in {sorted(SHADOW_STATES)} ({vid} is {row['state']})")
-    version = vs.version(vid)
+    version = _paper_ready(vs, vid)
     name = shadow_name(version.product)
     path = roster_path(paths)
     if path.exists() and any(e.name == name for e in load_roster(path).entries):
@@ -66,7 +75,7 @@ def approve(paths: Paths, store: ExperimentStore, vid: str, note: str) -> dict[s
         raise VersionError(f"unknown portfolio version {vid}")
     if row["state"] != "final_evaluated":
         raise VersionError(f"only a version that passed the holdout is approved for paper ({vid} is {row['state']})")
-    version = vs.version(vid)
+    version = _paper_ready(vs, vid)
     name = entry_name(version.product)
     path = roster_path(paths)
     if path.exists() and any(e.name == name for e in load_roster(path).entries):

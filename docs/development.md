@@ -33,7 +33,7 @@ A personal systematic research desk for Coinbase BTC-USD and ETH-USD spot, long/
 | M5 Reliability and security | done | Network-enforced isolation, strict final-artifact grading, fault matrix, audit, cost ledger |
 | Desk (closed loop) | done, deployed | Paper fleet, research loop, auto_paper authorization, supervisor, daily report |
 | Release (images) | done | Runtime and agent images, `zqr release`, host wrapper `zqr`, desk as a container |
-| M6 Portfolio research | phase 3a released | Portfolio versions per product: blend of library members, deadband, drawdown ladder, dev/validation runs, holdout gate, paper portfolio trader, parity, reports, soft stop (section 5.9). Seed portfolios failed (BTC holdout, ETH validation; `docs/reviews/2026-10-15-seed-portfolio-review.md`). Phase 4 (`docs/superpowers/plans/2026-10-15-phase4-campaigns.md`): holdout closure and shadow portfolios released (4a); longer dev (E1: extended datasets, split lineage, inherited K, A13.4-A13.6) released (4b); registration, gates 1-2 and campaigns not started |
+| M6 Portfolio research | phase 3a released | Portfolio versions per product: blend of library members, deadband, drawdown ladder, dev/validation runs, holdout gate, paper portfolio trader, parity, reports, soft stop (section 5.9). Seed portfolios failed (BTC holdout, ETH validation; `docs/reviews/2026-10-15-seed-portfolio-review.md`). Phase 4 (`docs/superpowers/plans/2026-10-15-phase4-campaigns.md`): holdout closure and shadow portfolios released (4a); longer dev (E1: extended datasets, split lineage, inherited K, A13.4-A13.6) released (4b); registered hypotheses, gates 1-2 and `admitted` versions built (4c, A13.7); campaigns not started |
 | M7 Paper (full) | partial | Parity on targets, orders and fills, stale-data halt, restart recovery from the bar store are in; reconciliation and drills beyond tests are not |
 
 ## 3. Architecture
@@ -111,6 +111,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `data/` | Coinbase REST client (`coinbase.py`), bar normalisation, validation, snapshots, synthetic data |
 | `strategy/` | `StrategySpec`, templates (`buy_and_hold`, `cash`, `sma_cross`, `momentum`, `breakout`, and the seed templates `tsmom`, `ma_filter`, `ewma_trend`, `vol_target`), decision cadence (`cadence.py`), agent plugins, sandbox (subprocess or Docker) |
 | `library/` | Strategy library: seed catalog (`seeds.yaml`, reviewed in `docs/library/seeds.md`), catalog validation, library tables in `experiments.db`, `zqr library` commands |
+| `hypothesis/` | Registered hypotheses (`model.py`, `store.py`: tables `hypotheses`, `hypothesis_events`), gates 1 and 2 (`gates.py`), `zqr hypothesis` commands (section 5.10) |
 | `portfolio/policy.py` | Portfolio policy v1: vol target, asset/gross caps, rebalance cadence, no-trade band |
 | `portfolio/` (other modules) | Portfolio layer (section 5.9): versions and lifecycle (`version.py`), blend (`blend.py`), decision step (`decide.py`), backtest (`backtest.py`), dev/validation runs (`evaluate.py`), seed portfolio (`seed.py`), approve/resume (`paper.py`), `zqr portfolio` commands |
 | `backtest/engine.py` | Accounting engine (fills, fees, slippage, delay) |
@@ -132,7 +133,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (303 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (329 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -368,8 +369,11 @@ Rules: `docs/investment-policy.md` (D1-D3) and appendix A14 (D4-D7). Plan:
   optional overlay, `member_cap` 0.15, `band` 0.10, the drawdown ladder, the engine config (no delay, no adverse
   fill, no rebalance tolerance) and the dataset and split. Its id is `pv-` + the hash of the body; bodies never
   change. Lifecycle in `portfolio_versions` / `portfolio_events`: draft → validated | failed_validation
-  (controller) → frozen (human) → final_evaluated | failed_final (evaluator) → paper (human); any non-terminal
-  state → retired (human).
+  (controller) → frozen (human) → final_evaluated | failed_final (evaluator) → paper (human); draft → admitted
+  (controller, gates 1 and 2 passed; section 5.10); any non-terminal state → retired (human).
+- **Plugin members** run in backtests only, through the docker sandbox (`--sandbox docker` on `zqr portfolio
+  dev|validate` and `zqr hypothesis test`); without it the blend refuses them. Paper (`approve`, `shadow`) refuses a
+  version with a plugin member or overlay.
 - **Blend.** Equal sleeves over families, equal weight within a family, each member capped at `member_cap` and
   halved on probation; the overlay multiplies the sum; the target is clipped to [0, 1].
 - **Decision step** (`decide.py`). The deadband trades only when the target moves at least `band` from the last
@@ -390,8 +394,9 @@ Rules: `docs/investment-policy.md` (D1-D3) and appendix A14 (D4-D7). Plan:
   alone (no validation use, state unchanged); `--reference` records the version as gate 1's reference for its
   product and split (D4, one per product and split). `zqr portfolio periods <vid> --cut D` splits the dev run's
   statistics by period, with buy and hold and ladder time, and again without the ladder.
-- **Seed portfolio** (`seed.py`). Every non-retired library member of the product's sleeve families plus the
-  `vol_overlay` entry, with the desk mandate's engine config (rebalance tolerance 0), dataset and split.
+- **Seed portfolio** (`seed.py`). Every non-retired seed-catalog member of the product's sleeve families plus the
+  `vol_overlay` entry, with the desk mandate's engine config (rebalance tolerance 0), dataset and split. Library
+  entries added by gate 2 (source `hypothesis:<id>`) are never part of it.
 - **Holdout.** `run_portfolio_holdout` (`validation/holdout.py`) needs a frozen version, shares the split's viewing
   cap with candidates, allows at most one portfolio version per split every 7 days (A9), and applies gate 3 (daily
   Sharpe ≥ 0.5 and a positive return). A repeat returns the recorded result without a new viewing;
@@ -423,6 +428,34 @@ Rules: `docs/investment-policy.md` (D1-D3) and appendix A14 (D4-D7). Plan:
   returns: trailing-365-day Sharpe minus buy and hold's < −0.5 writes `desk/soft_stop.json` and the research loop
   pauses (paper continues). `zqr desk soft-stop clear --note` (human) keeps the record as
   `soft_stop.cleared-<ts>.json`.
+
+### 5.10 Registered hypotheses and gates (`hypothesis/`, phase 4 release 4c)
+
+Rules: appendix A6 and A13.7. Plan: `docs/superpowers/plans/2026-10-15-phase4-campaigns.md`.
+
+- **Registration** (`zqr hypothesis register --file h.yaml --note`, the human's in 4c). A YAML body: `product`,
+  `family` (a sleeve family; new families come from `zqr library family add`, the human's), `prior` (≤ 2,000
+  characters), `citations` (`{kind: published|experiment, ref}`; experiment ids must be dev experiments on the
+  split or the splits it extends), 1-3 `variants` (`strategy_ref` + `parameters`, or `plugin_file`, frozen to
+  `plugin:<sha256>` at registration). The store fixes the desk mandate, its split and gate 1's reference at
+  registration; the body never changes. Refused: unknown or non-sleeve family, invalid or repeated variants,
+  unregistered plugins, bad citations, a second registration for a campaign, an identical body.
+- **Gate 1** (`gates.gate1`). Each variant runs alone on the split's full dev with the reference's engine config
+  and the mandate's policy: an experiment of kind `registered` (a trial). Its daily returns are regressed on the
+  reference's dev run without the ladder (`appraisal_test`, K = number of variants); the best passing variant
+  (highest AR) goes on. The hedged Sharpe before 2021 and from 2021 is recorded as a diagnostic. Recorded once
+  (event `gate1`); a second call returns the record. `zqr hypothesis marginal <exp>` runs the same regression for
+  any dev experiment, without a verdict.
+- **Gate 2** (`gates.gate2`). The reference plus the variant as a full member (a new library entry, status
+  `candidate`, source `hypothesis:<id>`) becomes a draft version; both run on validation; measures without the
+  ladder: Sharpe not lower, drawdown at most 2 points worse, turnover (`turnover_no_ladder`) at most 25% higher.
+  The reference's validation run is counted once per split, each candidate's every time. The version goes to
+  `admitted` or `failed_validation`; event `gate2` on the hypothesis. Runs once per hypothesis.
+- **`zqr hypothesis test <id> [--sandbox docker|none]`** (controller) runs gate 1, then gate 2 if a variant
+  passed. `gates.verdict` is what agents will see (state and failed gate only). States: registered, gate1_failed,
+  gate2_failed, admitted. Admitted versions wait for the next split (design D5): no freeze, holdout, approval or
+  shadow on their split. The daily report's research section lists every hypothesis with gate 1's best AR and the
+  admitted version.
 
 ## 6. Security model and invariants
 
@@ -546,7 +579,10 @@ a one-off container with the same mounts while the desk is stopped).
 | `zqr extend-dataset --dataset D --start T [--fill-policy ffill_flat]` | Freeze earlier candles (fetched first with `zqr fetch-data`) followed by D's bars, copied verbatim; isolated bad prints are dropped and listed (A13.5, as in every research freeze) |
 | `zqr create-split --dataset D --like S` / `zqr split-lineage --split C --parent S --note` | A split with S's validation and holdout windows / human: name its parent (A13.4: K and trials inherited, closure inherited) |
 | `zqr desk use-mandate --product P --mandate M --note` | Human: point a desk product at another stored mandate (research disabled; history in `desk/mandate_history.jsonl`) |
-| `zqr portfolio dev <vid> [--reference]` / `periods <vid> --cut D` / `zqr library periods --product P --cut D` | Dev run alone, optionally gate 1's reference / per-period statistics of recorded dev runs |
+| `zqr portfolio dev <vid> [--reference] [--sandbox docker]` / `periods <vid> --cut D` / `zqr library periods --product P --cut D` | Dev run alone, optionally gate 1's reference / per-period statistics of recorded dev runs |
+| `zqr hypothesis register --file F --note` / `list [--product] [--state]` / `show <id>` | Human: register a hypothesis (immutable; A6, A13.7) / list / body, events, gate evidence |
+| `zqr hypothesis test <id> [--sandbox docker\|none]` / `marginal <exp>` | Controller: gate 1 then gate 2 / gate 1's regression for any dev experiment, without a verdict |
+| `zqr library family add --id --name --thesis [--no-sleeve] --note` | Human: a family outside the seed catalog, so hypotheses can name it |
 | `zqr desk monthly --month YYYY-MM` / `zqr desk soft-stop status\|evaluate\|clear [--day D] [--note N]` | Monthly review; soft-stop rule (investment policy 2) |
 | `zqr release [--target HOST\|local] [--allow-dirty] [--no-up]` | Development machine: build, ship and start a version |
 

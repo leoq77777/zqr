@@ -43,16 +43,22 @@ def cmd_seed(args) -> None:
     _run(args, go)
 
 
+def _sandbox(args):
+    from quant_research.strategy.sandbox import SandboxConfig
+
+    return SandboxConfig(isolation="docker") if args.sandbox == "docker" else None
+
+
 def cmd_validate(args) -> None:
     from quant_research.portfolio.evaluate import validate
 
-    _run(args, lambda paths, store: validate(paths, store, args.version_id))
+    _run(args, lambda paths, store: validate(paths, store, args.version_id, _sandbox(args)))
 
 
 def cmd_dev(args) -> None:
     from quant_research.portfolio.evaluate import run_dev
 
-    _run(args, lambda paths, store: run_dev(paths, store, args.version_id, args.reference))
+    _run(args, lambda paths, store: run_dev(paths, store, args.version_id, args.reference, _sandbox(args)))
 
 
 def cmd_periods(args) -> None:
@@ -125,11 +131,15 @@ def register(sub) -> None:
     p.set_defaults(fn=cmd_seed)
     p = pf.add_parser("validate", help="dev and validation runs; draft -> validated | failed_validation")
     p.add_argument("version_id")
+    p.add_argument("--sandbox", choices=("docker", "none"), default="none",
+                   help="docker runs plugin members (template-only versions need none)")
     p.set_defaults(fn=cmd_validate)
     p = pf.add_parser("dev", help="the dev run alone (a trial; no validation use; the state does not change)")
     p.add_argument("version_id")
     p.add_argument("--reference", action="store_true", help="record it as gate 1's reference for its product and "
                    "split (D4; one per product and split)")
+    p.add_argument("--sandbox", choices=("docker", "none"), default="none",
+                   help="docker runs plugin members (template-only versions need none)")
     p.set_defaults(fn=cmd_dev)
     p = pf.add_parser("periods", help="statistics of the version's dev run per period (from the recorded equity)")
     p.add_argument("version_id")

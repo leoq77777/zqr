@@ -49,6 +49,10 @@ Decided 2026-10-15 (phase 3, D3):
 - After the −30% liquidation only `zqr portfolio resume <name> --note` (human) re-enables trading; resume resets the
   high-water mark to the current equity.
 - A change of ladder level always trades, like a full exit, even inside the signal deadband.
+- Decided 2026-10-15 (phase 4, P6): `zqr portfolio resume` is run no earlier than 30 days after the liquidation
+  and only after a written review in `docs/reviews/`: what caused the drawdown, whether the version's thesis still
+  holds, and whether the market regime is one the version's dev covered. Without the review the portfolio stays
+  halted or the version is retired.
 - The ladder is part of every portfolio version and runs in backtests and paper through one function (appendix A
   section A14).
 

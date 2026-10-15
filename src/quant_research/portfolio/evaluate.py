@@ -55,8 +55,8 @@ def family_contribution(run: PortfolioRun, first: int, initial_cash: float) -> d
 
 
 def _run(version: PortfolioVersion, bars: pd.DataFrame, window: tuple[int, int],
-         paths) -> tuple[PortfolioRun, PortfolioRun, dict[str, Any]]:
-    run = run_portfolio(version, bars, window, paths)
+         paths, sandbox=None) -> tuple[PortfolioRun, PortfolioRun, dict[str, Any]]:
+    run = run_portfolio(version, bars, window, paths, sandbox=sandbox)
     first = int(np.searchsorted(to_epoch(bars["bar_open_time"]), window[0]))
     cash = version.engine_config.initial_cash
     ppy = periods_per_year(version.granularity)
@@ -72,6 +72,7 @@ def _run(version: PortfolioVersion, bars: pd.DataFrame, window: tuple[int, int],
         "max_drawdown_no_ladder": nl_metrics["max_drawdown"],
         "sharpe_daily_no_ladder": daily_sharpe(no_ladder.result.equity, cash),
         "total_return_no_ladder": nl_metrics["total_return"],
+        "turnover_no_ladder": nl_metrics["turnover"],
         "ladder_time": {k: round(v / len(run.log), 6) for k, v in sorted(levels.items())} if len(run.log) else {},
         "yellow_time": round(float(run.log["yellow"].mean()), 6) if len(run.log) else 0.0,
         "mean_target": round(float(np.mean(run.blend.target[first:])), 6),
@@ -91,7 +92,7 @@ def _existing(store: ExperimentStore, vid: str, kind: str, split_id: str, window
 
 
 def record_run(paths: Paths, store: ExperimentStore, version: PortfolioVersion, kind: str, segment: str,
-               bars: pd.DataFrame, window: tuple[int, int]) -> dict[str, Any]:
+               bars: pd.DataFrame, window: tuple[int, int], sandbox=None) -> dict[str, Any]:
     """Run the version on `bars` scored over `window` and record it as an experiment (idempotent per kind)."""
     vid = version.version_id()
     found = _existing(store, vid, kind, version.split_id, window)
@@ -104,7 +105,7 @@ def record_run(paths: Paths, store: ExperimentStore, version: PortfolioVersion, 
         window_start=window[0], window_end=window[1], engine_config_id=version.engine_config.config_id(),
         engine_config=version.engine_config.model_dump(), engine_version=ENGINE_VERSION)
     try:
-        run, no_ladder, out = _run(version, bars, window, paths)
+        run, no_ladder, out = _run(version, bars, window, paths, sandbox)
     except Exception as exc:
         store.finish_experiment(exp_id, "failed", failure_reason=f"{type(exc).__name__}: {exc}")
         raise
@@ -123,13 +124,13 @@ def record_run(paths: Paths, store: ExperimentStore, version: PortfolioVersion, 
     return store.get_experiment(exp_id)
 
 
-def run_segment(paths: Paths, store: ExperimentStore, vid: str, segment: Segment) -> dict[str, Any]:
+def run_segment(paths: Paths, store: ExperimentStore, vid: str, segment: Segment, sandbox=None) -> dict[str, Any]:
     vs = VersionStore(store)
     version = vs.version(vid)
     data = load_research_segment(paths, version.split_id, segment)
     kind = KINDS[segment]
     before = _existing(store, vid, kind, version.split_id, data.window)
-    row = record_run(paths, store, version, kind, segment, data.bars, data.window)
+    row = record_run(paths, store, version, kind, segment, data.bars, data.window, sandbox)
     if before is None:
         if segment == "dev":
             archive_new(paths, store, [row["id"]])
@@ -141,7 +142,7 @@ def run_segment(paths: Paths, store: ExperimentStore, vid: str, segment: Segment
 def _summary(row: dict[str, Any]) -> dict[str, Any]:
     m = row["metrics"]
     keys = ("sharpe_daily", "total_return", "max_drawdown", "sharpe_daily_no_ladder", "total_return_no_ladder",
-            "max_drawdown_no_ladder", "turnover", "total_fees",
+            "max_drawdown_no_ladder", "turnover", "turnover_no_ladder", "total_fees",
             "n_fills", "exposure", "mean_target", "ladder_time", "yellow_time", "family_contribution")
     return {"experiment_id": row["id"], **{k: m.get(k) for k in keys}, **(row["benchmarks"] or {})}
 
@@ -155,7 +156,8 @@ def gate1_reference(store: ExperimentStore, product: str, split_id: str) -> str 
     return rows[0]["version_id"] if rows else None
 
 
-def run_dev(paths: Paths, store: ExperimentStore, vid: str, reference: bool = False) -> dict[str, Any]:
+def run_dev(paths: Paths, store: ExperimentStore, vid: str, reference: bool = False,
+            sandbox=None) -> dict[str, Any]:
     """The dev run alone: a trial, archived, no validation use; the state does not change (E1, F4).
 
     `reference` records the version as gate 1's reference for its product and split; a second one is refused.
@@ -167,7 +169,7 @@ def run_dev(paths: Paths, store: ExperimentStore, vid: str, reference: bool = Fa
     current = gate1_reference(store, row["product"], row["split_id"])
     if reference and current not in (None, vid):
         raise VersionError(f"{current} is already gate 1's reference for {row['product']} on {row['split_id']}")
-    dev = _summary(run_segment(paths, store, vid, "dev"))
+    dev = _summary(run_segment(paths, store, vid, "dev", sandbox))
     if reference and current is None:
         vs.record(vid, "controller", {"gate1_reference": True, "dev_experiment": dev["experiment_id"]},
                   "gate 1 reference (D4)")
@@ -198,7 +200,7 @@ def version_periods(paths: Paths, store: ExperimentStore, vid: str, cuts: list[i
             "periods_no_ladder": period_stats(pd.read_parquet(nl_path), cash, cuts) if nl_path else None}
 
 
-def validate(paths: Paths, store: ExperimentStore, vid: str) -> dict[str, Any]:
+def validate(paths: Paths, store: ExperimentStore, vid: str, sandbox=None) -> dict[str, Any]:
     """draft -> validated | failed_validation on the seed standard (A6): validation Sharpe and drawdown."""
     vs = VersionStore(store)
     row = vs.get(vid)
@@ -206,8 +208,8 @@ def validate(paths: Paths, store: ExperimentStore, vid: str) -> dict[str, Any]:
         raise VersionError(f"unknown portfolio version {vid}")
     if row["state"] != "draft":
         raise VersionError(f"{vid} is {row['state']}; only a draft is validated")
-    dev = _summary(run_segment(paths, store, vid, "dev"))
-    val = _summary(run_segment(paths, store, vid, "validation"))
+    dev = _summary(run_segment(paths, store, vid, "dev", sandbox))
+    val = _summary(run_segment(paths, store, vid, "validation", sandbox))
     passed = (val["sharpe_daily"] >= SEED_STANDARD["min_sharpe_daily"]
               and val["max_drawdown"] >= SEED_STANDARD["min_max_drawdown"])
     evidence = {"dev": dev, "validation": val, "standard": SEED_STANDARD, "passed": passed}

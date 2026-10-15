@@ -53,11 +53,12 @@ def make_decider(version: PortfolioVersion, state: DeciderState | None = None, l
 
 def run_portfolio(version: PortfolioVersion, bars: pd.DataFrame, window: tuple[int, int] | None = None,
                   paths=None, initial: tuple[float, float] | None = None, state: DeciderState | None = None,
-                  bl: Blend | None = None, ladder=None) -> PortfolioRun:
+                  bl: Blend | None = None, ladder=None, sandbox=None) -> PortfolioRun:
     """`initial` and `state` start the run from an account's cash, quantity and decider state (paper parity);
-    `ladder` replaces the version's ladder (reports show the drawdown without it)."""
+    `ladder` replaces the version's ladder (reports show the drawdown without it); `sandbox` runs plugin members
+    (backtests only)."""
     bars = bars.reset_index(drop=True)
-    bl = bl or blend(version, bars, paths)
+    bl = bl or blend(version, bars, paths, sandbox)
     decider = make_decider(version, DeciderState.from_dict(state.to_dict()) if state else None, ladder)
     adapter = _Adapter(decider, bl, bars["bar_open_time"])
     res = run_backtest(bars, bl.target, version.engine_config, window=window,

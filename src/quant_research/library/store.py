@@ -10,7 +10,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from quant_research.library.catalog import Catalog, LibraryError
+from quant_research.hashing import hash_obj
+from quant_research.library.catalog import Catalog, Family, LibraryError
+from quant_research.strategy.spec import StrategySpec
+from quant_research.strategy.templates import get_template
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS library_families (
@@ -89,6 +92,46 @@ class LibraryStore:
                      inst.candidate_hash, inst.identity_hash(), plan["catalog_hash"], json.dumps(inst.meta)))
                 self._event(inst.id, now, None, "candidate", actor, f"imported from catalog {plan['catalog_hash']}")
         return plan
+
+    # -- additions outside the catalog ----------------------------------------------------------
+    def add_family(self, family: Family, note: str, actor: str = "human") -> dict[str, Any]:
+        """A family confirmed by the human outside the seed catalog (design 4.5), so hypotheses can name it."""
+        if not note.strip():
+            raise LibraryError("a new family needs a note")
+        if self._conn.execute("SELECT 1 FROM library_families WHERE id=?", (family.id,)).fetchone():
+            raise LibraryError(f"family {family.id!r} already exists")
+        self._conn.execute("INSERT INTO library_families VALUES (?,?,?,?,?,?,?)",
+                           (family.id, time.time(), family.name, family.thesis, int(family.sleeve),
+                            f"{actor}: {note}", None))
+        return dict(self._conn.execute("SELECT * FROM library_families WHERE id=?", (family.id,)).fetchone())
+
+    def add_candidate(self, product: str, family: str, strategy_ref: str, parameters: dict[str, Any],
+                      source: str, actor: str = "controller") -> str:
+        """A sleeve member from a registered hypothesis (gate 2), status `candidate`; idempotent on its identity."""
+        fam = self._conn.execute("SELECT * FROM library_families WHERE id=?", (family,)).fetchone()
+        if fam is None or not fam["sleeve"]:
+            raise LibraryError(f"{family!r} is not a sleeve family in the library")
+        spec = StrategySpec(strategy_ref=strategy_ref, parameters=parameters).normalized()
+        name = f"{family}-h{hash_obj({'family': family, **spec.identity()})[:8]}"
+        eid = f"{product.split('-')[0].lower()}-{name}"
+        template_version = get_template(spec.name).version if spec.kind == "template" else None
+        identity = {"entry": name, "product": product, "family": family, "kind": "member",
+                    "strategy_ref": spec.strategy_ref, "parameters": spec.parameters,
+                    "template_version": template_version}
+        row = self.entry(eid)
+        if row is not None:
+            if row["identity_hash"] != hash_obj(identity):
+                raise LibraryError(f"{eid}: an entry with this id has a different identity")
+            return eid
+        now = time.time()
+        with self._conn:
+            self._conn.execute("BEGIN")
+            self._conn.execute("INSERT INTO library_entries VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                               (eid, now, now, name, product, family, "member", "candidate", source,
+                                spec.strategy_ref, json.dumps(spec.parameters, sort_keys=True), template_version,
+                                spec.candidate_hash(), hash_obj(identity), None, json.dumps({"source": source})))
+            self._event(eid, now, None, "candidate", actor, source)
+        return eid
 
     # -- status ----------------------------------------------------------------------------------
     def set_status(self, entry_id: str, to: str, actor: str, note: str) -> None:

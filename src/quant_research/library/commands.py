@@ -83,6 +83,20 @@ def cmd_periods(args) -> None:
         store.close()
 
 
+def cmd_family_add(args) -> None:
+    from quant_research.library.catalog import Family
+
+    try:
+        fam = Family(id=args.id, name=args.name, thesis=args.thesis, sleeve=not args.no_sleeve)
+        store = _store(args)
+        try:
+            _out(store.add_family(fam, args.note))
+        finally:
+            store.close()
+    except (LibraryError, ValueError) as exc:
+        raise SystemExit(str(exc)) from None
+
+
 def register(sub) -> None:
     lib = sub.add_parser("library", help="strategy library: seed catalog and entries").add_subparsers(
         dest="lcmd", required=True)
@@ -103,3 +117,12 @@ def register(sub) -> None:
     p.add_argument("--product", required=True)
     p.add_argument("--cut", action="append", default=[], help="period boundary (UTC), repeatable")
     p.set_defaults(fn=cmd_periods)
+    fam = lib.add_parser("family", help="families outside the seed catalog").add_subparsers(dest="fcmd",
+                                                                                            required=True)
+    p = fam.add_parser("add", help="add a family the human confirmed (design 4.5); hypotheses can then name it")
+    p.add_argument("--id", required=True)
+    p.add_argument("--name", required=True)
+    p.add_argument("--thesis", required=True)
+    p.add_argument("--no-sleeve", action="store_true", help="a family without a sleeve (no hypotheses)")
+    p.add_argument("--note", required=True)
+    p.set_defaults(fn=cmd_family_add)
