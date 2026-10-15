@@ -733,3 +733,19 @@ review in `docs/reviews/` before resuming (what caused the drawdown, whether the
 whether the market regime is one the version's dev covered); otherwise the version stays halted or is retired.
 On the long dev both seed portfolios were liquidated by the ladder (BTC 2020-03-12, ETH 2023-09-11); without it
 their worst drawdowns were −39% and −33%, so this rule is not hypothetical.
+
+## After 4d: strategy inbox (approved 2026-10-15)
+
+Design `docs/superpowers/specs/2026-10-15-strategy-inbox-design.md`, decisions I1-I6 approved in conversation;
+the human asked to build and merge it directly. I6 is the plan decision recorded here: inbox drafts are written as
+`proposed` campaigns, like `zqr campaign generate`, so approval stays the human's (P5) and no appendix rule changes.
+
+- [x] `inbox/` (store, drafting workspace, draft → campaigns, report lines, commands), loop integration, config
+      (`inbox_reserve_usd` 0.10, `inbox_drafts_per_day` 10, `inbox_wall_seconds` 600), docs (section 5.12).
+- [x] `tests/test_inbox.py` (13 tests); full suite 364 passed, ruff.
+- [x] Rehearsal on the 4d production copy with the real model (deepseek-flash, Claude Code 2.1.112, docker
+      isolation): a Chinese Weibo post on a 4-hour Bollinger squeeze breakout became two `proposed`
+      `channel_breakout` campaigns (BTC, ETH) that restate the rule on hourly bars, call the author's 85% a claim,
+      and name the existing archive and campaigns of the family; a funding-rate carry post was `infeasible`
+      (perp short, funding data). 0.024 USD for both, no violations, no containers left; report and status lines
+      checked.

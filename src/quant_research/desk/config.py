@@ -43,6 +43,9 @@ class DeskConfig(BaseModel):
     session_reserve_usd: PositiveFloat = 0.25
     campaign_models: dict[str, str] = Field(default_factory=dict)  # model name -> pricing preset
     session_wall_seconds: PositiveFloat = 1800
+    inbox_reserve_usd: PositiveFloat = 0.10
+    inbox_drafts_per_day: PositiveInt = 10
+    inbox_wall_seconds: PositiveFloat = 600
     backoff_base_seconds: PositiveFloat = 300
     backoff_max_seconds: PositiveFloat = 3600
     poll_seconds: PositiveFloat = 30

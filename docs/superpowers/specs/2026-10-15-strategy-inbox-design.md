@@ -1,6 +1,7 @@
 # Design: strategy inbox
 
-Status: approved in conversation on 2026-10-15; written for review before the implementation plan.
+Status: approved in conversation on 2026-10-15 and built the same day (`docs/development.md` section 5.12); the
+human chose to skip a separate implementation plan.
 
 ## 1. Problem
 

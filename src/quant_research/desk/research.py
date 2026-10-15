@@ -42,6 +42,7 @@ from quant_research.desk.config import DeskConfig, effective_network, load_check
 from quant_research.desk.supervisor import CREDENTIAL_FILE, read_env_file
 from quant_research.experiments.store import ExperimentStore
 from quant_research.gateway.mcp_server import GatewayHTTPServer
+from quant_research.inbox.store import InboxStore
 from quant_research.paths import Paths
 from quant_research.research.mandate import Mandate
 from quant_research.runtime import version
@@ -50,6 +51,8 @@ from quant_research.strategy.sandbox import SandboxConfig
 log = logging.getLogger(__name__)
 
 ENV_FAILURES = {"environment.model_unreachable", "environment.docker", "harness.error"}
+INBOX_TOPIC = "inbox"
+NO_TOOLS = {"mcpServers": {}}
 PROMPT = ("You are the research desk's strategy researcher working inside /workspace. Read /workspace/ROLE.md "
           "(your role) and /workspace/TASK.md (the campaign, budget, tools and deliverables), then do the research "
           "using only the `quant` MCP tools for experiments. Write all deliverables under /workspace and validate "
@@ -68,6 +71,10 @@ CAMPAIGN_FIELDS = {
 
 def sessions_dir(paths: Paths) -> Path:
     return paths.desk / "sessions"
+
+
+def inbox_dir(paths: Paths) -> Path:
+    return paths.desk / "inbox"
 
 
 def ledger_path(paths: Paths) -> Path:
@@ -131,9 +138,10 @@ def _next_month(now: float) -> float:
 class ResearchLoop:
     def __init__(self, paths: Paths, store: ExperimentStore, cfg: DeskConfig, adapter, *,
                  sandbox: SandboxConfig | None = None, allow_weak_isolation: bool = False,
-                 isolate_network: bool = True, require_check: bool = True,
+                 isolate_network: bool = True, require_check: bool = True, drafter=None,
                  clock: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep):
-        self.paths, self.store, self.cfg, self.adapter = paths, store, cfg, adapter
+        """`drafter` runs inbox drafting (no tools, its own prompt); without one, inbox items wait."""
+        self.paths, self.store, self.cfg, self.adapter, self.drafter = paths, store, cfg, adapter, drafter
         self.sandbox = sandbox or SandboxConfig(isolation="docker")
         self.allow_weak = allow_weak_isolation
         self.isolate_network, self.require_check = isolate_network, require_check
@@ -143,6 +151,7 @@ class ResearchLoop:
         sessions_dir(paths).mkdir(parents=True, exist_ok=True)
         self.state = load_state(paths)
         self.campaigns = CampaignStore(store)
+        self.inbox = InboxStore(store)
 
     # -- scheduling ------------------------------------------------------------------------------
     def _wait(self, status: str, reason: str, seconds: float) -> dict[str, Any]:
@@ -188,6 +197,8 @@ class ResearchLoop:
         camp = self.campaigns.running()
         if camp is not None and self._pending_gates(camp["id"]):
             return self._settled(camp["id"], self._settle(camp["id"]))
+        if (item := self._inbox_item(now)) is not None:
+            return self._after(self.run_inbox(item, budget.default_model(self.cfg), self.cfg.inbox_reserve_usd))
         camp = camp or self.campaigns.next_queued()
         if camp is None:
             return self._wait("idle", "no running or queued campaign (`zqr campaign generate`, then approve)", 600)
@@ -213,7 +224,8 @@ class ResearchLoop:
         if month + reserve > lim["monthly_usd"]:
             return self._wait("cost_cap", f"monthly cap: {month:.2f} booked + {reserve:.2f} reserved > "
                                           f"{lim['monthly_usd']} USD", _next_month(now))
-        if sum(r.get("day") == day for r in read_ledger(self.paths)) >= lim["sessions_per_day"]:
+        if sum(r.get("day") == day for r in read_ledger(self.paths) if r.get("topic") != INBOX_TOPIC) \
+                >= lim["sessions_per_day"]:
             return self._wait("cost_cap", f"sessions per day ({lim['sessions_per_day']:.0f}) reached", 3600)
         model = camp["body"].get("model") or budget.default_model(self.cfg)
         if model is None:
@@ -221,7 +233,9 @@ class ResearchLoop:
         if budget.price_for(self.cfg, [model]) is None:
             return self._wait("blocked", f"model {model} has no price; add it to desk config `campaign_models`",
                               600)
-        res = self.run_session(camp, mandate, model, reserve)
+        return self._after(self.run_session(camp, mandate, model, reserve))
+
+    def _after(self, res: dict[str, Any]) -> dict[str, Any]:
         failure = res["failure_class"]
         n = self.state.get("consecutive_failures", 0) + 1 if failure != "none" else 0
         if failure == "desk.stopped":
@@ -409,11 +423,7 @@ class ResearchLoop:
                     if e["kind"] not in ("sensitivity",) and e["segment"] == "dev")
         models = (", ".join(run.extra.get("models") or []) if run else None) or (u.model if u else None)
         reserved = meta.get("reserved_usd")
-        if cost_source == "unpriced":
-            budget.stop(self.paths, f"model call without a configured price ({models})", run_id=meta["run_id"])
-        elif reserved is not None and cost > reserved:
-            budget.stop(self.paths, f"session {meta['run_id']} cost {cost:.4f} USD, above its reservation "
-                                    f"{reserved:.2f} USD", run_id=meta["run_id"], cost_usd=cost)
+        self._book_stop(meta["run_id"], cost, cost_source, reserved, models)
         finished = self.clock()
         result = {
             "run_id": meta["run_id"], "session_id": sid, "product": meta["product"], "topic": meta["topic"],
@@ -447,6 +457,138 @@ class ResearchLoop:
                 "model")}
                 | {"violations": len(violations), "gates": (camp.get("gates") or {}).get("state"),
                    "campaign_end": (camp.get("end") or {}).get("state")}, default=str) + "\n")
+        self.state = _save_state(self.paths, self.state, current_run=None, last_run_id=meta["run_id"])
+        return result
+
+    def _book_stop(self, run_id: str, cost: float, cost_source: str, reserved: float | None,
+                   models: str | None) -> None:
+        if cost_source == "unpriced":
+            budget.stop(self.paths, f"model call without a configured price ({models})", run_id=run_id)
+        elif reserved is not None and cost > reserved:
+            budget.stop(self.paths, f"session {run_id} cost {cost:.4f} USD, above its reservation "
+                                    f"{reserved:.2f} USD", run_id=run_id, cost_usd=cost)
+
+    # -- inbox drafting --------------------------------------------------------------------------
+    def _inbox_item(self, now: float) -> dict[str, Any] | None:
+        """The oldest received item, if a drafting run fits the daily limit, the budget and a priced model; otherwise
+        items wait and campaigns go on (their own checks report a cap or a missing model)."""
+        if self.drafter is None or (item := self.inbox.next_received()) is None:
+            return None
+        day, lim, reserve = utc_day(now), budget.limits(self.cfg), self.cfg.inbox_reserve_usd
+        drafts = sum(r.get("day") == day and r.get("topic") == INBOX_TOPIC for r in read_ledger(self.paths))
+        if drafts >= self.cfg.inbox_drafts_per_day:
+            return None
+        if spent_on(self.paths, day) + reserve > lim["daily_usd"] or \
+                spent_in_month(self.paths, budget.month_of(day)) + reserve > lim["monthly_usd"]:
+            return None
+        model = budget.default_model(self.cfg)
+        if model is None or budget.price_for(self.cfg, [model]) is None:
+            return None
+        return item
+
+    def run_inbox(self, item: dict[str, Any], model: str, reserve: float) -> dict[str, Any]:
+        """One drafting run: the agent container behind the egress proxy (model endpoint only), no tools."""
+        from quant_research.inbox.draft import write_workspace
+
+        iid = item["id"]
+        run_id = f"inbox-{datetime.fromtimestamp(self.clock(), tz=UTC):%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
+        run_dir = inbox_dir(self.paths) / run_id
+        run_dir.mkdir(parents=True)
+        self.inbox.transition(iid, "drafting", "controller", run_id=run_id)
+        meta = {"run_id": run_id, "inbox_id": iid, "product": item["product"] or "-", "topic": INBOX_TOPIC,
+                "model": model, "reserved_usd": reserve, "started_at": self.clock()}
+        (run_dir / "run.json").write_text(json.dumps(meta, indent=2))
+        self.state = _save_state(self.paths, self.state, current_run=run_id, status="running",
+                                 reason=f"inbox draft {run_id} ({iid})")
+        run: AgentRun | None = None
+        harness_error, egress_records = None, []
+        try:
+            write_workspace(self.paths, self.store, self.cfg, item, run_dir / "workspace")
+            if self.isolate_network:
+                with EgressNetwork(run_dir, [model_endpoint()], None, label=run_id) as net:
+                    run = self.drafter.run(run_dir / "workspace", NO_TOOLS, self.cfg.inbox_wall_seconds, network=net,
+                                           label=run_id, transcript_dir=run_dir / TRANSCRIPT_DIR)
+                    egress_records = net.records()
+            else:
+                run = self.drafter.run(run_dir / "workspace", NO_TOOLS, self.cfg.inbox_wall_seconds)
+        except Exception as exc:  # noqa: BLE001 - every failure still ends in a record and the item's state
+            harness_error = f"{type(exc).__name__}: {exc}"
+            (run_dir / "harness_error.txt").write_text(traceback.format_exc())
+            cleanup_run(run_id)
+        return self.finish_inbox(run_dir, meta, run=run, egress_records=egress_records, harness_error=harness_error)
+
+    def finish_inbox(self, run_dir: Path, meta: dict[str, Any], *, run: AgentRun | None,
+                     egress_records: list[dict[str, Any]], harness_error: str | None,
+                     crash: bool = False) -> dict[str, Any]:
+        from quant_research.inbox.draft import read_draft, write_campaigns
+
+        iid = meta["inbox_id"]
+        egress = summarize(egress_records) if (self.isolate_network and egress_records) else None
+        u = run.usage if run else usage_from_transcripts(run_dir / TRANSCRIPT_DIR)
+        cost, cost_source = self._cost(run, u)
+        draft, problem = read_draft(run_dir / "workspace")
+        no_model = run is None or run.usage is None or (run.usage.input_tokens + run.usage.output_tokens) == 0
+        if crash:
+            failure, details = "harness.crash", [harness_error or "desk process died during the run"]
+        elif harness_error:
+            failure, details = "harness.error", [harness_error]
+        elif no_model and egress is not None and egress["model_tunnels"] == 0:
+            failure, details = "environment.model_unreachable", egress["denied"][:3] + egress["upstream_errors"][:3]
+        elif run is not None and run.timed_out:
+            failure, details = "agent.timeout", ["wall clock exceeded"]
+        elif no_model:
+            failure, details = "environment.docker", [(run.stderr_tail if run else "")[-400:]]
+        elif draft is None:
+            failure, details = "agent.no_deliverable", [problem]
+        else:
+            failure, details = "none", []
+        if self.stop_requested and failure != "none":
+            failure, details = "desk.stopped", ["desk stop requested during the run", *details]
+        model_host = {h for h, _ in [model_endpoint()]}
+        violations = [f"[network] {d}" for d in (egress or {}).get("denied", [])
+                      if d.split(" ", 1)[-1].split(":", 1)[0] not in model_host]
+        models = (", ".join(run.extra.get("models") or []) if run else None) or (u.model if u else None)
+        self._book_stop(meta["run_id"], cost, cost_source, meta.get("reserved_usd"), models)
+        self.inbox.add_cost(iid, cost)
+        written: dict[str, Any] = {"campaign_ids": [], "refused": []}
+        if self.inbox.require(iid)["state"] == "drafting":
+            if failure == "none" and draft.verdict == "infeasible":
+                self.inbox.transition(iid, "infeasible", "controller", draft=draft.model_dump(mode="json"),
+                                      reason=draft.reason, run_id=meta["run_id"])
+            elif failure == "none":
+                written = write_campaigns(self.paths, self.store, self.cfg, self.inbox.require(iid), draft)
+                self.inbox.transition(iid, "drafted", "controller",
+                                      draft=draft.model_dump(mode="json") | {"refused": written["refused"],
+                                                                             "published_used": written["published"]},
+                                      campaign_ids=written["campaign_ids"],
+                                      reason="; ".join(r["reason"] for r in written["refused"]) or None,
+                                      run_id=meta["run_id"])
+            elif failure in ENV_FAILURES or failure in ("harness.crash", "desk.stopped"):
+                self.inbox.transition(iid, "received", "controller", reason=f"{failure}; will be drafted again",
+                                      run_id=meta["run_id"])
+            else:
+                self.inbox.transition(iid, "failed", "controller", reason=f"{failure}: {'; '.join(details)}"[:500],
+                                      run_id=meta["run_id"])
+        finished = self.clock()
+        result = {
+            "run_id": meta["run_id"], "inbox_id": iid, "product": meta["product"], "topic": INBOX_TOPIC,
+            "campaign_id": None, "family": None, "started_at": meta["started_at"], "finished_at": finished,
+            "day": utc_day(meta["started_at"]), "wall_seconds": round(finished - meta["started_at"], 1),
+            "status": "ok" if failure == "none" else "failed", "failure_class": failure,
+            "failure_details": [str(d) for d in details if d][:5], "cost_usd": cost, "cost_source": cost_source,
+            "reserved_usd": meta.get("reserved_usd"), "usage": u.model_dump() if u else None,
+            "zqr_version": version(), "harness": run.harness_version if run else None, "model": models,
+            "experiments": 0, "audit_ok": True, "violations": violations, "egress": egress,
+            "inbox_state": self.inbox.require(iid)["state"], "campaigns_written": written["campaign_ids"],
+        }
+        (run_dir / "result.json").write_text(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+        with open(ledger_path(self.paths), "a") as f:
+            f.write(json.dumps({k: result.get(k) for k in (
+                "run_id", "day", "product", "topic", "campaign_id", "family", "status", "failure_class", "cost_usd",
+                "cost_source", "reserved_usd", "experiments", "audit_ok", "zqr_version", "harness", "model",
+                "inbox_id", "inbox_state", "campaigns_written")}
+                | {"session_id": None, "violations": len(violations), "gates": None, "campaign_end": None},
+                default=str) + "\n")
         self.state = _save_state(self.paths, self.state, current_run=None, last_run_id=meta["run_id"])
         return result
 
@@ -502,6 +644,14 @@ def recover_desk_runs(paths: Paths, store: ExperimentStore, cfg: DeskConfig) -> 
             freeze_submission(ws, run_dir / "submission")
         res = loop.finish(run_dir, meta, run=None, egress_records=[],
                           harness_error=f"desk process died; cleaned up {removed}", crash=True)
+        out.append({"run_id": meta["run_id"], "failure_class": res["failure_class"], "removed": removed})
+    for run_json in sorted(inbox_dir(paths).glob("*/run.json")):
+        if (run_json.parent / "result.json").exists():
+            continue
+        meta = json.loads(run_json.read_text())
+        removed = cleanup_run(meta["run_id"])
+        res = loop.finish_inbox(run_json.parent, meta, run=None, egress_records=[],
+                                harness_error=f"desk process died; cleaned up {removed}", crash=True)
         out.append({"run_id": meta["run_id"], "failure_class": res["failure_class"], "removed": removed})
     _save_state(paths, load_state(paths), current_run=None)
     return out

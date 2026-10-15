@@ -157,10 +157,13 @@ def hypothesis_lines(store: ExperimentStore, next_split: str) -> list[str]:
 def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[list[str], dict[str, Any]]:
     from quant_research.campaign.budget import month_of
     from quant_research.campaign.report import budget_lines, campaign_lines, session_rows
+    from quant_research.inbox.report import inbox_lines
 
     cfg = load_config(paths)
-    rows = [r for r in rl.read_ledger(paths) if r.get("day") == day]
-    cost = sum(r.get("cost_usd") or 0.0 for r in rows)
+    every = [r for r in rl.read_ledger(paths) if r.get("day") == day]
+    rows = [r for r in every if r.get("topic") != rl.INBOX_TOPIC]
+    drafts = [r for r in every if r.get("topic") == rl.INBOX_TOPIC]
+    cost = sum(r.get("cost_usd") or 0.0 for r in every)
     failures = Counter(r["failure_class"] for r in rows)
     state = rl.load_state(paths)
     lines = ["## Research", "",
@@ -171,8 +174,10 @@ def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[li
                                                                   else ""),
              f"- Violations: {sum(r.get('violations') or 0 for r in rows)}; audit failures: "
              f"{sum(not r.get('audit_ok', True) for r in rows)}",
-             *campaign_lines(paths, store, cfg, day)]
-    summary = {"sessions": len(rows), "cost_usd": round(cost, 4), "failures": dict(failures)}
+             *campaign_lines(paths, store, cfg, day),
+             *inbox_lines(store, day, drafts)]
+    summary = {"sessions": len(rows), "inbox_drafts": len(drafts), "cost_usd": round(cost, 4),
+               "failures": dict(failures)}
     mandate_ids = set(cfg.mandates.values())
     if mandate_ids:
         lines += ["", "| product | trials on split (all time) | effective K (ρ 0.7) | candidates by state | "

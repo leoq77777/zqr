@@ -114,6 +114,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `library/` | Strategy library: seed catalog (`seeds.yaml`, reviewed in `docs/library/seeds.md`), catalog validation, library tables in `experiments.db`, `zqr library` commands |
 | `campaign/` | Campaigns (`model.py`, `store.py`: tables `campaigns`, `campaign_events`, `campaign_sessions`), research budget (`budget.py`), generator (`generate.py`), session brief (`brief.py`), conclusions (`conclude.py`), report lines, `zqr campaign` commands (section 5.11) |
 | `hypothesis/` | Registered hypotheses (`model.py`, `store.py`: tables `hypotheses`, `hypothesis_events`), gates 1 and 2 (`gates.py`), `zqr hypothesis` commands (section 5.10) |
+| `inbox/` | Strategy inbox (`store.py`: tables `inbox_items`, `inbox_events`), drafting workspace and draft → campaigns (`draft.py`), report lines, `zqr inbox` commands (section 5.12) |
 | `portfolio/policy.py` | Portfolio policy v1: vol target, asset/gross caps, rebalance cadence, no-trade band |
 | `portfolio/` (other modules) | Portfolio layer (section 5.9): versions and lifecycle (`version.py`), blend (`blend.py`), decision step (`decide.py`), backtest (`backtest.py`), dev/validation runs (`evaluate.py`), seed portfolio (`seed.py`), approve/resume (`paper.py`), `zqr portfolio` commands |
 | `backtest/engine.py` | Accounting engine (fills, fees, slippage, delay) |
@@ -135,7 +136,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (351 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (364 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -522,6 +523,37 @@ a log shortfall; the years go round the sleeve families), concentration of the
 - **Report.** The research section shows the day's and month's spend against the caps, an active budget stop,
   campaigns by state with cost per ended campaign, the quota table and the day's sessions with their campaign.
 
+### 5.12 Strategy inbox (`inbox/`)
+
+Design: `docs/superpowers/specs/2026-10-15-strategy-inbox-design.md` (decisions I1-I6).
+
+- **Items** (`store.py`). `zqr inbox add` (the human's) stores plain text (1-20,000 characters; the same text
+  after collapsing whitespace is refused), an optional URL (kept as the citation, never fetched), publication date,
+  product and note, as `received`. States: `received` → `drafting` → `drafted` | `infeasible` | `failed`;
+  `drafting` → `received` after environment failures, crashes and stops; `failed` → `received` (`retry`) and
+  `received` → `discarded` (`discard --note`) are the human's.
+- **Drafting run** (`ResearchLoop.run_inbox`). Each loop step drafts the oldest `received` item after pending gates
+  and before the next campaign session, when `inbox_drafts_per_day` is not reached, `inbox_reserve_usd` fits under
+  the day and month caps and the default model has a price; otherwise items wait and campaigns go on. The agent
+  container (prompt `inbox.draft.PROMPT`) runs behind the egress proxy with the model endpoint only, an empty MCP
+  configuration and no data. Workspace (`desk/inbox/<run_id>/workspace`): `TASK.md` (the text in a block marked
+  untrusted), `CONSTRAINTS.md` (long/flat spot, hourly OHLCV only, costs, data range per product), `LIBRARY.md`
+  (families, the archives' agent view, campaigns with verdicts and gate states) and `draft.schema.json`.
+- **Draft → campaigns** (`draft.py`). `draft.json` is `infeasible` with a reason, or one or two proposals (one
+  per product: family, goal, prior, overlap with earlier work). Each proposal goes through `CampaignStore.add` as
+  `proposed`, source `{kind: inbox, inbox_id, published, may_have_seen_validation}`, citation the URL or
+  `inbox:<id>`; the human's product wins; a refused proposal (unknown family, quota, no mandate) is recorded in the
+  draft with its reason. `may_have_seen_validation` is true when the publication date (the human's, else the one
+  found in the text) is on or after the validation start of the product's desk split, or unknown.
+- **Budget and records.** The run's cost counts toward the day and month caps, not toward a campaign or the
+  sessions per day; overrun and unpriced calls write the budget stop as for sessions. Ledger lines carry
+  `topic: inbox`, `inbox_id`, `inbox_state` and `campaigns_written`; `result.json` sits in the run directory.
+  Crashed runs are recovered at startup like sessions. The report's research section has an inbox line (items
+  received, drafting outcomes, cost, items waiting) and the campaigns written that day with the publication
+  warning; `desk status` shows the day's inbox drafts.
+- The text never reaches a research session; research agents see the drafted goal and prior once the human
+  approves the campaign.
+
 ## 6. Security model and invariants
 
 These must hold after any change. Tests cover most of them.
@@ -546,6 +578,8 @@ These must hold after any change. Tests cover most of them.
    the split's research segment; `zqr paper replay` stops at the earliest protected holdout start of the product
    and granularity (`holdout_cutoff`: a holdout a later split folds into its research data is no longer protected).
 7. No trading credentials exist. Paper fills are simulated against public market data.
+8. Inbox text is untrusted: it reaches only the drafting agent's workspace, which runs in the same isolation with
+   no tools and no data, and campaigns drafted from it stay `proposed` until the human approves them.
 
 ## 7. Runtime layout (`ZQR_HOME`)
 
@@ -563,6 +597,7 @@ These must hold after any change. Tests cover most of them.
 | `desk/roster.json` | Paper roster |
 | `desk/research_state.json`, `desk/research_ledger.jsonl` | Loop state, one line per session |
 | `desk/sessions/<run_id>/` | `run.json`, `result.json`, submission, egress log, agent transcript |
+| `desk/inbox/<run_id>/` | Inbox drafting run: `run.json`, `result.json`, `workspace/` (with `draft.json`), egress log, transcript |
 | `desk/state.json`, `desk/logs/`, `desk/reports/` | Supervisor state, logs, daily reports and monthly reviews (`monthly-YYYY-MM.md`) |
 | `desk/soft_stop.json`, `desk/soft_stop.cleared-*.json` | Active soft stop (research paused); cleared ones with the human's note |
 | `desk/budget_stop.json`, `desk/budget_stop.cleared-*.json` | Active budget stop (research stopped: overrun or unpriced call); cleared ones with the human's note |
@@ -586,6 +621,7 @@ The fields of `DeskConfig` (`desk/config.json`), with defaults:
 | `max_sessions_per_day` | 12 | Session cap per UTC day; at most 12 |
 | `campaign_models` | {} | Model name → price preset (`deepseek-flash`, `deepseek-v4-pro`); a campaign's `model` must be one of these (no `model` means the default) |
 | `session_wall_seconds` | 1800 | Agent wall clock per session |
+| `inbox_reserve_usd` / `inbox_drafts_per_day` / `inbox_wall_seconds` | 0.10 / 10 / 600 | Reservation, daily limit and wall clock of inbox drafting runs |
 | `backoff_base_seconds` / `backoff_max_seconds` | 300 / 3600 | Environment-failure pause |
 | `poll_seconds` | 30 | Fleet poll interval |
 | `report_hour_utc` / `report_minute_utc` | 0 / 5 | Daily report time |
@@ -655,6 +691,8 @@ a one-off container with the same mounts while the desk is stopped).
 | `zqr campaign add --file F --note` / `approve <ids> --note` / `cancel <id> --note` | Human: add a campaign (`proposed`) / queue proposed campaigns (P5) / cancel |
 | `zqr campaign generate --product P [--n 6] [--dry-run]` | Proposals from dev diagnostics, written as `proposed` |
 | `zqr campaign budget [status\|clear] [--note]` | Limits, spend and the budget stop; `clear` is the human's |
+| `zqr inbox add [--file F] [--url U] [--published D] [--product P] [--note N]` | Human: store a text (standard input without `--file`); the research loop drafts it into `proposed` campaigns. From the Mac: `ssh quant-wsl 'zqr inbox add --url U' < post.txt` |
+| `zqr inbox list [--state]` / `show <id>` / `retry <id>` / `discard <id> --note` | Items; text, draft, campaigns and publication warning; `retry` (failed) and `discard` (received) are the human's |
 | `zqr library family add --id --name --thesis [--no-sleeve] --note` | Human: a family outside the seed catalog, so hypotheses can name it |
 | `zqr desk monthly --month YYYY-MM` / `zqr desk soft-stop status\|evaluate\|clear [--day D] [--note N]` | Monthly review; soft-stop rule (investment policy 2) |
 | `zqr release [--target HOST\|local] [--allow-dirty] [--no-up]` | Development machine: build, ship and start a version |

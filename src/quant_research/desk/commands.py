@@ -78,11 +78,14 @@ def cmd_research_loop(args) -> None:
     from quant_research.bench.adapter import ClaudeContainerAdapter
     from quant_research.desk import research as rl
     from quant_research.desk.config import load_config
+    from quant_research.inbox.draft import PROMPT as INBOX_PROMPT
 
     paths = get_paths(args.home)
     cfg = load_config(paths)
     adapter = ClaudeContainerAdapter(model=cfg.model, memory=cfg.agent_memory, cpus=cfg.agent_cpus, prompt=rl.PROMPT)
-    loop = rl.ResearchLoop(paths, _store(paths), cfg, adapter)
+    drafter = ClaudeContainerAdapter(model=cfg.model, memory=cfg.agent_memory, cpus=cfg.agent_cpus,
+                                     prompt=INBOX_PROMPT)
+    loop = rl.ResearchLoop(paths, _store(paths), cfg, adapter, drafter=drafter)
     signal.signal(signal.SIGTERM, lambda *_: loop.request_stop())
     signal.signal(signal.SIGINT, lambda *_: loop.request_stop())
     loop.run(max_sessions=args.max_sessions)
@@ -197,6 +200,7 @@ def desk_status(paths) -> dict:
     fleet = json.loads(fleet_health.read_text()) if fleet_health.exists() else {}
     today = rl.utc_day(time.time())
     ledger = [r for r in rl.read_ledger(paths) if r.get("day") == today]
+    sessions = [r for r in ledger if r.get("topic") != rl.INBOX_TOPIC]
     check = load_check(paths)
     return {
         "version": version(),
@@ -205,7 +209,8 @@ def desk_status(paths) -> dict:
                        "components": sup.get("components", {}), "last_report_day": sup.get("last_report_day"),
                        "last_report_error": sup.get("last_report_error")},
         "research": {**{k: v for k, v in rl.load_state(paths).items() if k != "updated_at"},
-                     "today_sessions": len(ledger), "today_cost_usd": round(sum(r.get("cost_usd") or 0
+                     "today_sessions": len(sessions), "today_inbox_drafts": len(ledger) - len(sessions),
+                     "today_cost_usd": round(sum(r.get("cost_usd") or 0
                                                                                for r in ledger), 4),
                      "daily_cap_usd": budget.limits(cfg)["daily_usd"],
                      "month_cost_usd": round(rl.spent_in_month(paths, budget.month_of(today)), 4),
@@ -238,7 +243,8 @@ def cmd_status(args) -> None:
     wait = (r.get("resume_at") or 0) - time.time()
     resume = f", resumes in {wait / 60:.0f}m" if wait > 0 else ""
     print(f"research:   {r.get('status', '-')}{resume}  {r.get('reason') or ''}")
-    print(f"            today {r['today_sessions']} sessions, {r['today_cost_usd']} / {r['daily_cap_usd']} USD; "
+    print(f"            today {r['today_sessions']} sessions, {r['today_inbox_drafts']} inbox drafts, "
+          f"{r['today_cost_usd']} / {r['daily_cap_usd']} USD; "
           f"started total {r.get('sessions_started', 0)}")
     print(f"fleet:      {f['strategies']} strategies, updated {f['updated']}; stale {f['stale'] or 'none'}; "
           f"halted {f['halted'] or 'none'}; errors {list(f['errors']) or 'none'}")
