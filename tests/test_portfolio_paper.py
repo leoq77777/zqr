@@ -16,7 +16,7 @@ from quant_research.paper.runner import make_trader, run_replay
 from quant_research.paper.trader import PaperConfig
 from quant_research.paths import get_paths
 from quant_research.portfolio.backtest import run_portfolio
-from quant_research.portfolio.version import Member, PortfolioVersion, VersionError, VersionStore
+from quant_research.portfolio.version import Member, Overlay, PortfolioVersion, VersionError, VersionStore
 from tests.conftest import HOUR, T0, make_raw
 from tests.test_paper import PRODUCT
 
@@ -220,3 +220,50 @@ def test_approve_adds_the_roster_entry(paths, store, dataset, monkeypatch):
     assert len(out["library_members"]) == 12
     with pytest.raises(VersionError):
         approve(paths, store, vid, "twice")
+
+
+# -- parity ----------------------------------------------------------------------------------------------------
+
+def _parity(tmp_path, written, checked, tamper=None):
+    from quant_research.paper.fleet import Roster, RosterEntry
+    from quant_research.paper.parity import portfolio_parity
+
+    bars = _bars()
+    trader = run_replay(_cfg(written), bars, tmp_path / "p", PRODUCT)
+    if tamper:
+        tamper(trader.ledger)
+    vid = checked.version_id()
+    entry = RosterEntry(name="pf", product="BTC-USD", strategy_ref=f"portfolio:{vid}", source="portfolio",
+                        portfolio_version=vid, parameters={"version_id": vid}, fee_rate=0.001, slippage_bps=2)
+    roster = Roster(fee_rate=0.001, slippage_bps=2, risk=RiskLimits(max_order_notional=1e9))
+    return portfolio_parity(entry, roster, trader.ledger, bars, checked, None)
+
+
+OVERLAY = Overlay(entry_id="o", strategy_ref="template:vol_target", parameters={"window": 48, "target_vol": 0.4})
+
+
+def test_portfolio_parity_is_clean_on_a_replay(tmp_path):
+    v = _version(overlay=OVERLAY)
+    out = _parity(tmp_path, v, v)
+    assert out["checked"] == 400 and out["fills"] > 4
+    assert not out["target_mismatches"] and not out["order_mismatches"] and not out["size_mismatches"]
+    assert abs(out["path"]["equity_gap_bps"]) < 1 and abs(out["fill_vs_next_open_bps"]) < 0.01
+
+
+def test_portfolio_parity_finds_a_changed_band(tmp_path):
+    out = _parity(tmp_path, _version(overlay=OVERLAY, band=0.05), _version(overlay=OVERLAY, band=0.10))
+    assert out["order_mismatches"] and not out["target_mismatches"]
+
+
+def test_portfolio_parity_finds_a_wrong_blend(tmp_path):
+    import json as _json
+
+    def tamper(ledger):
+        rid, data = ledger._conn.execute("SELECT id, data FROM decisions ORDER BY id LIMIT 1 OFFSET 100").fetchone()
+        d = _json.loads(data)
+        d["portfolio"]["blend"] += 0.2
+        ledger._conn.execute("UPDATE decisions SET data=? WHERE id=?", (_json.dumps(d), rid))
+
+    v = _version()
+    out = _parity(tmp_path, v, v, tamper)
+    assert len(out["target_mismatches"]) == 1
