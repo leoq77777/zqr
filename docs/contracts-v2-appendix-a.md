@@ -227,8 +227,8 @@ family's archive.
 - The BTC cluster mapped to `vol_overlay` at 0.3 (38 trials) keeps one non-passive trial; the ETH cluster mapped to
   `vol_overlay` (4 trials, all buy and hold) disappears. Flat and passive trials map to no family, so neither
   family archive contains buy-and-hold trials any more.
-- One near-buy-and-hold trial per product stays non-passive (BTC none; ETH `exp-2e7c9b46a79a`, β 0.997, three
-  deviating days, `sd(ε_w)` = 2.8e-4): it trades, and it remains an ordinary trial.
+- One near-buy-and-hold trial stays non-passive (ETH `exp-2e7c9b46a79a`, β 0.997, three deviating days,
+  `sd(ε_w)` = 2.8e-4): it trades, and it remains an ordinary trial.
 
 **Alternative considered: drop the first day.** Refitting without day 1 gives nearly the same set (BTC 36, ETH
 38) but misses a BTC buy-and-hold variant that deviates on two days, and it only handles the entry day, not an
