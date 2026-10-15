@@ -370,9 +370,10 @@ labelled with its parent).
   without the ladder: BTC Sharpe 1.89 (2015-2020) / 0.83 (2021-2024) / 1.50 whole, drawdown −39%; ETH 1.64 / 1.11
   / 1.41, drawdown −33%. With the ladder BTC liquidates 2020-03-12, ETH 2023-09-11 (the 2017 ETH liquidation of the
   first rehearsal came from the bad prints).
-- [ ] Ask before merging and releasing.
+- [x] Ask before merging and releasing. Released `0.1.0-6e0fb907` (2026-10-15); host steps 1-8 done the same day,
+  review `docs/reviews/2026-10-15-long-dev-first-look.md`.
 
-**Host steps after release 4b** (who runs each in brackets):
+**Host steps after release 4b** (who runs each in brackets; all done 2026-10-15):
 
 1. [agent] `zqr fetch-data --product BTC-USD --granularity 1h --start 2015-07-20 --end 2021-01-01` and the same
    for ETH-USD from 2016-05-18 (the probe's 88,000 bars; resumable).
