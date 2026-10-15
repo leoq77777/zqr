@@ -17,6 +17,7 @@ from typing import Any
 
 from quant_research.desk import research as rl
 from quant_research.desk.config import load_config
+from quant_research.desk.portfolio_report import portfolio_section, versions_lines
 from quant_research.desk.promotion import roster_path
 from quant_research.desk.supervisor import state_file
 from quant_research.evaluation.split_stats import NEXT_SPLIT_EARLIEST
@@ -50,7 +51,7 @@ def paper_section(paths: Paths, day: str) -> tuple[list[str], dict[str, Any]]:
     for entry in sorted(roster.entries, key=lambda e: e.name):
         name = entry.name
         db = paths.paper / name / "paper.db"
-        if not db.exists():
+        if entry.source == "portfolio" or not db.exists():
             continue
         key = (entry.product, entry.granularity)
         if key not in stores:
@@ -176,6 +177,7 @@ def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[li
                          f"{', '.join(f'{k} {v}' for k, v in sorted(states.items())) or '-'} | "
                          f"{left}{' **(exhausted: no more automatic promotion)**' if left <= 0 else ''}"
                          f"{' **(contaminated by override)**' if store.holdout_overrides(m.split_id) else ''} |")
+        lines += versions_lines(store, cfg.mandates)
         lines.append(f"- Next split: earliest {NEXT_SPLIT_EARLIEST} (182 days validation + 182 days holdout after "
                      "the current holdout; appendix A11)")
     produced = [r for r in rows if r.get("candidate_id") or r.get("verdict")]
@@ -197,13 +199,15 @@ def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[li
 
 def write_daily_report(paths: Paths, store: ExperimentStore, day: str) -> Path:
     paper, ps = paper_section(paths, day)
+    portfolios, pfs = portfolio_section(paths, store, day)
     research, rs = research_section(paths, store, day)
     lines = [f"# Desk report {day} (UTC)", "",
              f"Generated {datetime.now(UTC):%Y-%m-%d %H:%M} UTC. Paper trading only; no live orders exist. "
              "Backtests and paper results are not evidence of live profitability.", "",
-             f"Summary: {ps['strategies']} paper strategies, {ps['alerts']} alerts, "
-             f"{ps['parity_mismatches']} parity mismatches; {rs['sessions']} research sessions, "
-             f"{rs['cost_usd']} USD.", "", *paper, "", *research, ""]
+             f"Summary: {pfs['portfolios']} paper portfolios, {ps['strategies']} paper strategies, "
+             f"{ps['alerts'] + pfs['alerts']} alerts, {ps['parity_mismatches'] + pfs['parity_mismatches']} parity "
+             f"mismatches; {rs['sessions']} research sessions, {rs['cost_usd']} USD.", "",
+             *([*portfolios, ""] if portfolios else []), *paper, "", *research, ""]
     out = paths.desk / "reports" / f"{day}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines))

@@ -32,6 +32,7 @@ from quant_research.bench.tasks import CONTRACT_V02, benchmark_dir
 from quant_research.controller.agent import ManualRunner, usage_from_transcripts
 from quant_research.controller.controller import ResearchController, SessionConfig, SessionState
 from quant_research.data.snapshot import load_manifest
+from quant_research.desk import softstop
 from quant_research.desk.config import DeskConfig, effective_network, load_check
 from quant_research.desk.promotion import promote
 from quant_research.desk.supervisor import CREDENTIAL_FILE, read_env_file
@@ -212,6 +213,8 @@ class ResearchLoop:
         now = self.clock()
         if not self.cfg.research_enabled:
             return self._wait("disabled", "research_enabled is false in desk/config.json", 600)
+        if softstop.active(self.paths) is not None:
+            return self._wait("paused", "soft stop: human review required (`zqr desk soft-stop clear --note`)", 600)
         if not [p for p in self.cfg.products if p in self.cfg.mandates]:
             return self._wait("blocked", "no desk mandates; run `zqr desk setup`", 600)
         if self.require_check and not load_check(self.paths).get("isolation_ok"):

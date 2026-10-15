@@ -99,11 +99,18 @@ def _recover(paths, cfg) -> list:
 
 
 def _report(paths, day: str) -> Path:
+    """The daily report; on the last day of a month also the monthly review (with the soft-stop rule)."""
+    from datetime import datetime, timedelta
+
+    from quant_research.desk.portfolio_report import write_monthly_report
     from quant_research.desk.report import write_daily_report
 
     store = _store(paths)
     try:
-        return write_daily_report(paths, store, day)
+        out = write_daily_report(paths, store, day)
+        if (datetime.strptime(day, "%Y-%m-%d") + timedelta(days=1)).day == 1:
+            write_monthly_report(paths, store, day[:7])
+        return out
     finally:
         store.close()
 
@@ -273,6 +280,32 @@ def cmd_report(args) -> None:
         _out({"report": str(path)})
 
 
+def cmd_monthly(args) -> None:
+    from quant_research.desk.portfolio_report import write_monthly_report
+
+    paths = get_paths(args.home)
+    store = _store(paths)
+    try:
+        _out({"report": str(write_monthly_report(paths, store, args.month))})
+    finally:
+        store.close()
+
+
+def cmd_soft_stop(args) -> None:
+    from quant_research.desk import softstop
+
+    paths = get_paths(args.home)
+    if args.action == "status":
+        _out(softstop.active(paths) or {"status": "none"})
+    elif args.action == "evaluate":
+        _out(softstop.evaluate(paths, args.day or time.strftime("%Y-%m-%d", time.gmtime())))
+    else:
+        try:
+            _out(softstop.clear(paths, args.note or ""))
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
+
+
 def cmd_recover(args) -> None:
     from quant_research.desk.config import load_config
 
@@ -393,6 +426,14 @@ def register(sub) -> None:
     p.add_argument("--day", help="YYYY-MM-DD (UTC)")
     p.add_argument("--print", action="store_true")
     p.set_defaults(fn=cmd_report)
+    p = desk.add_parser("monthly", help="write the monthly review of the paper portfolios")
+    p.add_argument("--month", required=True, help="YYYY-MM (UTC)")
+    p.set_defaults(fn=cmd_monthly)
+    p = desk.add_parser("soft-stop", help="investment policy 2: status, evaluate on a review day, clear (human)")
+    p.add_argument("action", choices=("status", "evaluate", "clear"))
+    p.add_argument("--day", help="review day YYYY-MM-DD (UTC) for evaluate; default today")
+    p.add_argument("--note", help="required for clear")
+    p.set_defaults(fn=cmd_soft_stop)
     p = desk.add_parser("research-loop", help="run the research loop in the foreground (the supervisor's child)")
     p.add_argument("--max-sessions", type=int)
     p.set_defaults(fn=cmd_research_loop)
