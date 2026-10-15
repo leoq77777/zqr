@@ -771,9 +771,13 @@ and drafting R5 for approval.
       isolated opens corrected (the human revised decision 1 when the comparison showed signals reading the ETH
       open), the guard only at isolated opens, revalidated lineage, family quotas over ancestors. Code and tests;
       full suite 375 passed, ruff.
-- [ ] R5 migration on the host, after the release (the rehearsal on a production copy produced the dataset ids
-      below; the ids are content hashes, so the host should reproduce them):
-  1. `zqr research stop`; let a running campaign session end.
+- [x] R5 migration on the host, after the release (the rehearsal on a production copy produced the dataset ids
+      below; the ids are content hashes, so the host should reproduce them). Released `0.1.0-4c165a83`; steps 1-6
+      done 2026-10-15, results identical to the rehearsal, review `docs/reviews/2026-10-15-a13-8-first-look.md`.
+      Deviation: the running campaign was cancelled too (it had no session; the loop blocks a campaign whose split
+      is not the desk mandate's). Research stays disabled until the human approves the new batch.
+  1. `research_enabled` false in the desk config (read at start, so before the release restart); let a running
+     campaign session end.
   2. Agent: `zqr extend-dataset --dataset coinbase-btc-usd-one_hour-0d7202d6b155 --start 2015-07-21
      --fill-policy ffill_flat` (expect `coinbase-btc-usd-one_hour-f9799521097f`) and the same for ETH from
      `coinbase-eth-usd-one_hour-8e0c6c544c93`, `--start 2016-06-01` (expect `coinbase-eth-usd-one_hour-d46750883306`);
@@ -782,6 +786,6 @@ and drafting R5 for approval.
      `revalidates`); new mandates on the new splits; `zqr desk use-mandate`.
   4. Agent: `zqr memory characterise`, `zqr memory run --sandbox docker`, seed portfolios,
      `zqr portfolio dev <vid> --reference`.
-  5. Human: cancel queued campaigns and re-approve their replacements on the new splits (a running one finishes on
-     the old split).
+  5. Human: cancel the campaigns on the old splits; agent: `zqr campaign generate` on the new splits; human:
+     approve, then `research_enabled` true and `zqr restart` (the loop reads the config and mandates at start).
   6. Agent: first-look review, old against new long dev for the seeds and references.
