@@ -136,7 +136,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (364 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (372 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -169,7 +169,9 @@ promotes single candidates (phase 4 D8; that code stays for controls and benchma
    - The workspace is frozen.
    - The audit checks that every experiment has a matching tool event and that egress logged no denials other
      than the model host.
-   - Cost comes from priced transcript usage; without a price the cost is `unpriced` and the loop stops.
+   - Cost comes from priced usage (the CLI's report, else the transcripts). Without a price the cost is
+     `unpriced`; with no usage at all from a run that may have called the model it is `cost_unknown`. Both are
+     booked at the CLI's estimate or else the reservation, and the loop stops.
    - The outcome is classified.
    - The session's cost, experiments and notes go on the campaign; a valid `conclusion` is recorded.
    - Gates and the end of the campaign are settled at once (section 5.11).
@@ -393,7 +395,9 @@ Rules: `docs/investment-policy.md` (D1-D3) and appendix A14 (D4-D7). Plan:
   executed target (which starts at 0: the account starts in cash), on a full exit, or when the ladder level
   changes. Ladder on the drawdown from the peak bar-close equity: −20% yellow flag, −25% halved (×0.5), back to
   full at −15%, −30% liquidated and halted until a human resume (which resets the peak). Paper catch-up bars update
-  the ladder without trading; a level change seen there trades at the next decision.
+  the ladder without trading; a level change seen there trades at the next decision. Paper only: a sent order
+  leaves its target open (`open_target`) until it fills in full without being cut by `max_order_notional`; while
+  a target is open every bar re-issues the current target, so a capped, rejected or lost order is completed later.
 - **Backtest.** `run_backtest(..., decider=...)` calls `decide(i, equity, position)` at each decision bar and
   `executed(i, target)` after a fill; it needs delay 0 and uses tolerance 0. `run_portfolio` runs a version and
   logs every decision; the same run with a ladder at −∞ gives the drawdown without the ladder (D4).
@@ -420,9 +424,13 @@ Rules: `docs/investment-policy.md` (D1-D3) and appendix A14 (D4-D7). Plan:
   fleet loads the version body into `PaperConfig.portfolio` (part of the identity hash, so changing the version is
   refused) and runs a `PortfolioTrader`: the blend on the trader's history, the same decider, order cap = capital
   (D1), zero tolerance. Its state is the ledger key `portfolio_state`; every bar gets a decision record with a
-  `portfolio` block (blend, family targets, level, `pre_state`, order target). `zqr portfolio resume <name>
-  --note` writes `paper/<name>/resume.json`, applied once at the next bar and logged as an ALERT. Portfolio
-  entries do not count against the candidate paper slots.
+  `portfolio` block (blend, family targets, level, `pre_state`, order target); the order in flight is the key
+  `portfolio_open_order`. `zqr portfolio resume <name> --note --review docs/reviews/<file>.md [--stdin]` (P6)
+  needs 30 days since the liquidation (ledger key `portfolio_liquidated_at`, the bar-close time the ladder first
+  showed it) and a review of at least 200 characters; the review's text (read from the path, or from stdin on a
+  host without the repository) and its SHA-256 go into `paper/<name>/resume.json`. The trader re-checks it at the
+  next bar (still the same liquidation, review intact), applies it once and logs an ALERT, or renames it
+  `resume.rejected-<ts>.json`. Portfolio entries do not count against the candidate paper slots.
 - **Shadow portfolios** (phase 4, D2). `zqr portfolio shadow <vid> --note` (human) runs a version in `validated`,
   `failed_validation` or `failed_final` as the roster entry `shadow-<product>` (`shadow: true`), the same
   `PortfolioTrader` with the version's capital and costs, for forward evidence only. The version's state and the
@@ -488,7 +496,9 @@ Rules: design section 6 (campaigns), investment policy 5 (budget), plan D1-D8 an
 - **Family quotas** (P1). 100 trials per family per product split, counted from the split's own trials: the
   campaign sessions' experiments, `marginal_eval` calls (each experiment once) and gate 1's variant runs.
   Exploration campaigns share 25% of the sum of the sleeve families' quotas. A family at quota gets no campaign and
-  no registration.
+  no registration. The quota holds per action: a session's allowance is at most the trials its campaign and family
+  have left; before each experiment and each `marginal_eval` the gateway re-checks both with the session's own
+  trials counted; a registration needs room for all its variant runs.
 - **Generator** (`generate.py`, dev data only, D6). Proposals from the reference version's dev run without the
   ladder and the family archives: regime gaps (a year where the reference lagged its mean exposure to the market, as
 a log shortfall; the years go round the sleeve families), concentration of the
@@ -499,7 +509,9 @@ a log shortfall; the years go round the sleeve families), concentration of the
 - **Budget** (D7, `budget.py`). Before each session the loop reserves `session_reserve_usd` against the campaign,
   the UTC day and the month; the booked cost replaces it afterwards. The day ($5), month ($83.33) and sessions per
   day (12) are ceilings in code: the desk config may lower them, not raise them. A session that costs more than
-  its reservation, or a model call without a price, writes `desk/budget_stop.json`; the loop stops until
+  its reservation, a model call without a price, or a run with no usage report that may have called the model
+  (`cost_unknown`: no egress record proves otherwise, or a crash left a transcript) writes
+  `desk/budget_stop.json`; the loop stops until
   `zqr campaign budget clear --note` (human; the record is kept as `budget_stop.cleared-<ts>.json`). Prices: a
   model named in `campaign_models` takes that preset, otherwise the model name decides (DeepSeek flash or pro).
 - **Brief** (`brief.py`). Goal, prior and citations; dollars, sessions and experiments left and this session's
@@ -600,7 +612,7 @@ These must hold after any change. Tests cover most of them.
 | `desk/inbox/<run_id>/` | Inbox drafting run: `run.json`, `result.json`, `workspace/` (with `draft.json`), egress log, transcript |
 | `desk/state.json`, `desk/logs/`, `desk/reports/` | Supervisor state, logs, daily reports and monthly reviews (`monthly-YYYY-MM.md`) |
 | `desk/soft_stop.json`, `desk/soft_stop.cleared-*.json` | Active soft stop (research paused); cleared ones with the human's note |
-| `desk/budget_stop.json`, `desk/budget_stop.cleared-*.json` | Active budget stop (research stopped: overrun or unpriced call); cleared ones with the human's note |
+| `desk/budget_stop.json`, `desk/budget_stop.cleared-*.json` | Active budget stop (research stopped: overrun, unpriced call or unknown cost); cleared ones with the human's note |
 | `library/returns/`, `library/archives/`, `library/reports/` | Daily return archive per split, family archives, clustering reports |
 | `tmp/` | Release container only: scratch dirs mounted into sibling containers |
 

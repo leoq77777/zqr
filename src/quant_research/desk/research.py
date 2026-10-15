@@ -343,7 +343,7 @@ class ResearchLoop:
         n = self.state.get("sessions_started", 0)
         rem = self.campaigns.remaining(cid)
         b = mandate.budget.max_experiments
-        allowance = int(min(b, rem["experiments"]))
+        allowance = min(b, self.campaigns.trials_left(self.paths, cid))
         last = rem["sessions"] <= 1 or rem["usd"] - reserve < reserve
         run_id = f"desk-{datetime.fromtimestamp(self.clock(), tz=UTC):%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
         brief = session_brief(self.paths, self.store, cid, run_id, mandate, allowance, last)
@@ -406,8 +406,9 @@ class ResearchLoop:
                 research = json.loads(research_file.read_text())
             except ValueError:
                 research = None
-        u = run.usage if run else usage_from_transcripts(run_dir / TRANSCRIPT_DIR)
-        cost, cost_source = self._cost(run, u)
+        u = (run.usage if run else None) or usage_from_transcripts(run_dir / TRANSCRIPT_DIR)
+        cost, cost_source = self._cost(run, u, meta.get("reserved_usd"),
+                                       self._maybe_called(run_dir, egress_records, crash))
         failure, details = self._classify(run, audit, egress, harness_error, research, crash)
         if self.stop_requested and failure not in ("none", "audit.failed"):
             failure, details = "desk.stopped", ["desk stop requested during the session", *details]
@@ -463,7 +464,11 @@ class ResearchLoop:
     def _book_stop(self, run_id: str, cost: float, cost_source: str, reserved: float | None,
                    models: str | None) -> None:
         if cost_source == "unpriced":
-            budget.stop(self.paths, f"model call without a configured price ({models})", run_id=run_id)
+            budget.stop(self.paths, f"model call without a configured price ({models}); booked {cost:.4f} USD",
+                        run_id=run_id, cost_usd=cost)
+        elif cost_source == "cost_unknown":
+            budget.stop(self.paths, f"run {run_id} reported no usage; booked at its reservation {cost:.2f} USD until "
+                                    "the human reconciles it", run_id=run_id, cost_usd=cost)
         elif reserved is not None and cost > reserved:
             budget.stop(self.paths, f"session {run_id} cost {cost:.4f} USD, above its reservation "
                                     f"{reserved:.2f} USD", run_id=run_id, cost_usd=cost)
@@ -524,8 +529,9 @@ class ResearchLoop:
 
         iid = meta["inbox_id"]
         egress = summarize(egress_records) if (self.isolate_network and egress_records) else None
-        u = run.usage if run else usage_from_transcripts(run_dir / TRANSCRIPT_DIR)
-        cost, cost_source = self._cost(run, u)
+        u = (run.usage if run else None) or usage_from_transcripts(run_dir / TRANSCRIPT_DIR)
+        cost, cost_source = self._cost(run, u, meta.get("reserved_usd"),
+                                       self._maybe_called(run_dir, egress_records, crash))
         draft, problem = read_draft(run_dir / "workspace")
         no_model = run is None or run.usage is None or (run.usage.input_tokens + run.usage.output_tokens) == 0
         if crash:
@@ -592,7 +598,10 @@ class ResearchLoop:
         self.state = _save_state(self.paths, self.state, current_run=None, last_run_id=meta["run_id"])
         return result
 
-    def _cost(self, run: AgentRun | None, u) -> tuple[float, str]:
+    def _cost(self, run: AgentRun | None, u, reserved: float | None = None,
+              maybe_called: bool = True) -> tuple[float, str]:
+        """Booked cost and its source. Without a price or without any usage report, a run that may have called the
+        model is booked at the CLI's estimate or else its reservation, and `_book_stop` stops the loop."""
         models = (run.extra.get("models") if run else None) or (u.model.split(",") if u and u.model else [])
         pricing = budget.price_for(self.cfg, models)
         if u and pricing:
@@ -601,9 +610,21 @@ class ResearchLoop:
         if u is not None and (u.input_tokens + u.output_tokens) == 0:
             return 0.0, "no_tokens"
         estimate = run.cli_cost_usd if run is not None else None
+        booked = round(float(estimate if estimate is not None else reserved or 0.0), 6)
         if u is None and estimate is None:
-            return 0.0, "no_tokens"
-        return round(float(estimate or 0.0), 6), "unpriced"
+            return (booked, "cost_unknown") if maybe_called else (0.0, "no_tokens")
+        return booked, "unpriced"
+
+    def _maybe_called(self, run_dir: Path, egress_records: list[dict[str, Any]], crash: bool) -> bool:
+        """Whether a run without a usage report may have called the model. An isolated run that ended normally has
+        the proxy's full record; otherwise (no isolation, or a crash with tunnels still open, which the proxy logs
+        only when they close) any transcript or logged tunnel counts."""
+        if self.isolate_network and not crash:
+            return summarize(egress_records)["model_tunnels"] > 0
+        log = run_dir / "egress.jsonl"
+        logged = [json.loads(x) for x in log.read_text().splitlines() if x.strip()] if log.is_file() else []
+        transcripts = run_dir / TRANSCRIPT_DIR
+        return summarize(logged)["model_tunnels"] > 0 or (transcripts.is_dir() and any(transcripts.rglob("*")))
 
     @staticmethod
     def _classify(run: AgentRun | None, audit: dict, egress: dict | None, harness_error: str | None,

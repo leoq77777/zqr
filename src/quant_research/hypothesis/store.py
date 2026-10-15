@@ -72,9 +72,9 @@ class HypothesisStore:
         from quant_research.campaign.store import CampaignStore
 
         q = CampaignStore(self.store).quota(paths, split_id, hypothesis.family)
-        if q["room"] <= 0:
-            raise HypothesisError(f"{hypothesis.family} is at its quota on {split_id} ({q['used']} of "
-                                  f"{q['quota']} trials, P1)")
+        if q["quota"] - q["used"] < len(hypothesis.variants):
+            raise HypothesisError(f"{hypothesis.family} has no room for {len(hypothesis.variants)} variant run(s) on "
+                                  f"{split_id} ({q['used']} of {q['quota']} trials used, P1)")
         variants = self._normalized_variants(paths, hypothesis)
         self._check_citations(hypothesis, split_id)
         if hypothesis.campaign_id and self.store.query("SELECT id FROM hypotheses WHERE campaign_id=?",

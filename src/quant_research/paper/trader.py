@@ -98,6 +98,7 @@ class PaperTrader:
         self.last_price: Decimal | None = None
         self.halted_reason: str | None = self.ledger.get("halted_reason")
         self._not_found: dict[str, int] = {}
+        self.size_capped = False  # the last sized order was cut by max_order_notional
         if self.ledger.get("initial_balances") is None:
             self.ledger.put("initial_balances", {product.base_currency: str(cfg.initial_base),
                                                  product.quote_currency: str(cfg.initial_quote)})
@@ -342,11 +343,13 @@ class PaperTrader:
             slip = 1 + self.cfg.slippage_bps / 10_000
             fee_room = (1 + self.cfg.fee_rate) * slip * (1 + D(self.cfg.buy_cash_buffer))
             # The backtest buys delta's worth at the slipped fill price: quantity delta / (price * (1 + slippage)).
-            notional = min(delta / slip, bal[p.quote_currency] / fee_room, max_notional)
+            uncapped = min(delta / slip, bal[p.quote_currency] / fee_room)
             side = Side.BUY
         else:
-            notional = min(-delta, max_notional)
+            uncapped = -delta
             side = Side.SELL
+        notional = min(uncapped, max_notional)
+        self.size_capped = uncapped > max_notional
         qty = p.quantize_base(notional / price)
         if side == Side.SELL:
             if decision.target_fraction == 0.0 and -delta <= max_notional:

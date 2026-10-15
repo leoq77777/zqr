@@ -1,10 +1,12 @@
 """Paper trading of portfolio versions (design 5.9): replay against the backtest, restart, catch-up, resume, fleet
 and approval."""
 
+import json
 import math
 import os
 from decimal import Decimal
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -123,6 +125,12 @@ def test_catch_up_bars_update_the_ladder_without_trading(tmp_path):
     assert not trader.ledger.get("portfolio_state")["pending"]
 
 
+REVIEW_REF = "docs/reviews/2026-11-20-btc-liquidation.md"
+REVIEW = ("The cause of the drawdown was a four-week decline that every sleeve held through. The thesis still "
+          "holds: the trend sleeve exited late but in line with its dev behaviour. Dev covered a comparable regime "
+          "(2022), so the version resumes unchanged.")
+
+
 def test_liquidated_portfolio_waits_for_resume(tmp_path):
     from quant_research.portfolio.paper import request_resume
 
@@ -134,19 +142,112 @@ def test_liquidated_portfolio_waits_for_resume(tmp_path):
     for bar in rows[420:440]:
         rec = _deliver(trader, clock, bar)
         assert rec["intent"] is None and rec["portfolio"]["level"] == "liquidated"
+    liquidated_at = trader.ledger.get("portfolio_liquidated_at")
+    assert liquidated_at is not None and trader.write_health()["portfolio"]["liquidated_at"] == liquidated_at
+    later = liquidated_at + 31 * 86_400
     with pytest.raises(VersionError, match="no paper ledger"):
-        request_resume(paths, "other", "go")
+        request_resume(paths, "other", "go", REVIEW_REF, REVIEW, now=later)
     with pytest.raises(VersionError, match="note"):
-        request_resume(paths, "c", " ")
-    request_resume(paths, "c", "drawdown reviewed; resume")
-    assert trader.write_health()["portfolio"]["resume_pending"]
+        request_resume(paths, "c", " ", REVIEW_REF, REVIEW, now=later)
+    with pytest.raises(VersionError, match="docs/reviews"):
+        request_resume(paths, "c", "go", "notes/drawdown.md", REVIEW, now=later)
+    with pytest.raises(VersionError, match="shorter than 200"):
+        request_resume(paths, "c", "go", REVIEW_REF, "fine", now=later)
+    with pytest.raises(VersionError, match="less than 30 days"):
+        request_resume(paths, "c", "go", REVIEW_REF, REVIEW, now=liquidated_at + 29 * 86_400)
+    request_resume(paths, "c", "tampered", REVIEW_REF, REVIEW, now=later)
+    f = paths.paper / "c" / "resume.json"
+    f.write_text(f.read_text().replace("cause", "c4use"))
     rec = _deliver(trader, clock, rows[440])
+    assert rec["portfolio"]["level"] == "liquidated" and not f.exists()
+    assert "portfolio_resume_rejected" in (paths.paper / "c" / "events.jsonl").read_text()
+    request_resume(paths, "c", "drawdown reviewed; resume", REVIEW_REF, REVIEW, now=later)
+    assert trader.write_health()["portfolio"]["resume_pending"]
+    rec = _deliver(trader, clock, rows[441])
     assert rec["portfolio"]["level"] == "full" and rec["portfolio"]["peak"] == pytest.approx(float(rec["equity"]))
-    assert rec["intent"]["side"] == "buy"
+    assert rec["intent"]["side"] == "buy" and trader.ledger.get("portfolio_liquidated_at") is None
     events = (paths.paper / "c" / "events.jsonl").read_text()
-    assert "portfolio_resumed" in events and not (paths.paper / "c" / "resume.json").exists()
+    assert "portfolio_resumed" in events and not f.exists()
+    applied = json.loads(next((paths.paper / "c").glob("resume.applied-*.json")).read_text())
+    assert applied["review"] == REVIEW and applied["review_ref"] == REVIEW_REF
     with pytest.raises(VersionError, match="not liquidated"):
-        request_resume(paths, "c", "again")
+        request_resume(paths, "c", "again", REVIEW_REF, REVIEW, now=later)
+
+
+# -- order completion ------------------------------------------------------------------------------------------
+
+HOLD = (Member(entry_id="b", family="hold", strategy_ref="template:buy_and_hold"),)
+
+
+def _capped_cfg(v, cap=3000):
+    return _cfg(v, risk=RiskLimits(max_order_notional=cap, max_orders_per_hour=100, max_daily_loss_fraction=0.99))
+
+
+def _fraction(trader, price):
+    price = Decimal(str(price))
+    return float(trader.balances()["BTC"] * price / trader.equity(price))
+
+
+def test_capped_orders_keep_the_target_open_until_filled(tmp_path):
+    bars, v = _bars(20), _version(HOLD)
+    trader = run_replay(_capped_cfg(v), bars, tmp_path / "p", PRODUCT)
+    buys = [d for d in trader.ledger.decisions() if d["intent"]]
+    assert len(buys) == 4 and all(d["portfolio"]["order_target"] == 1.0 for d in buys)
+    assert [d["portfolio"]["pre_state"]["open_target"] for d in buys] == [None, 1.0, 1.0, 1.0]
+    assert trader.decider.state.last_target == 1.0 and trader.decider.state.open_target is None
+    assert _fraction(trader, bars["close"].iloc[-1]) > 0.99
+    assert "portfolio_target_incomplete" in (tmp_path / "p" / "events.jsonl").read_text()
+
+
+def test_target_is_reached_after_the_account_outgrows_the_cap(tmp_path):
+    close = np.array([100, 101, 102, 200, 300, 290, 280, 270, 260, 250, 251, 252, 253, 254, 255, 256], float)
+    bars = _bars(len(close))
+    bars["close"] = close
+    bars["open"] = np.r_[close[0], close[:-1]]
+    bars["high"] = np.maximum(bars.open, bars.close)
+    bars["low"] = np.minimum(bars.open, bars.close)
+    v = _version((Member(entry_id="a", family="trend", strategy_ref="template:sma_cross",
+                         parameters={"fast": 1, "slow": 2}),),
+                 engine_config=EngineConfig(costs=CostConfig(fee_rate=0, slippage_bps=0)))
+    trader = run_replay(_capped_cfg(v, cap=10000), bars, tmp_path / "g", PRODUCT)
+    assert trader.decider.state.last_target == 1.0 and trader.decider.state.open_target is None
+    assert _fraction(trader, close[-1]) > 0.99
+
+
+def test_an_order_lost_at_the_broker_is_reissued(tmp_path):
+    from quant_research.paper.broker import BrokerTimeout
+
+    bars, v = _bars(20), _version(HOLD)
+    clock = {"now": 0.0}
+    trader = make_trader(_cfg(v), tmp_path / "u", PRODUCT, clock=lambda: clock["now"])
+    real_submit, real_query = trader.broker.submit, trader.broker.query
+
+    def lost(intent):
+        raise BrokerTimeout("no answer")
+
+    trader.broker.submit, trader.broker.query = lost, lambda cid: None
+    rows = bars.to_dict("records")
+    _deliver(trader, clock, rows[0])
+    assert trader.decider.state.open_target == 1.0 and trader.decider.state.last_target == 0.0
+    trader.broker.submit, trader.broker.query = real_submit, real_query
+    for bar in rows[1:4]:
+        trader.broker.query = lambda cid: None
+        _deliver(trader, clock, bar)
+        trader.broker.query = real_query
+    for bar in rows[4:8]:
+        _deliver(trader, clock, bar)
+    assert trader.decider.state.last_target == 1.0 and _fraction(trader, rows[7]["close"]) > 0.99
+
+
+def test_open_order_survives_a_restart(tmp_path):
+    bars, v = _bars(20), _version(HOLD)
+    first = run_replay(_capped_cfg(v), bars.iloc[:2], tmp_path / "split", PRODUCT)
+    assert first.ledger.get("portfolio_open_order")["capped"]
+    assert first.decider.state.open_target == 1.0 and first.decider.state.last_target == 0.0
+    first.ledger.close()
+    second = run_replay(_capped_cfg(v), bars, tmp_path / "split", PRODUCT, warmup_bars=2)
+    assert second.decider.state.last_target == 1.0 and second.decider.state.open_target is None
+    assert _fraction(second, bars["close"].iloc[-1]) > 0.99
 
 
 # -- fleet and approval ----------------------------------------------------------------------------------------
@@ -261,18 +362,18 @@ def test_approve_adds_the_roster_entry(paths, store, dataset, monkeypatch):
 
 # -- parity ----------------------------------------------------------------------------------------------------
 
-def _parity(tmp_path, written, checked, tamper=None):
+def _parity(tmp_path, written, checked, tamper=None, cap=1e9):
     from quant_research.paper.fleet import Roster, RosterEntry
     from quant_research.paper.parity import portfolio_parity
 
     bars = _bars()
-    trader = run_replay(_cfg(written), bars, tmp_path / "p", PRODUCT)
+    trader = run_replay(_capped_cfg(written, cap), bars, tmp_path / "p", PRODUCT)
     if tamper:
         tamper(trader.ledger)
     vid = checked.version_id()
     entry = RosterEntry(name="pf", product="BTC-USD", strategy_ref=f"portfolio:{vid}", source="portfolio",
                         portfolio_version=vid, parameters={"version_id": vid}, fee_rate=0.001, slippage_bps=2)
-    roster = Roster(fee_rate=0.001, slippage_bps=2, risk=RiskLimits(max_order_notional=1e9))
+    roster = Roster(fee_rate=0.001, slippage_bps=2, risk=RiskLimits(max_order_notional=cap))
     return portfolio_parity(entry, roster, trader.ledger, bars, checked, None)
 
 
@@ -285,6 +386,13 @@ def test_portfolio_parity_is_clean_on_a_replay(tmp_path):
     assert out["checked"] == 400 and out["fills"] > 4
     assert not out["target_mismatches"] and not out["order_mismatches"] and not out["size_mismatches"]
     assert abs(out["path"]["equity_gap_bps"]) < 1 and abs(out["fill_vs_next_open_bps"]) < 0.01
+
+
+def test_portfolio_parity_is_clean_with_capped_orders(tmp_path):
+    v = _version(overlay=OVERLAY)
+    out = _parity(tmp_path, v, v, cap=3000)
+    assert out["allowed"].get("order_cap", 0) > 0
+    assert not out["target_mismatches"] and not out["order_mismatches"] and not out["size_mismatches"]
 
 
 def test_portfolio_parity_finds_a_changed_band(tmp_path):

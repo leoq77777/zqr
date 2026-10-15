@@ -6,6 +6,8 @@ and position value, and report back when an order was executed.
 - An order is generated when the target differs from the last executed target by at least the band, when the
   target is 0 and a position is open (full exits always execute), or when the ladder level changed. Price drift
   alone never trades. The account starts in cash, so the last executed target starts at 0.
+- Paper only: an order that does not complete its target (capped by the order limit, rejected, cancelled) leaves
+  the target open, and every later bar re-issues the current target until an order completes it.
 - Ladder on the drawdown from the peak bar-close equity: halved at `halve`, back to full at `recover`, liquidated
   and halted at `liquidate` until a human resumes; resume resets the peak to the current equity.
 - Paper catch-up bars after an outage update the ladder without trading; a level change seen there is traded at the
@@ -31,6 +33,7 @@ class DeciderState:
     yellow: bool = False
     drawdown: float = 0.0
     pending: bool = False  # a level change seen on a catch-up bar, not traded yet
+    open_target: float | None = None  # paper: an order target sent but not completed (capped, rejected, unfilled)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -82,10 +85,16 @@ class Decider:
         full_exit = t == 0.0 and position >= self.min_notional
         if changed or full_exit or abs(t - self.state.last_target) >= self.band - 1e-12:
             return t
+        if self.state.open_target is not None:
+            return t
         return math.nan
+
+    def sent(self, target: float) -> None:
+        self.state.open_target = float(target)
 
     def executed(self, target: float) -> None:
         self.state.last_target = float(target)
+        self.state.open_target = None
 
     def resume(self, equity: float) -> None:
         self.state = DeciderState(last_target=self.state.last_target, peak=float(equity))

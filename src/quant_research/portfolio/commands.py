@@ -117,9 +117,19 @@ def cmd_shadow(args) -> None:
 
 
 def cmd_resume(args) -> None:
+    import sys
+    from pathlib import Path
+
     from quant_research.portfolio.paper import request_resume
 
-    _run(args, lambda paths, store: request_resume(paths, args.name, args.note))
+    if args.stdin:
+        review = sys.stdin.read()
+    else:
+        f = Path(args.review)
+        if not f.is_file():
+            raise SystemExit(f"{args.review} not found here; on a deployment host pipe it in with --stdin")
+        review = f.read_text()
+    _run(args, lambda paths, store: request_resume(paths, args.name, args.note, args.review, review))
 
 
 def register(sub) -> None:
@@ -169,7 +179,11 @@ def register(sub) -> None:
     p.add_argument("version_id")
     p.add_argument("--note", required=True)
     p.set_defaults(fn=cmd_shadow)
-    p = pf.add_parser("resume", help="resume a liquidated paper portfolio at its next bar (resets the peak)")
+    p = pf.add_parser("resume", help="resume a liquidated paper portfolio at its next bar (resets the peak; 30 days "
+                      "after the liquidation, with a written review)")
     p.add_argument("name", help="roster name, e.g. portfolio-btc-usd or shadow-btc-usd")
     p.add_argument("--note", required=True)
+    p.add_argument("--review", required=True, help="the review, docs/reviews/<file>.md")
+    p.add_argument("--stdin", action="store_true", help="read the review's text from stdin (hosts without the "
+                   "repository: `zqr portfolio resume NAME --note ... --review docs/reviews/x.md --stdin < x.md`)")
     p.set_defaults(fn=cmd_resume)

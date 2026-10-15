@@ -55,7 +55,7 @@ class FakeAgent:
 
     def __init__(self, paths, store, script=("explore",), model="deepseek-v4-flash", tokens=20_000):
         self.paths, self.store, self.script, self.model, self.tokens = paths, store, list(script), model, tokens
-        self.calls, self.briefs, self.outputs, self.reports = 0, [], [], []
+        self.calls, self.briefs, self.outputs, self.reports, self.refusals = 0, [], [], [], []
 
     def run(self, workspace, mcp_config, timeout_s, network=None, label=None, transcript_dir=None):
         self.calls += 1
@@ -77,7 +77,12 @@ class FakeAgent:
         self.store.log_session_event(sid, "tool_call", {"tool": "submit_experiment",
                                                         "args": {"idempotency_key": f"k{self.calls}"}})
         eid = exp["experiment_id"]
-        self.outputs += [exp, gw.marginal_eval(eid), gw.portfolio_members(), gw.history(), gw.get_experiment(eid)]
+        self.outputs.append(exp)
+        try:
+            self.outputs.append(gw.marginal_eval(eid))
+        except PolicyRefusal as exc:
+            self.refusals.append(str(exc))
+        self.outputs += [gw.portfolio_members(), gw.history(), gw.get_experiment(eid)]
         with contextlib.suppress(GatewayError):
             self.outputs.append(gw.family_archive("tsmom"))
         if action == "register":
@@ -273,9 +278,31 @@ def test_family_quota_ends_campaigns_and_refuses_registration(paths, store, data
         "reason"]
     with pytest.raises(CampaignError, match="at its quota"):
         cs.add(paths, _spec(), {"kind": "human"}, "human")
-    with pytest.raises(HypothesisError, match="at its quota"):
+    with pytest.raises(HypothesisError, match="no room for 1 variant"):
         HypothesisStore(store).register(paths, _hyp(), "human")
     assert cs.quota(paths, dataset[1].split_id, "exploration")["quota"] == 0.25 * 2 * 4
+
+
+def test_family_quota_is_enforced_per_action(paths, store, dataset, monkeypatch):
+    _reference(paths, store, dataset)
+    monkeypatch.setattr(cstore, "FAMILY_QUOTA", 1)
+    cid = _queued(paths, store)
+    agent = FakeAgent(paths, store)
+    loop, _ = _loop(paths, store, agent)
+    loop.step()
+    cs = CampaignStore(store)
+    assert cs.sessions(cid)[0]["allowance"] == 1
+    assert agent.refusals == ["the campaign's trial cap or its family's quota is reached"]
+    assert cs.quota(paths, dataset[1].split_id, "tsmom")["used"] == 1
+
+
+def test_registration_reserves_room_for_every_variant(paths, store, dataset, monkeypatch):
+    _reference(paths, store, dataset)
+    monkeypatch.setattr(cstore, "FAMILY_QUOTA", 1)
+    two = [{"strategy_ref": "template:momentum", "parameters": {"lookback": n}} for n in (48, 96)]
+    with pytest.raises(HypothesisError, match="no room for 2 variant"):
+        HypothesisStore(store).register(paths, _hyp(variants=two), "human")
+    assert HypothesisStore(store).register(paths, _hyp(), "human")["state"] == "registered"
 
 
 def test_idle_without_a_campaign_makes_no_model_call(paths, store, dataset):
@@ -327,7 +354,7 @@ def test_campaign_dollar_cap_refuses_a_reservation_that_does_not_fit(paths, stor
 def test_overrun_and_unpriced_calls_stop_the_loop_until_cleared(paths, store, dataset):
     _reference(paths, store, dataset)
     _queued(paths, store)
-    agent = FakeAgent(paths, store, tokens=2_000_000)  # about 0.57 USD against a 0.25 reservation
+    agent = FakeAgent(paths, store, tokens=1_000_000)  # about 0.29 USD against a 0.25 reservation
     loop, _ = _loop(paths, store, agent)
     assert loop.step()["ran"]
     assert "above its reservation" in budget.active_stop(paths)["reason"]
@@ -338,7 +365,7 @@ def test_overrun_and_unpriced_calls_stop_the_loop_until_cleared(paths, store, da
     assert budget.clear_stop(paths, "reserve raised")["status"] == "cleared"
     agent.tokens, loop.adapter_model = 20_000, "mystery-model"
     res = loop.step()["result"]
-    assert res["cost_source"] == "unpriced" and res["cost_usd"] == 0.0
+    assert res["cost_source"] == "unpriced" and res["cost_usd"] == res["reserved_usd"] == 0.25
     assert "mystery-model" in budget.active_stop(paths)["reason"]
     budget.clear_stop(paths, "priced")
     loop.cfg = loop.cfg.model_copy(update={"model": "mystery-model"})
@@ -595,7 +622,32 @@ def test_a_cli_cost_estimate_without_a_price_is_still_unpriced(paths, store):
     loop, _ = _loop(paths, store, FakeAgent(paths, store))
     usage = TokenUsage(model="mystery-model", input_tokens=1000, output_tokens=100)
     run = SimpleNamespace(extra={"models": ["mystery-model"]}, cli_cost_usd=0.12)
-    assert loop._cost(run, usage) == (0.12, "unpriced")
+    assert loop._cost(run, usage, 0.25) == (0.12, "unpriced")
     assert loop._cost(run, TokenUsage(model="mystery-model"))[1] == "no_tokens"
+    run.cli_cost_usd = None
+    assert loop._cost(run, usage, 0.25) == (0.25, "unpriced")
     run.extra = {"models": ["deepseek-v4-flash"]}
     assert loop._cost(run, usage)[1] == "priced_usage"
+
+
+def test_a_run_without_usage_is_booked_at_its_reservation(paths, store, dataset):
+    _reference(paths, store, dataset)
+    _queued(paths, store)
+    loop, _ = _loop(paths, store, FakeAgent(paths, store))
+    assert loop._cost(None, None, 0.25, maybe_called=True) == (0.25, "cost_unknown")
+    assert loop._cost(None, None, 0.25, maybe_called=False) == (0.0, "no_tokens")
+    run_dir = rl.sessions_dir(paths) / "r"
+    (run_dir / rl.TRANSCRIPT_DIR).mkdir(parents=True)
+    assert not loop._maybe_called(run_dir, [], crash=True)
+    (run_dir / rl.TRANSCRIPT_DIR / "t.jsonl").write_text("{}\n")
+    assert loop._maybe_called(run_dir, [], crash=True)
+    loop.isolate_network = True
+    assert not loop._maybe_called(run_dir, [], crash=False)
+    assert loop._maybe_called(run_dir, [{"kind": "proxy", "allowed": True, "host": "api"}], crash=False)
+    loop.isolate_network = False
+    loop.adapter = FakeAgent(paths, store, ["env_fail"])
+    loop._maybe_called = lambda *a: True
+    res = loop.step()["result"]
+    assert res["cost_source"] == "cost_unknown" and res["cost_usd"] == 0.25
+    stop = budget.active_stop(paths)
+    assert "reported no usage" in stop["reason"] and loop.step()["status"] == "budget_stop"

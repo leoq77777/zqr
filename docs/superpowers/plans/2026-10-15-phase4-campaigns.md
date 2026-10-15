@@ -749,3 +749,22 @@ the human asked to build and merge it directly. I6 is the plan decision recorded
       and name the existing archive and campaigns of the family; a funding-rate carry post was `infeasible`
       (perp short, funding data). 0.024 USD for both, no violations, no containers left; report and status lines
       checked.
+
+## After 4d: reassessment fixes (2026-10-15)
+
+Review `docs/reviews/2026-10-15-reassessment/zqr-reassessment.md` (for the human only; its probe script reproduces
+the defects as they were and fails on the fixed code). The human approved fixing R1-R4 without contract changes
+and drafting R5 for approval.
+
+- [x] R1: a portfolio order target stays open (`DeciderState.open_target`, ledger key `portfolio_open_order`)
+      until an order fills it in full without the `max_order_notional` cut; capped, rejected and lost orders are
+      re-issued; the backtest never opens a target, parity re-runs the decider from `pre_state` as before.
+- [x] R2: the family quota per action (`CampaignStore.trials_left`): session allowance, each experiment and each
+      `marginal_eval` re-checked live; a registration needs room for all its variants.
+- [x] R4: a run with no usage that may have called the model is `cost_unknown`, booked at its reservation, and
+      stops the loop; an unpriced run without the CLI's estimate is booked at its reservation too.
+- [x] R3: `zqr portfolio resume` enforces P6: 30 days from the recorded liquidation and a `docs/reviews/` review
+      carried with the request (`--stdin` on hosts), re-checked by the trader at the next bar.
+- [x] Tests converted from the probes; full suite 372 passed, ruff.
+- [ ] R5: draft amendment A13.8 and the new dataset versions,
+      `docs/superpowers/specs/2026-10-15-a13-8-extreme-prints-draft.md`; awaiting the human's decisions.

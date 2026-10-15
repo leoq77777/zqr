@@ -117,12 +117,17 @@ class ToolGateway:
         return cs.get(cid) if cid else None
 
     def _allowance(self) -> int:
-        """The mandate's experiment budget, lowered to what the session's campaign had left when it started."""
+        """The mandate's experiment budget, lowered to the session's allowance and to the trials its campaign and
+        family have left now (marginal evaluations of this session count too)."""
         from quant_research.campaign.store import CampaignStore
 
-        row = CampaignStore(self.store).session(self.sid)
+        cs = CampaignStore(self.store)
+        row = cs.session(self.sid)
         b = self.mandate.budget.max_experiments
-        return min(b, row["allowance"]) if row else b
+        if not row:
+            return b
+        live = self.store.session_usage_count(self.sid) + cs.trials_left(self.paths, row["campaign_id"])
+        return min(b, row["allowance"], live)
 
     def _gate(self) -> GateContext:
         b = self.mandate.budget
@@ -443,8 +448,8 @@ class ToolGateway:
         allowed = {self.sid} | ({s["session_id"] for s in cs.sessions(camp["id"])} if camp else set())
         if rec is None or rec["session_id"] not in allowed:
             raise GatewayError(f"unknown experiment {experiment_id}")
-        if camp and experiment_id not in cs.marginal_evals(camp["id"]) and cs.remaining(camp["id"])["experiments"] <= 0:
-            raise PolicyRefusal("the campaign's trial cap is reached")
+        if camp and experiment_id not in cs.marginal_evals(camp["id"]) and cs.trials_left(self.paths, camp["id"]) <= 0:
+            raise PolicyRefusal("the campaign's trial cap or its family's quota is reached")
         try:
             out = marginal(self.paths, self.store, experiment_id)
         except HypothesisError as exc:

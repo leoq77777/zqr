@@ -8,6 +8,7 @@ The body never changes; caps grow only by the top-ups of D7, recorded as events.
 from __future__ import annotations
 
 import json
+import math
 import time
 from typing import Any
 
@@ -255,6 +256,12 @@ class CampaignStore:
         used = self.family_trials(split_id, family)
         return {"family": family, "split_id": split_id, "used": used, "quota": quota,
                 "room": round(max(0.0, 1 - used / quota), 4) if quota else 0.0}
+
+    def trials_left(self, paths: Paths, cid: str) -> int:
+        """Trials the campaign may still count now: the lower of its own cap and its family's quota on the split."""
+        row = self.require(cid)
+        q = self.quota(paths, row["split_id"], row["family"])
+        return max(0, math.floor(min(self.remaining(cid)["experiments"], q["quota"] - q["used"]) + 1e-9))
 
     def quotas(self, paths: Paths, split_id: str) -> list[dict[str, Any]]:
         return [self.quota(paths, split_id, f) for f in [*sleeve_families(paths), EXPLORATION]]

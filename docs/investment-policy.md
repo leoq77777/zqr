@@ -52,7 +52,7 @@ Decided 2026-10-15 (phase 3, D3):
 - Decided 2026-10-15 (phase 4, P6): `zqr portfolio resume` is run no earlier than 30 days after the liquidation
   and only after a written review in `docs/reviews/`: what caused the drawdown, whether the version's thesis still
   holds, and whether the market regime is one the version's dev covered. Without the review the portfolio stays
-  halted or the version is retired.
+  halted or the version is retired. The command enforces both (`--review docs/reviews/<file>.md`).
 - The ladder is part of every portfolio version and runs in backtests and paper through one function (appendix A
   section A14).
 
