@@ -33,7 +33,7 @@ A personal systematic research desk for Coinbase BTC-USD and ETH-USD spot, long/
 | M5 Reliability and security | done | Network-enforced isolation, strict final-artifact grading, fault matrix, audit, cost ledger |
 | Desk (closed loop) | done, deployed | Paper fleet, research loop, auto_paper authorization, supervisor, daily report |
 | Release (images) | done | Runtime and agent images, `zqr release`, host wrapper `zqr`, desk as a container |
-| M6 Portfolio research | phase 3a built | Portfolio versions per product: blend of library members, deadband, drawdown ladder, dev/validation runs, holdout gate, paper portfolio trader, parity, reports, soft stop (section 5.9). Not yet released |
+| M6 Portfolio research | phase 3a released | Portfolio versions per product: blend of library members, deadband, drawdown ladder, dev/validation runs, holdout gate, paper portfolio trader, parity, reports, soft stop (section 5.9). Phase 3b (new hypotheses, version switching, probation) not started |
 | M7 Paper (full) | partial | Parity on targets, orders and fills, stale-data halt, restart recovery from the bar store are in; reconciliation and drills beyond tests are not |
 
 ## 3. Architecture
