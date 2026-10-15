@@ -4,7 +4,7 @@ Rules: `docs/contracts-v2-appendix-a.md` (A1-A5, A7, A12). Residual correlations
 
 ## BTC-USD (`split-1016c7c9873a`)
 
-Trials: 896 (891 with returns, 5 without; 3 flat, 37 passive). Clustering input `87b9c0c1928eda4f`.
+Trials: 896 (891 with returns, 5 without; 3 flat, 37 passive). Clustering input `7e9eefcf23d6e22c`.
 
 | ρ threshold | 0.3 | 0.5 | 0.7 |
 |---|---|---|---|
@@ -24,7 +24,7 @@ Largest clusters at ρ 0.3:
 
 | cluster | size | family (basis) | session topics | strategies | best dev Sharpe |
 |---|---|---|---|---|---|
-| `exp-0105d095cb8e` | 454 | ewma_trend (seed) | trend 248, multi_timeframe 176, volatility_filter 11, seed 10 | plugin 444, template:ewma_trend 3, template:tsmom 3 | 1.08 |
+| `exp-0105d095cb8e` | 454 | ewma_trend + tsmom (seed, shared) | trend 248, multi_timeframe 176, volatility_filter 11, seed 10 | plugin 444, template:tsmom 3, template:ewma_trend 3 | 1.08 |
 | `exp-032b6bd1dc99` | 139 | vol_overlay (seed) | volatility_filter 138, seed 1 | plugin 138, template:vol_target 1 | 0.63 |
 | `exp-07aaf1ad524b` | 51 | unmapped | multi_timeframe 50, trend 1 | plugin 51 | -5.16 |
 | `exp-1271b34fb3f3` | 28 | short_term_reversal (tags) | mean_reversion 28 | plugin 28 | 1.24 |
@@ -40,21 +40,21 @@ Largest clusters at ρ 0.3:
 | `exp-6f66f9f8715d` | 4 | short_term_reversal (tags) | mean_reversion 4 | plugin 4 | 0.43 |
 | `exp-0383f0283ce4` | 3 | short_term_reversal (tags) | mean_reversion 3 | plugin 3 | -1.19 |
 
-Trials by family at ρ 0.3: ewma_trend 454, short_term_reversal 182, tsmom 2, unmapped 67, vol_overlay 146.
+Trials by family at ρ 0.3: ewma_trend 454, short_term_reversal 182, tsmom 456, unmapped 67, vol_overlay 146. A shared cluster counts under each of its families (454 trials in shared clusters); deduplicated, 784 trials are mapped to a family.
 
 Seed placement:
 
 | seed | dev Sharpe | split DSR | cluster ρ 0.3 (size) | cluster ρ 0.7 (size) |
 |---|---|---|---|---|
 | btc-brock-1-200 | 0.69 | 0.063 | `exp-0105d095cb8e` (454) | `exp-0105d095cb8e` (36) |
-| btc-ewma-16-48 | 0.71 | 0.068 | `exp-0105d095cb8e` (454) | `exp-191a02405ccf` (3) |
-| btc-ewma-32-96 | 0.36 | 0.016 | `exp-0105d095cb8e` (454) | `exp-191a02405ccf` (3) |
-| btc-ewma-8-24 | 0.30 | 0.012 | `exp-0105d095cb8e` (454) | `exp-191a02405ccf` (3) |
-| btc-faber-10m | 0.61 | 0.047 | `exp-0105d095cb8e` (454) | `exp-6b90b812ae50` (2) |
-| btc-tsmom-12m | 1.01 | 0.175 | `exp-0105d095cb8e` (454) | `exp-95294e1fbe03` (1) |
-| btc-tsmom-1m | 0.38 | 0.017 | `exp-0105d095cb8e` (454) | `exp-6a1df7681268` (1) |
-| btc-tsmom-1w | 0.11 | 0.005 | `exp-6bf226feef2e` (2) | `exp-6bf226feef2e` (1) |
-| btc-tsmom-3m | 0.40 | 0.020 | `exp-0105d095cb8e` (454) | `exp-f820c69541fb` (1) |
+| btc-ewma-16-48 | 0.71 | 0.068 | `exp-0105d095cb8e` (454) | `exp-66c7207c1ac6` (3) |
+| btc-ewma-32-96 | 0.36 | 0.016 | `exp-0105d095cb8e` (454) | `exp-66c7207c1ac6` (3) |
+| btc-ewma-8-24 | 0.30 | 0.012 | `exp-0105d095cb8e` (454) | `exp-66c7207c1ac6` (3) |
+| btc-faber-10m | 0.61 | 0.047 | `exp-0105d095cb8e` (454) | `exp-e2956351ab39` (2) |
+| btc-tsmom-12m | 1.01 | 0.175 | `exp-0105d095cb8e` (454) | `exp-5ccb9b47156b` (1) |
+| btc-tsmom-1m | 0.38 | 0.017 | `exp-0105d095cb8e` (454) | `exp-762132ec618d` (1) |
+| btc-tsmom-1w | 0.11 | 0.005 | `exp-755005d7fcb8` (2) | `exp-755005d7fcb8` (1) |
+| btc-tsmom-3m | 0.40 | 0.020 | `exp-0105d095cb8e` (454) | `exp-8f1d15305f28` (1) |
 | btc-turtle-s1 | 0.20 | 0.007 | `exp-0105d095cb8e` (454) | `exp-012f341d77b4` (6) |
 | btc-turtle-s2 | 0.27 | 0.011 | `exp-0105d095cb8e` (454) | `exp-01d04bc6f3f0` (34) |
 | btc-voltarget-1m | 0.47 | 0.026 | `exp-032b6bd1dc99` (139) | `exp-16905e71f137` (10) |
@@ -81,7 +81,7 @@ Top 10 non-flat trials by dev Sharpe (daily), split DSR against the legacy DSR:
 
 ## ETH-USD (`split-c47a0be57a24`)
 
-Trials: 913 (911 with returns, 2 without; 1 flat, 38 passive). Clustering input `ceb59a6bcdcad509`.
+Trials: 913 (911 with returns, 2 without; 1 flat, 38 passive). Clustering input `992d8daa43f1a01d`.
 
 | ρ threshold | 0.3 | 0.5 | 0.7 |
 |---|---|---|---|
@@ -103,7 +103,7 @@ Largest clusters at ρ 0.3:
 |---|---|---|---|---|---|
 | `exp-0055d5485f98` | 424 | channel_breakout (seed) | trend 222, multi_timeframe 183, volatility_filter 15, seed 3 | plugin 421, template:breakout 2, template:tsmom 1 | 1.22 |
 | `exp-01aa1b30d06c` | 143 | vol_overlay (seed) | volatility_filter 141, multi_timeframe 1, seed 1 | plugin 142, template:vol_target 1 | 0.91 |
-| `exp-043042614192` | 55 | ewma_trend (seed) | trend 21, multi_timeframe 14, volatility_filter 13, seed 7 | plugin 48, template:ewma_trend 3, template:ma_filter 2 | 1.42 |
+| `exp-0344c669d1fe` | 55 | ewma_trend (seed) | trend 21, multi_timeframe 14, volatility_filter 13, seed 7 | plugin 48, template:ewma_trend 3, template:tsmom 2 | 1.42 |
 | `exp-04ee69c71181` | 43 | short_term_reversal (tags) | mean_reversion 43 | plugin 43 | 0.35 |
 | `exp-19885780619b` | 36 | unmapped | multi_timeframe 35, trend 1 | plugin 36 | -3.79 |
 | `exp-0b23875cc6b0` | 33 | short_term_reversal (tags) | mean_reversion 33 | plugin 33 | -1.45 |
@@ -117,21 +117,21 @@ Largest clusters at ρ 0.3:
 | `exp-0c9eef6bcf1f` | 4 | tsmom (seed) | volatility_filter 3, seed 1 | plugin 3, template:tsmom 1 | 0.63 |
 | `exp-0f09e3d2f5c5` | 4 | short_term_reversal (tags) | mean_reversion 4 | plugin 4 | -6.66 |
 
-Trials by family at ρ 0.3: channel_breakout 424, ewma_trend 55, short_term_reversal 198, tsmom 4, unmapped 36, vol_overlay 155.
+Trials by family at ρ 0.3: channel_breakout 424, ewma_trend 55, short_term_reversal 198, tsmom 4, unmapped 36, vol_overlay 155. A shared cluster counts under each of its families (0 trials in shared clusters); deduplicated, 836 trials are mapped to a family.
 
 Seed placement:
 
 | seed | dev Sharpe | split DSR | cluster ρ 0.3 (size) | cluster ρ 0.7 (size) |
 |---|---|---|---|---|
-| eth-brock-1-200 | 0.97 | 0.154 | `exp-043042614192` (55) | `exp-043042614192` (11) |
-| eth-ewma-16-48 | 0.38 | 0.017 | `exp-043042614192` (55) | `exp-3fba2953bf88` (6) |
-| eth-ewma-32-96 | 0.41 | 0.019 | `exp-043042614192` (55) | `exp-3fba2953bf88` (6) |
-| eth-ewma-8-24 | -0.17 | 0.001 | `exp-043042614192` (55) | `exp-525ec82c87e4` (1) |
-| eth-faber-10m | 0.19 | 0.007 | `exp-043042614192` (55) | `exp-9f76fefe1dfd` (1) |
-| eth-tsmom-12m | 0.67 | 0.056 | `exp-043042614192` (55) | `exp-5760e59dee86` (1) |
-| eth-tsmom-1m | 0.51 | 0.030 | `exp-043042614192` (55) | `exp-f8678d9b1ac0` (1) |
-| eth-tsmom-1w | 0.89 | 0.123 | `exp-0055d5485f98` (424) | `exp-3e8462eaaca4` (1) |
-| eth-tsmom-3m | 0.35 | 0.015 | `exp-0c9eef6bcf1f` (4) | `exp-48b207e8494a` (1) |
+| eth-brock-1-200 | 0.97 | 0.154 | `exp-0344c669d1fe` (55) | `exp-2ac997141999` (11) |
+| eth-ewma-16-48 | 0.38 | 0.017 | `exp-0344c669d1fe` (55) | `exp-0a2d4763c483` (6) |
+| eth-ewma-32-96 | 0.41 | 0.019 | `exp-0344c669d1fe` (55) | `exp-0a2d4763c483` (6) |
+| eth-ewma-8-24 | -0.17 | 0.001 | `exp-0344c669d1fe` (55) | `exp-1b7a4912be1a` (1) |
+| eth-faber-10m | 0.19 | 0.007 | `exp-0344c669d1fe` (55) | `exp-2b90ad4ad720` (1) |
+| eth-tsmom-12m | 0.67 | 0.056 | `exp-0344c669d1fe` (55) | `exp-628485b9d8c6` (1) |
+| eth-tsmom-1m | 0.51 | 0.030 | `exp-0344c669d1fe` (55) | `exp-0344c669d1fe` (1) |
+| eth-tsmom-1w | 0.89 | 0.123 | `exp-0055d5485f98` (424) | `exp-4b27ed1782ca` (1) |
+| eth-tsmom-3m | 0.35 | 0.015 | `exp-0c9eef6bcf1f` (4) | `exp-48ccf824076a` (1) |
 | eth-turtle-s1 | 0.77 | 0.083 | `exp-0055d5485f98` (424) | `exp-0055d5485f98` (185) |
 | eth-turtle-s2 | 0.31 | 0.013 | `exp-0055d5485f98` (424) | `exp-3037cdfe9481` (2) |
 | eth-voltarget-1m | 0.73 | 0.072 | `exp-01aa1b30d06c` (143) | `exp-01aa1b30d06c` (8) |
