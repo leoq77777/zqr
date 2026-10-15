@@ -9,13 +9,13 @@ in that section. Items under "To define" must be settled, in the phase named, be
 - Quote currency USD. Total paper capital $20,000: BTC-USD portfolio $10,000, ETH-USD portfolio $10,000. The
   combined account is the 50/50 sum (report arithmetic; no shared cash or netted orders).
 - No deposits or withdrawals in paper.
-- Single-order cap (`max_order_notional`) stays $5,000.
+- Single-order cap (`max_order_notional`) $10,000, the capital of one product portfolio, so a move from cash to
+  fully invested fills in one bar as in the backtest. Raised from $5,000 on 2026-10-15: on 2026-10-14 the cap
+  clipped 14 paper orders and moved the clipped strategies' equity 20 to 190 bps away from the backtest.
 
 To define (phase 3): each product portfolio sends one blended order per bar, so the 15% member cap does not bound
-order size. A $10,000 portfolio moving from cash to fully invested (all trend signals turning together, or
-re-entering after a flatten) needs an order of about $10,000; paper clips it to $5,000 and completes it a bar later,
-which the backtest does not do. Either the portfolio traders get a cap of at least their capital, or the backtest
-models the same clip.
+order size. Whether live trading needs a per-order cap below the portfolio's capital; if it does, the backtest must
+model the same clip.
 
 ## 2. Horizon, review and stop rule
 

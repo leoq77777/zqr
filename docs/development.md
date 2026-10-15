@@ -242,7 +242,8 @@ Desk transitions record the authorization hash in the evidence. No transition to
   band and the minimum trade notional).
 - Default risk limits:
   - max position fraction 1.0;
-  - max order notional $5,000 (a $10k position therefore builds over two bars);
+  - max order notional: the preset roster sets it to the strategies' capital ($10,000), so a full entry fills in one
+    bar as in the backtest (the `RiskLimits` default is $5,000);
   - daily loss 5%;
   - 6 orders per hour;
   - stale after 7200 s, measured from the latest bar's close (`last_data_time`); the time the bar was fetched is
@@ -255,7 +256,7 @@ Desk transitions record the authorization hash in the evidence. No transition to
   - orders: `needs_trade` applied to the marked position and equity at that bar must give the same side (or no
     order);
   - sizes: the order quantity must match the backtest rule (`rule_quantity`) within a cent; an order limited by
-    `max_order_notional` or the cash buffer, or resized by the risk limits, is an allowed difference, counted
+    `max_order_notional` (as recorded with the decision; the roster's value for older decisions) or the cash buffer, or resized by the risk limits, is an allowed difference, counted
     separately;
   - fills: average price against the next bar's open ± slippage, and the fee against the configured fee rate;
   - path: `run_backtest` from the paper cash and position at the first checked decision; the equity gap at the last

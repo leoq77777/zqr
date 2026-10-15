@@ -181,6 +181,7 @@ def test_preset_roster_covers_both_products():
     assert len(names) == len(set(names)) == 16
     assert {e.product for e in r.entries} == {"BTC-USD", "ETH-USD"}
     assert all(e.strategy_ref.startswith("template:") and e.source == "preset" for e in r.entries)
+    assert all(r.risk.max_order_notional == e.initial_cash for e in r.entries)  # a full entry fills in one bar
 
 
 def test_fleet_catches_up_after_an_outage_and_trades_only_the_latest_bar(tmp_path):

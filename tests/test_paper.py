@@ -243,8 +243,9 @@ def _parity_run(tmp_path, roster_risk=None, **cfg_kw):
 
 
 def test_parity_counts_the_order_cap_as_an_allowed_difference(tmp_path):
+    # The roster's cap has since been raised to the default; the cap recorded with each decision applies.
     risk = RiskLimits(max_order_notional=3000, max_orders_per_hour=100, max_daily_loss_fraction=0.99)
-    *_, out = _parity_run(tmp_path, roster_risk=risk, risk=risk, buy_cash_buffer=0.0)
+    *_, out = _parity_run(tmp_path, risk=risk, buy_cash_buffer=0.0)
     assert out["order_mismatches"] == [] and out["size_mismatches"] == []
     assert out["allowed"]["order_cap"] > 2
     assert abs(out["path"]["exposure_gap_pp"]) < 100 and out["path"]["sizing_timing_bps"] != 0

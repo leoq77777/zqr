@@ -286,7 +286,8 @@ class PaperTrader:
         decision = self.risk.evaluate(target, ctx)
         intent = self._size(decision, close, equity, bal, now) if decision.approved else None
         record = {"bar_open": str(bar["bar_open_time"]), "history_start": str(self.history["bar_open_time"].iloc[0]),
-                  "price": str(close), "equity": str(equity), "target": target.model_dump(),
+                  "price": str(close), "equity": str(equity),
+                  "max_order_notional": self.cfg.risk.max_order_notional, "target": target.model_dump(),
                   "decision": decision.model_dump(), "intent": intent.model_dump() if intent else None}
         self.ledger.record_decision(now, record)
         if decision.reasons:

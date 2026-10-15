@@ -130,7 +130,8 @@ def paper_parity(entry: RosterEntry, roster: Roster, ledger: Ledger, bars: pd.Da
                                            f"{rule_side or 'no order'}")
         elif paper_side is not None and m is not None:
             paper_qty = float(d["intent"]["base_size"])
-            verdict, rule = _size_check(paper_side, paper_qty, target, m, fee_rate, slip_bps, cap)
+            verdict, rule = _size_check(paper_side, paper_qty, target, m, fee_rate, slip_bps,
+                                        d.get("max_order_notional", cap))
             if verdict == "mismatch":
                 out["size_mismatches"].append(f"{d['bar_open']}: paper {paper_side} {paper_qty:.8f}, backtest rule "
                                               f"{rule:.8f}")

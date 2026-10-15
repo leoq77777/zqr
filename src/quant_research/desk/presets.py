@@ -6,6 +6,7 @@ import json
 from importlib import resources
 
 from quant_research.paper.fleet import Roster, RosterEntry
+from quant_research.paper.risk import RiskLimits
 
 
 def preset_roster() -> Roster:
@@ -16,4 +17,4 @@ def preset_roster() -> Roster:
                     initial_cash=data["initial_cash"], source="preset")
         for product in data["products"] for s in data["strategies"]
     ]
-    return Roster(entries=entries)
+    return Roster(entries=entries, risk=RiskLimits(max_order_notional=data["initial_cash"]))
