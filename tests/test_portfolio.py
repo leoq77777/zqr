@@ -430,3 +430,73 @@ def test_portfolio_holdout_respects_the_split_cap_and_override(paths, store, dat
     assert out["prior_viewings"] == 1
     assert [o["reason"] for o in store.holdout_overrides(dataset[1].split_id)] == ["human decision"]
     assert "contaminated" in store.get_experiment(out["holdout_experiment"])["notes"]
+
+
+def test_dev_alone_is_a_trial_without_validation_and_marks_one_reference(paths, store, dataset, capsys):
+    import json
+
+    from quant_research.cli import main
+    from quant_research.portfolio.evaluate import gate1_reference, run_dev
+
+    vid = _seeded(paths, store, dataset)
+    split_id = dataset[1].split_id
+    trials = store.trial_count(split_id)
+    first = run_dev(paths, store, vid)
+    vs = VersionStore(store)
+    assert store.trial_count(split_id) == trials + 1 and vs.validation_uses(split_id) == 0
+    assert first["state"] == "draft" and not first["gate1_reference"]
+    assert gate1_reference(store, "BTC-USD", split_id) is None
+    main(["--home", str(paths.root), "portfolio", "dev", vid, "--reference"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["gate1_reference"] and out["dev"]["experiment_id"] == first["dev"]["experiment_id"]
+    assert store.trial_count(split_id) == trials + 1 and vs.get(vid)["state"] == "draft"
+    assert gate1_reference(store, "BTC-USD", split_id) == vid
+    assert run_dev(paths, store, vid, reference=True)["gate1_reference"]
+    assert sum(1 for e in vs.events(vid) if e["evidence"] and "gate1_reference" in e["evidence"]) == 1
+    other = vs.put(vs.version(vid).model_copy(update={"notes": "another draft"}))
+    with pytest.raises(VersionError, match="already gate 1's reference"):
+        run_dev(paths, store, other, reference=True)
+
+
+def test_period_stats_split_a_recorded_run_and_compose():
+    from quant_research.data.bars import to_utc
+    from quant_research.evaluation.periods import period_stats
+
+    n = 96
+    times = to_utc(T0 + HOUR * np.arange(n))
+    rng = np.random.default_rng(0)
+    equity = 100.0 * np.cumprod(1 + 0.002 * rng.standard_normal(n))
+    close = 50.0 * np.cumprod(1 + 0.003 * rng.standard_normal(n))
+    eq = pd.DataFrame({"time": times, "equity": equity, "close": close, "exposure": np.r_[np.zeros(48), np.ones(48)]})
+    log = pd.DataFrame({"bar_open": times, "level": ["normal"] * 72 + ["halved"] * 24,
+                        "yellow": [False] * 60 + [True] * 36})
+    cut = T0 + 48 * HOUR
+    rows = period_stats(eq, 100.0, [cut, T0 - HOUR, T0 + 10 * n * HOUR], log)
+    assert [r["period"] for r in rows] == ["part", "part", "whole"]
+    early, late, whole = rows
+    assert early["days"] == 2 and late["days"] == 2 and whole["days"] == 4
+    assert early["total_return"] == pytest.approx(equity[47] / 100 - 1, abs=1e-4)
+    assert late["total_return"] == pytest.approx(equity[-1] / equity[47] - 1, abs=1e-4)
+    assert (1 + early["total_return"]) * (1 + late["total_return"]) == pytest.approx(1 + whole["total_return"],
+                                                                                     abs=1e-3)
+    assert late["buy_and_hold"]["total_return"] == pytest.approx(close[-1] / close[47] - 1, abs=1e-4)
+    assert early["exposure"] == 0.0 and late["exposure"] == 1.0
+    assert late["ladder_time"] == {"halved": 0.5, "normal": 0.5} and early["yellow_time"] == 0.0
+    assert late["yellow_time"] == 0.75 and whole["max_drawdown"] <= min(early["max_drawdown"], late["max_drawdown"])
+    assert [r["period"] for r in period_stats(eq, 100.0, [])] == ["part"]
+
+
+def test_portfolio_periods_command_reads_the_dev_run(paths, store, dataset, capsys):
+    import json
+
+    from quant_research.cli import main
+    from quant_research.portfolio.evaluate import run_dev
+
+    vid = _seeded(paths, store, dataset)
+    with pytest.raises(SystemExit, match="no dev run"):
+        main(["--home", str(paths.root), "portfolio", "periods", vid, "--cut", str(T0 + 1000 * HOUR)])
+    run_dev(paths, store, vid)
+    main(["--home", str(paths.root), "portfolio", "periods", vid, "--cut", str(T0 + 1000 * HOUR)])
+    out = json.loads(capsys.readouterr().out)
+    assert [p["period"] for p in out["periods"]] == ["part", "part", "whole"]
+    assert out["periods"][1]["from"].startswith("2024-02-11") and "ladder_time" in out["periods"][0]

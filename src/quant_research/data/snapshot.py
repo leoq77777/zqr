@@ -95,6 +95,69 @@ def freeze_dataset(
     return manifest
 
 
+def extend_dataset(
+    paths: Paths,
+    base_id: str,
+    prefix: pd.DataFrame,
+    prefix_report: ValidationReport,
+    raw_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Freeze `prefix` followed by the base dataset's bars, copied verbatim (appendix A13.4).
+
+    The prefix must end exactly one bar before the base's first bar, with the same venue, instrument, granularity
+    and fill policy; the base's rows keep their content hash inside the new dataset.
+    """
+    from quant_research.timeutil import granularity_seconds
+
+    base, manifest = load_dataset(paths, base_id)
+    if manifest.get("synthetic") or manifest.get("venue") == "lab":
+        raise SnapshotError(f"{base_id} is synthetic; only venue datasets are extended")
+    if prefix.empty:
+        raise SnapshotError("refusing to extend with an empty prefix")
+    rep = prefix_report
+    base_rep = ValidationReport.model_validate(manifest["validation"])
+    for field in ("venue", "instrument", "granularity", "fill_policy"):
+        if getattr(rep, field) != getattr(base_rep, field):
+            raise SnapshotError(f"prefix {field} {getattr(rep, field)!r} differs from the base's "
+                                f"{getattr(base_rep, field)!r}")
+    step = granularity_seconds(manifest["granularity"])
+    first = int(to_epoch(base["bar_open_time"])[0])
+    opens = to_epoch(prefix["bar_open_time"])
+    if int(opens.max()) >= first:
+        raise SnapshotError("prefix overlaps the base dataset")
+    if int(opens[-1]) + step != first or rep.trailing_missing_bars:
+        raise SnapshotError(f"prefix leaves a gap before the base's first bar ({rep.trailing_missing_bars} trailing "
+                            f"missing bars, last prefix bar {int(opens[-1])}, base starts {first})")
+    times = ("bar_open_time", "bar_close_time", "available_at", "fetched_at")
+    parts = [df[BAR_COLUMNS].assign(**{c: pd.to_datetime(df[c], utc=True).astype("datetime64[ns, UTC]")
+                                       for c in times}) for df in (prefix, base)]
+    bars = pd.concat(parts, ignore_index=True)
+    if content_hash(bars.iloc[len(prefix):].reset_index(drop=True)) != manifest["data_hash"]:
+        raise SnapshotError("base rows changed while extending")
+
+    present = (rep.rows - rep.filled_rows) + (base_rep.rows - base_rep.filled_rows)
+    expected = rep.expected_rows + base_rep.expected_rows
+    invalid = dict(base_rep.invalid_dropped)
+    for k, v in rep.invalid_dropped.items():
+        invalid[k] = invalid.get(k, 0) + v
+    combined = ValidationReport(
+        venue=rep.venue, instrument=rep.instrument, granularity=rep.granularity,
+        requested_start=rep.requested_start, requested_end=base_rep.requested_end,
+        **{k: getattr(rep, k) + getattr(base_rep, k) for k in (
+            "raw_rows", "out_of_range", "duplicates", "duplicate_conflicts", "incomplete_dropped",
+            "misaligned_dropped", "expected_rows", "internal_gap_bars", "filled_rows")},
+        invalid_dropped=invalid, rows=len(bars), coverage=round(present / expected, 6) if expected else 0.0,
+        actual_first=rep.actual_first, actual_last=base_rep.actual_last,
+        leading_missing_bars=rep.leading_missing_bars, trailing_missing_bars=base_rep.trailing_missing_bars,
+        gaps=rep.gaps + base_rep.gaps, fill_policy=rep.fill_policy)
+    last_close = float(prefix["close"].iloc[-1])
+    first_open = float(base["open"].iloc[0])
+    junction = {"prefix_last_open": int(opens[-1]), "base_first_open": first, "prefix_last_close": last_close,
+                "base_first_open_price": first_open, "relative_jump": round(first_open / last_close - 1, 6)}
+    return freeze_dataset(paths, bars, combined, raw_dir, extra={
+        "extends": base_id, "base_data_hash": manifest["data_hash"], "junction": junction})
+
+
 def load_manifest(paths: Paths, dataset_id: str) -> dict[str, Any]:
     path = paths.snapshots / dataset_id / "manifest.json"
     if not path.exists():

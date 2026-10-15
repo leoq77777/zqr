@@ -181,7 +181,7 @@ def _deflated(store: ExperimentStore, split_id: str, stats: dict[str, Any], diag
     if kind == "holdout":
         stats = deflate(stats, len(store.holdout_runs(split_id)) + 1, [], ppy)
     else:
-        stats = deflate(stats, store.trial_count(split_id=split_id), store.research_sharpes(split_id), ppy)
+        stats = deflate(stats, store.split_trial_count(split_id)["total"], store.research_sharpes(split_id), ppy)
     labels = [x for x in diagnosis["labels"] if x["label"] != "not_significant"]
     sig = significance_label(stats)
     return stats, {**diagnosis, "labels": labels + ([sig] if sig else [])}

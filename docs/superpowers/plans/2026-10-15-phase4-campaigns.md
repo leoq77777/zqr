@@ -4,9 +4,8 @@
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Status:** D1-D8 approved by the human on 2026-10-15. Tasks 0-2 (holdout closure, shadow portfolios) shipped as
-release 4a (`0.1.0-d74225f9`, 2026-10-15). E1 (longer dev) approved; its tasks E1.1-E1.8 are detailed at the end
-of this plan, with sub-decisions F1-F4 and the draft amendment A13.4 awaiting the human. Tasks 3-16 are an outline
-until the long dev exists.
+release 4a (`0.1.0-d74225f9`, 2026-10-15). E1 (longer dev) approved with F1-F4 and amendment A13.4; its code
+(E1.1-E1.7) is built for release 4b (end of this plan). Tasks 3-16 are an outline until the long dev exists.
 
 **Goal:** Replace the topic loop with campaigns that produce registered hypotheses, run admission gates 1-2 on
 them, and build up a queue of portfolio versions for the next split's holdout. Keep the seed portfolios running as
@@ -175,7 +174,12 @@ Options considered (E1 approved by the human on 2026-10-15; E2-E4 not taken now)
 Data alone does not fix the holdout: periods already seen stay seen. Unseen evidence accrues only forward (shadows,
 controls, the next split from 2027-10-12).
 
-## E1: longer dev (approved 2026-10-15; tasks detailed, sub-decisions F1-F4 open)
+## E1: longer dev (approved 2026-10-15, with F1-F4 and A13.4)
+
+**Status:** F1-F4 and the draft A13.4 approved by the human on 2026-10-15. A13.4 is in the appendix, with one
+check added while building it: the child's dataset must extend the parent's (the parent's bars copied verbatim).
+E1.1-E1.4, E1.6 and E1.7 built (300 tests). The mandate switch is refused while research is enabled (simpler and
+stricter than detecting a running session).
 
 **What changes and what does not.**
 
@@ -201,7 +205,7 @@ Sharpe giving 0.9 at `σ = σ0`):
 
 K = 250 is about the inherited K(0.7) (231 BTC, 240 ETH on 2026-10-13) plus the new split's own seed trials.
 
-### Sub-decisions for the human
+### Sub-decisions (approved 2026-10-15 as proposed)
 
 - **F1. Start dates.** BTC from 2015-07-21 00:00 UTC (the first full UTC day; the first bar is 2015-07-20 21:00).
   ETH from 2016-06-01 00:00 UTC, skipping the listing fortnight that holds 175 of the 200 missing ETH bars (the
@@ -219,7 +223,7 @@ K = 250 is about the inherited K(0.7) (231 BTC, 240 ETH on 2026-10-13) plus the 
   validation run: the validation data is the same one the seed versions were already judged on (A6: a failure is
   recorded, not retried). The version stays `draft` with a recorded event "gate 1 reference".
 
-### Draft amendment A13.4 (for approval; goes into the appendix when approved)
+### Draft amendment A13.4 (approved; the appendix holds the final text)
 
 > **A13.4 Splits that extend an earlier split's dev backwards (draft 2026-10-15)**
 >
@@ -260,34 +264,34 @@ follow on the long dev.
 **E1.1 Dataset extension.** Files: `src/quant_research/data/snapshot.py`, `src/quant_research/cli.py`,
 `tests/test_data.py`.
 
-- [ ] Test: a synthetic base dataset and a prefix ending exactly one bar before the base's first bar give an
+- [x] Test: a synthetic base dataset and a prefix ending exactly one bar before the base's first bar give an
   extended dataset whose rows from the base's first bar are bit-identical to the base (content hash of that slice
   equals the base `data_hash`), whose manifest has `extends`, `base_data_hash`, `requested_start` = prefix start,
   combined coverage and gaps (prefix gaps + base gaps), and which is idempotent.
-- [ ] Test: refused when the prefix leaves a gap at the junction, overlaps the base, or differs in venue,
+- [x] Test: refused when the prefix leaves a gap at the junction, overlaps the base, or differs in venue,
   instrument, granularity or fill policy; refused for a synthetic base.
-- [ ] `extend_dataset(paths, base_id, prefix_bars, prefix_report, raw_dir)`: checks as above, `pd.concat`, combined
+- [x] `extend_dataset(paths, base_id, prefix_bars, prefix_report, raw_dir)`: checks as above, `pd.concat`, combined
   `ValidationReport`, `freeze_dataset(..., extra={"extends": ..., "base_data_hash": ..., "junction": {...}})` where
   `junction` records the base's first open against the prefix's last close (relative jump, informational).
-- [ ] CLI `zqr extend-dataset --dataset <base> --start <iso> [--fill-policy ffill_flat]`: validates raw candles of
+- [x] CLI `zqr extend-dataset --dataset <base> --start <iso> [--fill-policy ffill_flat]`: validates raw candles of
   the base's product in `[start, base first open)` (the existing raw directory; `zqr fetch-data` already writes
   window files that do not collide with the 2021 windows) and freezes. Output: new id, rows, coverage, gaps,
   junction.
-- [ ] `zqr datasets` shows `extends`.
+- [x] `zqr datasets` shows `extends`.
 
 **E1.2 Split lineage.** Files: `src/quant_research/validation/splits.py`, `src/quant_research/experiments/store.py`,
 `src/quant_research/cli.py`, tests in `tests/test_experiments.py`.
 
-- [ ] `zqr create-split --dataset <id> --like <split>`: takes the other split's dev end and validation end; refuses
+- [x] `zqr create-split --dataset <id> --like <split>`: takes the other split's dev end and validation end; refuses
   unless the resulting holdout window equals the other split's.
-- [ ] Table `split_lineage (split_id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, note TEXT NOT NULL, at REAL NOT
+- [x] Table `split_lineage (split_id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, note TEXT NOT NULL, at REAL NOT
   NULL)`; `ExperimentStore.record_lineage` / `split_parent`; checks of A13.4 (same product and granularity, equal
   validation and holdout windows, child dev contains parent dev); recording twice keeps the first.
-- [ ] Recording a lineage under a closed parent closes the child (`close_holdout`, note "inherits the closure of
+- [x] Recording a lineage under a closed parent closes the child (`close_holdout`, note "inherits the closure of
   <parent>: <parent note>").
-- [ ] CLI `zqr split-lineage --split --parent --note` (human): note required; output lineage, closure, both splits'
+- [x] CLI `zqr split-lineage --split --parent --note` (human): note required; output lineage, closure, both splits'
   windows.
-- [ ] Tests: refused cases; closure inherited; a holdout request on the child is refused without loading holdout
+- [x] Tests: refused cases; closure inherited; a holdout request on the child is refused without loading holdout
   data.
 
 **E1.3 K and trial inheritance.** Files: `src/quant_research/memory/clusters.py`, `src/quant_research/experiments/store.py`,
@@ -295,25 +299,25 @@ follow on the long dev.
 `src/quant_research/memory/characterise.py`, `src/quant_research/desk/report.py`, `src/quant_research/memory/commands.py`,
 tests in `tests/test_memory.py`.
 
-- [ ] `k_breakdown(store, split_id) -> {"own": {...}, "inherited": {...}, "parent": id | None}` at the three
+- [x] `k_breakdown(store, split_id) -> {"own": {...}, "inherited": {...}, "parent": id | None}` at the three
   thresholds (recursive; a parent with no clustering contributes 0 and is flagged); `effective_k` returns own +
   inherited at 0.7.
-- [ ] `split_trial_count(store, split_id)` = own + parent's (recursive); used for the legacy DSR in
+- [x] `split_trial_count(store, split_id)` = own + parent's (recursive); used for the legacy DSR in
   `run_experiment` and walk-forward and in the reports' trial columns. `ExperimentStore.trial_count` itself stays
   per split (the return archive and A1 depend on it).
-- [ ] `zqr memory status` and the daily report show "K(0.7) own + inherited (parent)"; the report's holdout and
+- [x] `zqr memory status` and the daily report show "K(0.7) own + inherited (parent)"; the report's holdout and
   validation columns show the parent's counts next to the child's.
-- [ ] Tests: a child with its own clustering and a parent's gets the sum at each threshold; a grandchild sums
+- [x] Tests: a child with its own clustering and a parent's gets the sum at each threshold; a grandchild sums
   both; the legacy DSR of a child experiment deflates with the summed count.
 
 **E1.4 Desk mandate switch.** Files: `src/quant_research/desk/config.py`, `src/quant_research/desk/commands.py`, tests
 in `tests/test_desk.py`.
 
-- [ ] `zqr desk use-mandate --product --mandate --note` (human): the mandate must be stored, for the product (its
+- [x] `zqr desk use-mandate --product --mandate --note` (human): the mandate must be stored, for the product (its
   dataset's instrument), with a split; writes `cfg.mandates[product]` and appends `{product, from, to, note, at}`
   to `desk/mandate_history.jsonl`. Refused while a research session is running.
-- [ ] Report: the trials table names the mandate's split and its parent.
-- [ ] Test: switch recorded, refused for a mandate of another product, `seed_version` and `characterise` follow
+- [x] Report: the trials table names the mandate's split and its parent.
+- [x] Test: switch recorded, refused for a mandate of another product, `seed_version` and `characterise` follow
   the new mandate.
 
 **E1.5 Seed characterisation and archive on the new splits (host, after release).** No code beyond E1.3: `zqr
@@ -326,24 +330,24 @@ labelled with its parent).
 **E1.6 Seed portfolio dev reference.** Files: `src/quant_research/portfolio/evaluate.py`,
 `src/quant_research/portfolio/commands.py`, tests in `tests/test_portfolio.py`.
 
-- [ ] `zqr portfolio dev <vid> [--reference]`: `run_segment(..., "dev")` only (a trial, archived; no validation
+- [x] `zqr portfolio dev <vid> [--reference]`: `run_segment(..., "dev")` only (a trial, archived; no validation
   use); the state stays `draft`; `--reference` records the event `{"gate1_reference": true}` (human or controller;
   one reference per product and split, a second refused).
-- [ ] Test: dev run archived and counted, no validation use, state unchanged, second reference refused.
+- [x] Test: dev run archived and counted, no validation use, state unchanged, second reference refused.
 
 **E1.7 First look at the early years.** Files: `src/quant_research/portfolio/evaluate.py` (period statistics),
 `src/quant_research/memory/characterise.py`, `src/quant_research/portfolio/commands.py`, tests.
 
-- [ ] `period_stats(equity, cuts)`: A4 Sharpe, total return, maximum drawdown, exposure and buy and hold per
+- [x] `period_stats(equity, cuts)`: A4 Sharpe, total return, maximum drawdown, exposure and buy and hold per
   period, from a recorded dev run's equity (no re-run).
-- [ ] `zqr portfolio periods <vid> --cut 2021-01-01` and `zqr library periods --product <p> --cut 2021-01-01`
+- [x] `zqr portfolio periods <vid> --cut 2021-01-01` and `zqr library periods --product <p> --cut 2021-01-01`
   (each seed instance's latest seed run on the desk split). Periods: listing-2020, 2021-dev end, whole dev. The
   ladder's actions and the yellow time per period for the portfolio.
-- [ ] These are dev statistics: allowed in campaign diagnostics and agent briefs (D6).
+- [x] These are dev statistics: allowed in campaign diagnostics and agent briefs (D6).
 
 **E1.8 Docs, tests, rehearsal, release 4b.**
 
-- [ ] A13.4 into the appendix as approved (or as decided); `docs/development.md` commands table, invariants
+- [x] A13.4 into the appendix as approved (or as decided); `docs/development.md` commands table, invariants
   (lineage, inheritance), data section (extended datasets).
 - [ ] Full suite and ruff. Rehearsal on a copy of production data (fetch into the copy, all host steps below), the
   production data unchanged; check that the paper bar store is not reseeded (`snapshot_seed` only runs on an empty

@@ -68,6 +68,21 @@ def cmd_show(args) -> None:
         exp.close()
 
 
+def cmd_periods(args) -> None:
+    from quant_research.experiments.store import ExperimentStore
+    from quant_research.memory.characterise import seed_periods
+    from quant_research.timeutil import parse_time
+
+    paths = get_paths(args.home)
+    store = ExperimentStore(paths.db)
+    try:
+        _out(seed_periods(paths, store, args.product, [parse_time(c) for c in args.cut]))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    finally:
+        store.close()
+
+
 def register(sub) -> None:
     lib = sub.add_parser("library", help="strategy library: seed catalog and entries").add_subparsers(
         dest="lcmd", required=True)
@@ -84,3 +99,7 @@ def register(sub) -> None:
     p = lib.add_parser("show")
     p.add_argument("id")
     p.set_defaults(fn=cmd_show)
+    p = lib.add_parser("periods", help="each seed run on the product's desk split, per period (dev data only)")
+    p.add_argument("--product", required=True)
+    p.add_argument("--cut", action="append", default=[], help="period boundary (UTC), repeatable")
+    p.set_defaults(fn=cmd_periods)

@@ -113,7 +113,7 @@ def walk_forward(
         return summary
     ppy = periods_per_year(split.granularity)
     metrics, rets = _oos_metrics(oos_equity, oos_trips, base.engine_config.initial_cash, ppy)
-    trials = max(store.trial_count(split_id=base.split_id), 1)
+    trials = max(store.split_trial_count(base.split_id)["total"], 1)
     stats = deflate(sharpe_statistics(rets, ppy), trials, store.research_sharpes(base.split_id), ppy)
     summary |= {f"oos_{k}": v for k, v in metrics.items()} | {"metrics": metrics, "statistics": stats}
     store.finish_experiment(parent, "completed", metrics=metrics, statistics=stats,

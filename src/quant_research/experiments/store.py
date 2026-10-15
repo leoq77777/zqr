@@ -62,6 +62,9 @@ CREATE TABLE IF NOT EXISTS holdout_overrides (
 CREATE TABLE IF NOT EXISTS holdout_closures (
     split_id TEXT PRIMARY KEY, note TEXT NOT NULL, at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS split_lineage (
+    split_id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, note TEXT NOT NULL, at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY, created_at REAL, updated_at REAL, question TEXT, dataset_id TEXT, split_id TEXT,
     state TEXT, budget TEXT, usage TEXT, config TEXT, stop_reason TEXT, workspace TEXT
@@ -272,6 +275,32 @@ class ExperimentStore:
     def holdout_closure(self, split_id: str) -> dict[str, Any] | None:
         row = self._exec("SELECT * FROM holdout_closures WHERE split_id=?", (split_id,)).fetchone()
         return dict(row) if row else None
+
+    def record_lineage(self, split_id: str, parent_id: str, note: str) -> dict[str, Any]:
+        """Name a split's parent (appendix A13.4). Permanent; recording twice keeps the first."""
+        if (existing := self.split_parent(split_id)) is not None:
+            return existing
+        if split_id == parent_id or split_id in self.split_ancestors(parent_id):
+            raise ValueError(f"lineage {split_id} -> {parent_id} would form a cycle")
+        self._insert("split_lineage", {"split_id": split_id, "parent_id": parent_id, "note": note, "at": time.time()})
+        return self.split_parent(split_id)
+
+    def split_parent(self, split_id: str) -> dict[str, Any] | None:
+        row = self._exec("SELECT * FROM split_lineage WHERE split_id=?", (split_id,)).fetchone()
+        return dict(row) if row else None
+
+    def split_ancestors(self, split_id: str) -> list[str]:
+        """Parent, grandparent, ... of a split, nearest first."""
+        out: list[str] = []
+        while (row := self.split_parent(split_id)) is not None and row["parent_id"] not in out:
+            out.append(split_id := row["parent_id"])
+        return out
+
+    def split_trial_count(self, split_id: str) -> dict[str, int]:
+        """Trials on the split and on its ancestors (A13.4): the legacy DSR deflates with `total`."""
+        own = self.trial_count(split_id=split_id)
+        inherited = sum(self.trial_count(split_id=a) for a in self.split_ancestors(split_id))
+        return {"own": own, "inherited": inherited, "total": own + inherited}
 
     # -- sessions --------------------------------------------------------------------------------
     def create_session(self, **fields: Any) -> str:

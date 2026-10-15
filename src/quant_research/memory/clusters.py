@@ -136,6 +136,40 @@ def members(store: ExperimentStore, clustering_id: str, threshold: float) -> dic
     return {r["experiment_id"]: r["label"] for r in rows}
 
 
-def effective_k(store: ExperimentStore, split_id: str) -> int | None:
+def k_breakdown(store: ExperimentStore, split_id: str) -> dict[str, Any] | None:
+    """K at each threshold: the split's own clustering plus its ancestors' latest (appendix A13.4).
+
+    None when the split has no clustering; an ancestor without one contributes 0 and is listed in `unclustered`.
+    """
     last = latest(store, split_id)
-    return None if last is None else int(last["k"][_key(K_THRESHOLD)])
+    if last is None:
+        return None
+    ancestors = store.split_ancestors(split_id)
+    inherited = {_key(t): 0 for t in THRESHOLDS}
+    unclustered = []
+    for a in ancestors:
+        row = latest(store, a)
+        if row is None:
+            unclustered.append(a)
+            continue
+        for key in inherited:
+            inherited[key] += int(row["k"][key])
+    own = {key: int(last["k"][key]) for key in inherited}
+    return {"own": own, "inherited": inherited, "total": {k: own[k] + inherited[k] for k in own},
+            "parent": ancestors[0] if ancestors else None, "unclustered": unclustered}
+
+
+def k_label(store: ExperimentStore, split_id: str) -> str:
+    """K(0.7) as 'total' or 'total (own + inherited from parent)'."""
+    b = k_breakdown(store, split_id)
+    if b is None:
+        return "-"
+    key = _key(K_THRESHOLD)
+    if b["parent"] is None:
+        return str(b["total"][key])
+    return f"{b['total'][key]} ({b['own'][key]} + {b['inherited'][key]} from {b['parent']})"
+
+
+def effective_k(store: ExperimentStore, split_id: str) -> int | None:
+    b = k_breakdown(store, split_id)
+    return None if b is None else b["total"][_key(K_THRESHOLD)]

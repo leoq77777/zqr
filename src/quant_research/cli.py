@@ -124,6 +124,27 @@ def cmd_freeze(args) -> None:
          | {"actual_first": to_iso(m["actual_first_open"]), "actual_last": to_iso(m["actual_last_open"])})
 
 
+def cmd_extend_dataset(args) -> None:
+    from quant_research.data.coinbase import VENUE, raw_dir_for
+    from quant_research.data.snapshot import SnapshotError, extend_dataset, load_manifest
+    from quant_research.data.validate import load_raw_candles, validate_bars
+
+    paths = get_paths(args.home)
+    try:
+        base = load_manifest(paths, args.dataset)
+        raw_dir = raw_dir_for(paths.raw, base["instrument"], base["granularity"])
+        bars, rep = validate_bars(load_raw_candles(raw_dir), VENUE, base["instrument"], base["granularity"],
+                                  parse_time(args.start), base["actual_first_open"], fill_policy=args.fill_policy)
+        m = extend_dataset(paths, args.dataset, bars, rep, raw_dir)
+    except SnapshotError as exc:
+        raise SystemExit(str(exc)) from None
+    _out({k: m[k] for k in ("dataset_id", "extends", "rows", "coverage", "internal_gap_bars", "filled_rows",
+                            "fill_policy", "junction")}
+         | {"actual_first": to_iso(m["actual_first_open"]), "actual_last": to_iso(m["actual_last_open"]),
+            "prefix_rows": rep.rows, "prefix_coverage": rep.coverage,
+            "prefix_gaps": [{"start": to_iso(g.start), "bars": g.bars} for g in rep.gaps]})
+
+
 def cmd_make_synthetic(args) -> None:
     from quant_research.data.synthetic import SyntheticSpec, freeze_synthetic
 
@@ -139,23 +160,47 @@ def cmd_datasets(args) -> None:
 
     _out([{k: m[k] for k in ("dataset_id", "rows", "coverage", "internal_gap_bars", "fill_policy")}
           | {"first": to_iso(m["actual_first_open"]), "last": to_iso(m["actual_last_open"])}
+          | ({"extends": m["extends"]} if m.get("extends") else {})
           for m in list_datasets(get_paths(args.home))])
 
 
 def cmd_split(args) -> None:
-    from quant_research.validation.splits import create_split
+    from quant_research.validation.splits import SplitError, create_split, create_split_like
 
     paths = get_paths(args.home)
-    s = create_split(paths, args.dataset, parse_time(args.dev_end) if args.dev_end else None,
-                     parse_time(args.validation_end) if args.validation_end else None)
+    if args.like:
+        if args.dev_end or args.validation_end:
+            raise SystemExit("--like takes the other split's boundaries; drop --dev-end/--validation-end")
+        try:
+            s = create_split_like(paths, args.dataset, args.like)
+        except SplitError as exc:
+            raise SystemExit(str(exc)) from None
+    else:
+        s = create_split(paths, args.dataset, parse_time(args.dev_end) if args.dev_end else None,
+                         parse_time(args.validation_end) if args.validation_end else None)
     _out({"split_id": s.split_id, "segments": s.describe()})
+
+
+def cmd_split_lineage(args) -> None:
+    from quant_research.validation.splits import SplitError, link_split, load_split
+
+    paths, store = _ctx(args)
+    try:
+        out = link_split(paths, store, args.split, args.parent, args.note)
+    except SplitError as exc:
+        raise SystemExit(str(exc)) from None
+    _out(out | {s: load_split(paths, sid).describe() for s, sid in (("split", args.split),
+                                                                    ("parent", out["lineage"]["parent_id"]))})
 
 
 def cmd_splits(args) -> None:
     from quant_research.validation.splits import list_splits
 
+    paths, store = _ctx(args)
     _out([{"split_id": s.split_id, "dataset_id": s.dataset_id, "segments": s.describe()}
-          for s in list_splits(get_paths(args.home))])
+          | ({"parent": p["parent_id"]} if (p := store.split_parent(s.split_id)) else {})
+          | ({"holdout": "closed"} if store.holdout_closure(s.split_id) else {})
+          for s in list_splits(paths)])
 
 
 # -- research ------------------------------------------------------------------------------------------
@@ -781,6 +826,12 @@ def build_parser() -> argparse.ArgumentParser:
         _add_data_range(p)
         p.add_argument("--fill-policy", choices=["none", "ffill_flat"], default="none")
         p.set_defaults(fn=fn)
+    p = sub.add_parser("extend-dataset", help="freeze earlier candles followed by a dataset's bars, copied "
+                                              "verbatim (A13.4; fetch the earlier range first)")
+    p.add_argument("--dataset", required=True, help="the dataset to extend backwards")
+    p.add_argument("--start", required=True, help="first bar of the new dataset (UTC)")
+    p.add_argument("--fill-policy", choices=["none", "ffill_flat"], default="none")
+    p.set_defaults(fn=cmd_extend_dataset)
     sub.add_parser("datasets", help="list snapshots").set_defaults(fn=cmd_datasets)
     p = sub.add_parser("make-synthetic", help="control dataset with known ground truth (venue 'lab')")
     p.add_argument("--kind", choices=["random_walk", "regime_trend"], required=True)
@@ -795,8 +846,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dataset", required=True)
     p.add_argument("--dev-end")
     p.add_argument("--validation-end")
+    p.add_argument("--like", help="take the validation and holdout windows of this split (A13.4)")
     p.set_defaults(fn=cmd_split)
     sub.add_parser("splits").set_defaults(fn=cmd_splits)
+    p = sub.add_parser("split-lineage", help="name a split's parent: K and trials are inherited, a closed "
+                                             "parent's holdout closes the child (A13.4; the human's decision)")
+    p.add_argument("--split", required=True)
+    p.add_argument("--parent", required=True)
+    p.add_argument("--note", required=True)
+    p.set_defaults(fn=cmd_split_lineage)
 
     def research_cmd(name, fn, help_, segment=True, required=True):
         p = sub.add_parser(name, help=help_)

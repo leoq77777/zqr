@@ -147,3 +147,73 @@ def test_snapshot_is_immutable_and_verified(paths):
     tampered.to_parquet(pq, index=False)
     with pytest.raises(SnapshotError):
         load_dataset(paths, m1["dataset_id"])
+
+
+def _frozen(paths, n, start, seed, drop=(), fill="ffill_flat"):
+    raw = make_raw(n, start=start, seed=seed).drop(index=list(drop))
+    bars, rep = validate_bars(raw, "coinbase", "BTC-USD", "1h", start, start + n * HOUR, fill_policy=fill)
+    return bars, rep
+
+
+def test_extend_dataset_keeps_the_base_rows_verbatim(paths):
+    from quant_research.data.snapshot import content_hash, extend_dataset
+
+    base_bars, base_rep = _frozen(paths, 100, T0 + 60 * HOUR, seed=1, drop=(30, 31))
+    base = freeze_dataset(paths, base_bars, base_rep)
+    prefix, prep = _frozen(paths, 60, T0, seed=2, drop=(10,))
+    m = extend_dataset(paths, base["dataset_id"], prefix, prep)
+    assert m["extends"] == base["dataset_id"] and m["base_data_hash"] == base["data_hash"]
+    assert m["rows"] == 160 and m["actual_first_open"] == T0 and m["actual_last_open"] == base["actual_last_open"]
+    assert m["requested_start"] == T0 and m["requested_end"] == base["requested_end"]
+    assert m["internal_gap_bars"] == 3 and m["filled_rows"] == 3
+    assert [g["start"] for g in m["gaps"]] == [T0 + 10 * HOUR, T0 + 90 * HOUR]
+    assert m["coverage"] == round(157 / 160, 6)
+    assert m["junction"]["base_first_open"] == T0 + 60 * HOUR
+    bars, _ = load_dataset(paths, m["dataset_id"])
+    assert content_hash(bars.iloc[60:].reset_index(drop=True)) == base["data_hash"]
+    assert extend_dataset(paths, base["dataset_id"], prefix, prep)["dataset_id"] == m["dataset_id"]
+
+
+def test_extend_dataset_refuses_gaps_overlaps_and_mismatches(paths):
+    from quant_research.data.snapshot import extend_dataset
+
+    base = freeze_dataset(paths, *_frozen(paths, 100, T0 + 60 * HOUR, seed=1))
+    with pytest.raises(SnapshotError, match="gap before"):
+        extend_dataset(paths, base["dataset_id"], *_frozen(paths, 59, T0, seed=2))
+    with pytest.raises(SnapshotError, match="overlaps"):
+        extend_dataset(paths, base["dataset_id"], *_frozen(paths, 61, T0, seed=2))
+    with pytest.raises(SnapshotError, match="fill_policy"):
+        extend_dataset(paths, base["dataset_id"], *_frozen(paths, 60, T0, seed=2, fill="none"))
+    prefix, prep = _frozen(paths, 60, T0, seed=2)
+    with pytest.raises(SnapshotError, match="instrument"):
+        extend_dataset(paths, base["dataset_id"], prefix, prep.model_copy(update={"instrument": "ETH-USD"}))
+
+
+def test_extend_dataset_refuses_a_synthetic_base(paths):
+    from quant_research.data.snapshot import extend_dataset
+    from quant_research.data.synthetic import SyntheticSpec, freeze_synthetic
+
+    m = freeze_synthetic(paths, SyntheticSpec(kind="random_walk", instrument="X-USD", seed=1, bars=100))
+    with pytest.raises(SnapshotError, match="synthetic"):
+        extend_dataset(paths, m["dataset_id"], *_frozen(paths, 60, T0, seed=2))
+
+
+def test_extend_dataset_command_reads_the_raw_windows(paths, capsys):
+    from quant_research.cli import main
+
+    base = freeze_dataset(paths, *_frozen(paths, 100, T0 + 60 * HOUR, seed=1))
+    raw_dir = raw_dir_for(paths.raw, "BTC-USD", "ONE_HOUR")
+    raw_dir.mkdir(parents=True)
+    raw = make_raw(60, seed=2)
+    candles = [{"start": str(int(r.start)), **{c: str(getattr(r, c)) for c in ("open", "high", "low", "close",
+                                                                             "volume")}} for r in raw.itertuples()]
+    (raw_dir / f"{T0}_{T0 + 60 * HOUR}.json").write_text(json.dumps({
+        "status": 200, "venue": "coinbase", "product_id": "BTC-USD", "granularity": "ONE_HOUR",
+        "source_version": "test", "fetched_at": T0 + 200 * HOUR, "body": {"candles": candles}}))
+    main(["--home", str(paths.root), "extend-dataset", "--dataset", base["dataset_id"], "--start",
+          str(T0), "--fill-policy", "ffill_flat"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["extends"] == base["dataset_id"] and out["rows"] == 160 and out["prefix_rows"] == 60
+    main(["--home", str(paths.root), "datasets"])
+    listed = json.loads(capsys.readouterr().out)
+    assert [d.get("extends") for d in listed if d["dataset_id"] == out["dataset_id"]] == [base["dataset_id"]]

@@ -1,6 +1,6 @@
 # Contracts v2, appendix A: statistics and admission rules for portfolio research
 
-Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12, amendments A13.1 and A13.2, and the phase 3 decisions in A14. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
+Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12, amendments A13.1 to A13.4, and the phase 3 decisions in A14. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
 for portfolio research, as decided in `docs/superpowers/specs/2026-10-13-research-library-portfolio-design.md`
 (sections 4.4, 5.3, 5.4, 5.5, 5.6 and 6.5). Takes effect for a mandate only when the mandate version names it
 (`statistics: appendix-a-v1`); mandates already stored are immutable and keep their rules.
@@ -302,6 +302,43 @@ hypothesis on the data that suggested it; the viewing count would still show an 
 in `run_holdout` and `run_portfolio_holdout` before the cap; `desk/promotion.py` stops before freezing. Tests: a
 closed split refuses a new candidate and a frozen version without loading holdout data, answers a repeat, and
 records an override as contamination; promotion stops on a closed split.
+
+### A13.4 Splits that extend an earlier split's dev backwards (approved 2026-10-15)
+
+**Problem.** A split owns its trials, K and holdout viewings (A11). The longer-dev decision (E1 in
+`docs/superpowers/plans/2026-10-15-phase4-campaigns.md`) creates splits whose dev contains the whole dev of an
+earlier split (2021-01-01 to 2024-06-20 18:00 UTC) and whose validation and holdout are the same windows. Every
+idea tested on the earlier split was shaped by that data; counting trials from zero on the new split would report
+a search that did not happen.
+
+**Amended rule (adds to A3, A9 and A11).**
+
+- A split may name a parent: `zqr split-lineage --split <child> --parent <parent> --note <reason>` (human),
+  recorded once (`split_lineage`: child, parent, note, time). Allowed only when both splits are for the same
+  product and granularity, the child's validation and holdout windows equal the parent's, the child's dev contains
+  the parent's dev, and the child's dataset extends the parent's (the parent's bars copied verbatim,
+  `zqr extend-dataset`).
+- The child's K at each threshold is its own clustering's K plus its ancestors' (each ancestor's latest
+  clustering); `K(0.7)` so obtained enters every calculation on the child (A4, A5). The child's trial count for
+  the legacy DSR (contracts v2 section 6) is likewise its own plus its ancestors'.
+- The child inherits the parent's holdout closure (A13.3): a child of a closed split is closed when the lineage is
+  recorded, with a note naming the parent's closure. Holdout viewings and validation uses stay per split; the
+  report shows the parent's next to the child's.
+- Reports show K and trials as "own + inherited (parent)". Clustering runs per split as before; the parent's trials
+  are not re-run or re-clustered on the child.
+- Seed characterisation runs (A7) and the seed portfolio's dev run are repeated on the child. Both splits' seed
+  trials then count on the child (at most 12 + 1 per product twice); conservative, accepted for simplicity.
+- The A4 reference values for the long dev (T = 3,258 BTC from 2015-07-21, 2,942 ETH from 2016-06-01; the start
+  dates exclude the first partial UTC day of BTC and the intermittent ETH listing fortnight) are in the plan.
+
+**Applied:** the E1 splits of BTC-USD and ETH-USD, parents `split-1016c7c9873a` and `split-c47a0be57a24`.
+
+**Implementation.** `ExperimentStore.record_lineage` / `split_parent` / `split_ancestors` / `split_trial_count`;
+`validation/splits.py` `create_split_like`, `link_split`; `memory/clusters.py` `k_breakdown`, `effective_k`,
+`k_label`; the legacy DSR in `experiments/runner.py` and `validation/walkforward.py`; `data/snapshot.py`
+`extend_dataset`. Tests: an extended dataset keeps the base rows' hash and refuses gaps, overlaps and mismatches;
+lineage refused on different windows or data; K and trial counts add the ancestors', recursively; a child of a
+closed split refuses a holdout without loading holdout data.
 
 ## A14. Portfolio layer decisions (approved 2026-10-15)
 

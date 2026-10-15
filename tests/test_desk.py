@@ -362,3 +362,44 @@ def test_a_rebalance_tolerance_within_the_band_is_no_paper_gap():
     assert promotion.paper_gaps(EngineConfig(rebalance_tolerance=0.1), band) == ["rebalance_tolerance=0.1"]
     assert promotion.paper_gaps(EngineConfig(rebalance_tolerance=0.02), PortfolioPolicy()) == [
         "rebalance_tolerance=0.02"]
+
+
+def test_use_mandate_switches_the_desk_split_and_records_it(paths, store, dataset, capsys):
+    import json
+
+    from quant_research.cli import main
+    from quant_research.desk.config import DeskConfig, load_config, mandate_history_path, save_config, use_mandate
+    from quant_research.desk.report import research_section
+    from quant_research.memory.characterise import characterise, seed_runs
+    from tests.conftest import make_mandate
+    from tests.test_experiments import _extended_split
+
+    manifest, split = dataset
+    old = make_mandate(dataset)
+    store.put_mandate(old.mandate_id(), old.model_dump(mode="json"))
+    save_config(paths, DeskConfig(mandates={"BTC-USD": old.mandate_id()}))
+    child_ds, child = _extended_split(paths, manifest, split)
+    new = make_mandate((child_ds, child))
+    store.put_mandate(new.mandate_id(), new.model_dump(mode="json"))
+    with pytest.raises(ValueError, match="research is enabled"):
+        use_mandate(paths, store, "BTC-USD", new.mandate_id(), "E1")
+    save_config(paths, load_config(paths).model_copy(update={"research_enabled": False}))
+    with pytest.raises(ValueError, match="needs a note"):
+        use_mandate(paths, store, "BTC-USD", new.mandate_id(), " ")
+    with pytest.raises(ValueError, match="not ETH-USD"):
+        use_mandate(paths, store, "ETH-USD", new.mandate_id(), "E1")
+    main(["--home", str(paths.root), "desk", "use-mandate", "--product", "BTC-USD", "--mandate", new.mandate_id(),
+          "--note", "E1: longer dev"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["changed"] and out["from"] == old.mandate_id() and out["split_id"] == child.split_id
+    assert load_config(paths).mandates == {"BTC-USD": new.mandate_id()}
+    assert not use_mandate(paths, store, "BTC-USD", new.mandate_id(), "again")["changed"]
+    history = [json.loads(x) for x in mandate_history_path(paths).read_text().splitlines()]
+    assert [(h["from"], h["to"], h["note"]) for h in history] == [(old.mandate_id(), new.mandate_id(),
+                                                                   "E1: longer dev")]
+    characterise(paths, store, entries={"tsmom-1w"})
+    assert set(seed_runs(store, child.split_id)) == {"btc-tsmom-1w"} and not seed_runs(store, split.split_id)
+    store.record_lineage(child.split_id, split.split_id, "E1")
+    lines, _ = research_section(paths, store, "2026-10-15")
+    row = next(x for x in lines if x.startswith("| BTC-USD | "))
+    assert "(1 + 0 inherited)" in row and f"parent `{split.split_id}` viewed 0" in row

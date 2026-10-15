@@ -42,8 +42,9 @@ def split_section(paths: Paths, store: ExperimentStore, split_id: str) -> list[s
     product = split_product(paths, split_id)
     raw = clusters.compute(paths, store, split_id, winsorise=False)
     k, counts = last["k"], last["summary"]
+    kb = clusters.k_breakdown(store, split_id)
     returns = ReturnArchive(paths, store).load(split_id)
-    k07 = int(k["0.7"])
+    k07 = kb["total"]["0.7"]
     index = {r["experiment_id"]: r for r in ReturnArchive(paths, store).index(split_id)}
     lab = {t: clusters.members(store, last["id"], t) for t in clusters.THRESHOLDS}
     sizes = {t: Counter(v for e, v in lab[t].items() if not index.get(e, {}).get("no_returns")
@@ -54,7 +55,10 @@ def split_section(paths: Paths, store: ExperimentStore, split_id: str) -> list[s
              f"Trials: {counts['trials']} ({counts['with_returns']} with returns, {counts['no_returns']} without; "
              f"{counts['flat']} flat, {counts['passive']} passive). Clustering input `{last['input_hash']}`.", "",
              "| ρ threshold | 0.3 | 0.5 | 0.7 |", "|---|---|---|---|",
-             f"| K (winsorised, used) | {k['0.3']} | {k['0.5']} | **{k['0.7']}** |",
+             *([f"| K inherited from `{kb['parent']}` (A13.4) | {kb['inherited']['0.3']} | "
+                f"{kb['inherited']['0.5']} | {kb['inherited']['0.7']} |",
+                f"| K own (winsorised) | {k['0.3']} | {k['0.5']} | {k['0.7']} |"] if kb["parent"] else []),
+             f"| K (winsorised, used) | {kb['total']['0.3']} | {kb['total']['0.5']} | **{kb['total']['0.7']}** |",
              f"| K (not winsorised) | {raw.k['0.3']} | {raw.k['0.5']} | {raw.k['0.7']} |",
              f"| 2026-10-13 feasibility run, raw (winsorised) | {feas.get('0.3', '–')} | {feas.get('0.5', '–')} | "
              f"{feas.get('0.7', '–')} |", "",

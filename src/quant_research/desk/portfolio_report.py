@@ -277,8 +277,11 @@ def versions_lines(store: ExperimentStore, mandates: dict[str, str]) -> list[str
             continue
         split_id = rec["body"].get("split_id")
         states = Counter(v["state"] for v in vs.list(split_id=split_id))
-        rows.append(f"| {product} | {', '.join(f'{k} {v}' for k, v in sorted(states.items())) or '-'} | "
-                    f"{vs.validation_uses(split_id)} |")
+        parent = store.split_parent(split_id)
+        uses = str(vs.validation_uses(split_id))
+        if parent:
+            uses += f" (parent `{parent['parent_id']}`: {vs.validation_uses(parent['parent_id'])}, same data)"
+        rows.append(f"| {product} | {', '.join(f'{k} {v}' for k, v in sorted(states.items())) or '-'} | {uses} |")
     if not rows:
         return []
     return ["", "| product | portfolio versions by state | validation uses |", "|---|---|---|", *rows]

@@ -119,7 +119,8 @@ def _split_view(paths: Paths, store: ExperimentStore, split_id: str, catalog: Ca
     returns = ReturnArchive(paths, store).load(split_id)
     market = split_market_returns(paths, split_id)
     resid, _ = residuals(returns, market)
-    k07 = int(last["k"]["0.7"])
+    kb = clusters.k_breakdown(store, split_id)
+    k07 = kb["total"]["0.7"]
     lab03 = clusters.members(store, last["id"], 0.3)
     lab07 = clusters.members(store, last["id"], 0.7)
     mapping = map_clusters(store, last["id"])
@@ -147,7 +148,8 @@ def _split_view(paths: Paths, store: ExperimentStore, split_id: str, catalog: Ca
         labels = Counter(lb["label"] for t in trials for lb in ((_exp(store, t).get("diagnosis") or {})
                                                                .get("labels", [])))
         views[fam] = {
-            "k": last["k"], "clustering_input": last["input_hash"],
+            "k": kb["total"], "k_own": kb["own"], "k_inherited": kb["inherited"], "parent_split": kb["parent"],
+            "clustering_input": last["input_hash"],
             "members": [stats(s) | {"instance": seed_of[s]["instance"]} for s in seeds],
             "representative": stats(rep) if rep else None,
             "trials": len(trials), "trials_in_shared_clusters": sum(m["size"] for m in mine.values() if m["shared"]),
@@ -219,8 +221,11 @@ def render_md(a: dict[str, Any]) -> str:
              f"Sleeve: {'yes' if a['sleeve'] else 'no'}. Conclusions: {len(a['conclusions'])}.", ""]
     for split_id, v in a["splits"].items():
         k = v["k"]
+        inherited = (f" ({v['k_own']['0.7']} own + {v['k_inherited']['0.7']} inherited from `{v['parent_split']}` "
+                     "at 0.7, A13.4)" if v.get("parent_split") else "")
         lines += [f"## {v['product']} (`{split_id}`)", "",
-                  f"Split K (ρ 0.3 / 0.5 / 0.7): {k['0.3']} / {k['0.5']} / {k['0.7']}. Trials mapped to the family: "
+                  f"Split K (ρ 0.3 / 0.5 / 0.7): {k['0.3']} / {k['0.5']} / {k['0.7']}{inherited}. "
+                  "Trials mapped to the family: "
                   f"{v['trials']} in {len(v['clusters_0.3'])} clusters at 0.3 ({v['clusters_0.7']} at 0.7). "
                   f"Holdout viewings used: {v['holdout_viewings']}.", ""]
         shared = [c for c in v["clusters_0.3"] if c["is_shared"]]

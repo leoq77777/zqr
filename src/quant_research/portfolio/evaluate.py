@@ -141,6 +141,55 @@ def _summary(row: dict[str, Any]) -> dict[str, Any]:
     return {"experiment_id": row["id"], **{k: m.get(k) for k in keys}, **(row["benchmarks"] or {})}
 
 
+def gate1_reference(store: ExperimentStore, product: str, split_id: str) -> str | None:
+    """The version recorded as gate 1's reference `R_p` for a product on a split (D4), if any."""
+    VersionStore(store)
+    rows = store.query("SELECT e.version_id FROM portfolio_events e JOIN portfolio_versions v ON v.id = e.version_id "
+                       "WHERE v.product=? AND v.split_id=? AND json_extract(e.evidence, '$.gate1_reference') = 1 "
+                       "ORDER BY e.id LIMIT 1", (product, split_id))
+    return rows[0]["version_id"] if rows else None
+
+
+def run_dev(paths: Paths, store: ExperimentStore, vid: str, reference: bool = False) -> dict[str, Any]:
+    """The dev run alone: a trial, archived, no validation use; the state does not change (E1, F4).
+
+    `reference` records the version as gate 1's reference for its product and split; a second one is refused.
+    """
+    vs = VersionStore(store)
+    row = vs.get(vid)
+    if row is None:
+        raise VersionError(f"unknown portfolio version {vid}")
+    current = gate1_reference(store, row["product"], row["split_id"])
+    if reference and current not in (None, vid):
+        raise VersionError(f"{current} is already gate 1's reference for {row['product']} on {row['split_id']}")
+    dev = _summary(run_segment(paths, store, vid, "dev"))
+    if reference and current is None:
+        vs.record(vid, "controller", {"gate1_reference": True, "dev_experiment": dev["experiment_id"]},
+                  "gate 1 reference (D4)")
+    return {"version_id": vid, "state": row["state"], "split_id": row["split_id"],
+            "gate1_reference": gate1_reference(store, row["product"], row["split_id"]) == vid, "dev": dev}
+
+
+def version_periods(paths: Paths, store: ExperimentStore, vid: str, cuts: list[int]) -> dict[str, Any]:
+    """Period statistics of the version's recorded dev run (dev data only: usable in diagnostics, D6)."""
+    from quant_research.evaluation.periods import period_stats
+    from quant_research.memory.returns import equity_file
+
+    version = VersionStore(store).version(vid)
+    rows = store.query("SELECT id FROM experiments WHERE candidate_hash=? AND kind='portfolio' AND split_id=? AND "
+                       "status='completed' ORDER BY created_at DESC LIMIT 1", (vid, version.split_id))
+    if not rows:
+        raise VersionError(f"{vid} has no dev run (`zqr portfolio dev {vid}`)")
+    row = store.get_experiment(rows[0]["id"])
+    path = equity_file(paths, row)
+    if path is None:
+        raise VersionError(f"equity of {row['id']} not found")
+    log_path = path.parent / "decisions.parquet"
+    log = pd.read_parquet(log_path, columns=["bar_open", "level", "yellow"]) if log_path.exists() else None
+    return {"version_id": vid, "split_id": version.split_id, "experiment_id": row["id"],
+            "periods": period_stats(pd.read_parquet(path), version.engine_config.initial_cash, cuts, log)}
+
+
 def validate(paths: Paths, store: ExperimentStore, vid: str) -> dict[str, Any]:
     """draft -> validated | failed_validation on the seed standard (A6): validation Sharpe and drawdown."""
     vs = VersionStore(store)

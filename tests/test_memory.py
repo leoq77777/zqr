@@ -498,3 +498,52 @@ def test_memory_run_end_to_end_writes_the_clustering_report(paths, store, datase
     seed = json.loads(capsys.readouterr().out)["seed_run"]
     assert seed["split_id"] == split and seed["k"] == out["cluster"][split]["k"]["0.7"]
     assert seed["dev_sharpe"] > 0 and 0 < seed["split_dsr"] < 1
+
+
+def test_k_adds_the_ancestors_latest_clustering(store):
+    import json
+
+    from quant_research.memory import clusters
+    from quant_research.memory.schema import ensure
+
+    ensure(store)
+
+    def clustering(split_id, k, at):
+        store.execute("INSERT INTO clusterings (id, split_id, computed_at, input_hash, n_trials, k, summary) "
+                      "VALUES (?,?,?,?,?,?,?)", (f"clu-{split_id}-{at}", split_id, at, "h", 1,
+                                                 json.dumps({"0.3": k[0], "0.5": k[1], "0.7": k[2]}), "{}"))
+
+    clustering("grand", (1, 2, 3), 1.0)
+    clustering("parent", (5, 9, 20), 1.0)
+    clustering("parent", (6, 10, 30), 2.0)
+    clustering("child", (2, 3, 4), 1.0)
+    assert clusters.effective_k(store, "child") == 4 and clusters.k_label(store, "child") == "4"
+    store.record_lineage("child", "parent", "E1")
+    b = clusters.k_breakdown(store, "child")
+    assert b["own"] == {"0.3": 2, "0.5": 3, "0.7": 4} and b["inherited"] == {"0.3": 6, "0.5": 10, "0.7": 30}
+    assert clusters.effective_k(store, "child") == 34
+    assert clusters.k_label(store, "child") == "34 (4 + 30 from parent)"
+    store.record_lineage("parent", "grand", "earlier")
+    assert clusters.effective_k(store, "child") == 37 and clusters.effective_k(store, "parent") == 33
+    store.record_lineage("grand", "unclustered", "x")
+    b = clusters.k_breakdown(store, "child")
+    assert b["unclustered"] == ["unclustered"] and b["total"]["0.7"] == 37
+    assert clusters.k_breakdown(store, "unclustered") is None
+
+
+def test_library_periods_per_seed_run_on_the_desk_split(paths, store, dataset, capsys):
+    import json
+
+    from quant_research.cli import main
+    from quant_research.memory.characterise import characterise
+    from tests.conftest import HOUR, T0
+
+    _desk(paths, store, dataset)
+    characterise(paths, store, entries={"tsmom-1w", "turtle-s1"})
+    main(["--home", str(paths.root), "library", "periods", "--product", "BTC-USD", "--cut", str(T0 + 900 * HOUR)])
+    out = json.loads(capsys.readouterr().out)
+    assert out["split_id"] == dataset[1].split_id and set(out["seeds"]) == {"btc-tsmom-1w", "btc-turtle-s1"}
+    periods = out["seeds"]["btc-tsmom-1w"]["periods"]
+    assert [p["period"] for p in periods] == ["part", "part", "whole"] and "buy_and_hold" in periods[0]
+    with pytest.raises(SystemExit, match="no desk mandate"):
+        main(["--home", str(paths.root), "library", "periods", "--product", "ETH-USD"])

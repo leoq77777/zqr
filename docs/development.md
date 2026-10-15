@@ -33,7 +33,7 @@ A personal systematic research desk for Coinbase BTC-USD and ETH-USD spot, long/
 | M5 Reliability and security | done | Network-enforced isolation, strict final-artifact grading, fault matrix, audit, cost ledger |
 | Desk (closed loop) | done, deployed | Paper fleet, research loop, auto_paper authorization, supervisor, daily report |
 | Release (images) | done | Runtime and agent images, `zqr release`, host wrapper `zqr`, desk as a container |
-| M6 Portfolio research | phase 3a released | Portfolio versions per product: blend of library members, deadband, drawdown ladder, dev/validation runs, holdout gate, paper portfolio trader, parity, reports, soft stop (section 5.9). Seed portfolios failed (BTC holdout, ETH validation; `docs/reviews/2026-10-15-seed-portfolio-review.md`). Phase 4 (`docs/superpowers/plans/2026-10-15-phase4-campaigns.md`): holdout closure and shadow portfolios built; registration, gates 1-2 and campaigns not started |
+| M6 Portfolio research | phase 3a released | Portfolio versions per product: blend of library members, deadband, drawdown ladder, dev/validation runs, holdout gate, paper portfolio trader, parity, reports, soft stop (section 5.9). Seed portfolios failed (BTC holdout, ETH validation; `docs/reviews/2026-10-15-seed-portfolio-review.md`). Phase 4 (`docs/superpowers/plans/2026-10-15-phase4-campaigns.md`): holdout closure and shadow portfolios released (4a); longer dev (E1: extended datasets, split lineage, inherited K, A13.4) built; registration, gates 1-2 and campaigns not started |
 | M7 Paper (full) | partial | Parity on targets, orders and fills, stale-data halt, restart recovery from the bar store are in; reconciliation and drills beyond tests are not |
 
 ## 3. Architecture
@@ -132,7 +132,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (286 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (300 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -340,7 +340,14 @@ Rules are in `docs/contracts-v2-appendix-a.md` (approved 2026-10-15).
   records a rejection in the append-only `proposal_decisions`. A rejected cluster stays unmapped as a negative
   result and is not proposed again while its members are unchanged.
 - **Seed characterisation.** `zqr memory characterise` runs each seed instance once on its product's desk mandate
-  (kind `seed`, counted as trials, duplicates not reused).
+  (kind `seed`, counted as trials, duplicates not reused). `zqr library periods --product P --cut D` gives each
+  seed run's statistics per period from its recorded equity (`evaluation/periods.py`).
+- **Split lineage** (amendment A13.4). A split that extends an earlier split's dev backwards names it as parent
+  (`zqr split-lineage`, human; same product and granularity, equal validation and holdout windows, the child's
+  dataset extends the parent's). K at each threshold is the split's own clustering plus its ancestors' latest
+  (`clusters.k_breakdown`; `effective_k` returns the total), and the legacy DSR deflates with the trial count of
+  the split and its ancestors (`ExperimentStore.split_trial_count`). A child of a closed split is closed when the
+  lineage is recorded. Reports show K and trials as own + inherited.
 - **Conclusions.** `zqr memory import-conclusions` imports each session's `research.json` into the append-only
   `family_conclusions` after re-running the gateway's citation check.
 - **Archives.** `library/archives/<family>.json` and `.md`: trials, clusters, parameter ranges, the best trials
@@ -376,7 +383,10 @@ Rules: `docs/investment-policy.md` (D1-D3) and appendix A14 (D4-D7). Plan:
   archive); a validation run is kind `portfolio_validation` (not a trial; counted in `validation_uses`). Both
   record daily Sharpe (A4), drawdown with and without the ladder, ladder time, family contribution and buy and
   hold. `zqr portfolio validate` applies the seed standard: validation daily Sharpe ≥ 0.5 and max drawdown ≥ −25%.
-  A failed version is recorded, not adjusted and retried (A6).
+  A failed version is recorded, not adjusted and retried (A6). `zqr portfolio dev <vid> [--reference]` runs dev
+  alone (no validation use, state unchanged); `--reference` records the version as gate 1's reference for its
+  product and split (D4, one per product and split). `zqr portfolio periods <vid> --cut D` splits the dev run's
+  statistics by period, with buy and hold and ladder time.
 - **Seed portfolio** (`seed.py`). Every non-retired library member of the product's sleeve families plus the
   `vol_overlay` entry, with the desk mandate's engine config (rebalance tolerance 0), dataset and split.
 - **Holdout.** `run_portfolio_holdout` (`validation/holdout.py`) needs a frozen version, shares the split's viewing
@@ -426,7 +436,9 @@ These must hold after any change. Tests cover most of them.
    Nothing transitions to live.
 5. Every experiment, tool call, transition and paper decision is recorded. Session audits must reconcile
    experiments with tool events.
-6. Trials on a split are never deleted. DSR counts all of them. Holdout data is read only through
+6. Trials on a split are never deleted. DSR counts all of them, and those of the split's ancestors (A13.4). Datasets
+   are immutable; an extended dataset copies its base's bars verbatim (`extend_dataset` checks the base's content
+   hash). Holdout data is read only through
    `validation/holdout.py` (`run_holdout` for candidates, `run_portfolio_holdout` for portfolio versions), which
    caps viewings per split and refuses closed splits (A13.3); exceeding the cap or viewing a closed split needs a
    recorded override and marks the split's holdout as contaminated. A test enforces that no other module reads it. Experiment replay refuses holdout runs and reads
@@ -444,6 +456,7 @@ These must hold after any change. Tests cover most of them.
 | `sessions/` | Controller session workspaces |
 | `paper/` | Bar stores (`bars/<product>-<granularity>.parquet`), fleet health/log and one directory per paper strategy or portfolio (`portfolio-<product>/`, with `resume.json` while a resume is pending) |
 | `desk/config.json` | `DeskConfig` (below) |
+| `desk/mandate_history.jsonl` | Desk mandate switches (`zqr desk use-mandate`): product, from, to, split, note |
 | `desk/check.json` | Last `desk check` result, including `isolation_ok` and the chosen network mode |
 | `desk/authorization.json` | Standing authorization |
 | `desk/roster.json` | Paper roster |
@@ -527,6 +540,10 @@ a one-off container with the same mounts while the desk is stopped).
 | `zqr portfolio approve <vid> --note` / `resume <name> --note` | Human: paper roster entry / resume a liquidated paper portfolio |
 | `zqr portfolio shadow <vid> --note` | Human: run a version not approved for paper as `shadow-<product>` (forward evidence only) |
 | `zqr close-holdout --split S --note` | Human: close a split's holdout to new viewings, permanently (A13.3) |
+| `zqr extend-dataset --dataset D --start T [--fill-policy ffill_flat]` | Freeze earlier candles (fetched first with `zqr fetch-data`) followed by D's bars, copied verbatim |
+| `zqr create-split --dataset D --like S` / `zqr split-lineage --split C --parent S --note` | A split with S's validation and holdout windows / human: name its parent (A13.4: K and trials inherited, closure inherited) |
+| `zqr desk use-mandate --product P --mandate M --note` | Human: point a desk product at another stored mandate (research disabled; history in `desk/mandate_history.jsonl`) |
+| `zqr portfolio dev <vid> [--reference]` / `periods <vid> --cut D` / `zqr library periods --product P --cut D` | Dev run alone, optionally gate 1's reference / per-period statistics of recorded dev runs |
 | `zqr desk monthly --month YYYY-MM` / `zqr desk soft-stop status\|evaluate\|clear [--day D] [--note N]` | Monthly review; soft-stop rule (investment policy 2) |
 | `zqr release [--target HOST\|local] [--allow-dirty] [--no-up]` | Development machine: build, ship and start a version |
 

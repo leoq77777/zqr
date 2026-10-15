@@ -334,3 +334,96 @@ def test_only_the_holdout_gate_reads_holdout_data():
                      if ("paths.holdout" in p.read_text() or "full.parquet" in p.read_text())
                      and str(p.relative_to(root)) not in allowed)
     assert readers == []
+
+
+def _extended_split(paths, manifest, split, bars=500):
+    from quant_research.data.snapshot import extend_dataset
+    from quant_research.data.validate import validate_bars
+    from quant_research.validation.splits import create_split_like
+    from tests.conftest import HOUR, T0, make_raw
+
+    start = T0 - bars * HOUR
+    prefix, rep = validate_bars(make_raw(bars, start=start, seed=3), "coinbase", "BTC-USD", "ONE_HOUR", start, T0)
+    child = extend_dataset(paths, manifest["dataset_id"], prefix, rep)
+    return child, create_split_like(paths, child["dataset_id"], split.split_id)
+
+
+def test_a_split_like_another_keeps_its_validation_and_holdout(paths, dataset):
+    from quant_research.data.snapshot import freeze_dataset
+    from quant_research.data.validate import validate_bars
+    from quant_research.validation.splits import create_split_like
+    from tests.conftest import HOUR, T0, make_raw
+
+    manifest, split = dataset
+    child, new = _extended_split(paths, manifest, split)
+    assert new.split_id != split.split_id and new.dataset_id == child["dataset_id"]
+    assert (new.validation, new.holdout) == (split.validation, split.holdout)
+    assert new.dev == (T0 - 500 * HOUR, split.dev[1])
+    shorter = freeze_dataset(paths, *validate_bars(make_raw(2900, seed=1), "coinbase", "BTC-USD", "ONE_HOUR", T0,
+                                                   T0 + 2900 * HOUR))
+    with pytest.raises(SplitError, match="windows would differ"):
+        create_split_like(paths, shorter["dataset_id"], split.split_id)
+
+
+def test_split_lineage_checks_windows_and_data_and_inherits_the_closure(paths, store, dataset, monkeypatch):
+    from quant_research.validation import holdout as holdout_mod
+    from quant_research.validation.splits import create_split, link_split
+
+    manifest, split = dataset
+    child_ds, child = _extended_split(paths, manifest, split)
+    other = create_split(paths, child_ds["dataset_id"], fractions=(0.5, 0.2))
+    with pytest.raises(SplitError, match="windows differ"):
+        link_split(paths, store, other.split_id, split.split_id, "x")
+    with pytest.raises(SplitError, match="does not extend"):
+        link_split(paths, store, split.split_id, child.split_id, "x")
+    with pytest.raises(SplitError, match="needs a note"):
+        link_split(paths, store, child.split_id, split.split_id, " ")
+    store.close_holdout(split.split_id, "seen by the human")
+    out = link_split(paths, store, child.split_id, split.split_id, "E1: longer dev")
+    assert out["lineage"]["parent_id"] == split.split_id
+    assert out["closure"]["note"] == f"inherits the closure of {split.split_id}: seen by the human"
+    assert link_split(paths, store, child.split_id, split.split_id, "again")["lineage"]["note"] == "E1: longer dev"
+    assert store.split_ancestors(child.split_id) == [split.split_id]
+    with pytest.raises(ValueError, match="cycle"):
+        store.record_lineage(split.split_id, child.split_id, "x")
+    req = _req(child_ds, child)
+    spec = req.spec.normalized()
+    store.freeze_candidate(spec.candidate_hash(), spec.strategy_ref, spec.parameters)
+    monkeypatch.setattr(holdout_mod, "load_holdout_data", lambda *a: pytest.fail("holdout data loaded"))
+    with pytest.raises(HoldoutError, match="inherits the closure"):
+        run_holdout(paths, store, req, max_viewings=10)
+
+
+def test_trials_of_ancestors_count_on_the_child(paths, store, dataset):
+    manifest, split = dataset
+    child_ds, child = _extended_split(paths, manifest, split)
+    run_many(paths, store, [_req(manifest, split, parameters={"fast": f, "slow": 50}) for f in (5, 8, 12)])
+    run_experiment(paths, store, _req(child_ds, child))
+    assert store.split_trial_count(child.split_id) == {"own": 1, "inherited": 0, "total": 1}
+    store.record_lineage(child.split_id, split.split_id, "E1")
+    assert store.split_trial_count(child.split_id) == {"own": 1, "inherited": 3, "total": 4}
+    res = run_experiment(paths, store, _req(child_ds, child, parameters={"fast": 7, "slow": 50}))
+    assert res.statistics["n_trials"] == 5
+
+
+def test_split_commands(paths, store, dataset, capsys):
+    import json
+
+    from quant_research.cli import main
+
+    manifest, split = dataset
+    child_ds, _ = _extended_split(paths, manifest, split)
+    home = ["--home", str(paths.root)]
+    main([*home, "create-split", "--dataset", child_ds["dataset_id"], "--like", split.split_id])
+    new = json.loads(capsys.readouterr().out)["split_id"]
+    with pytest.raises(SystemExit, match="drop --dev-end"):
+        main([*home, "create-split", "--dataset", child_ds["dataset_id"], "--like", split.split_id,
+              "--dev-end", "2024-01-01"])
+    with pytest.raises(SystemExit, match="cannot inherit"):
+        main([*home, "split-lineage", "--split", split.split_id, "--parent", new, "--note", "x"])
+    main([*home, "split-lineage", "--split", new, "--parent", split.split_id, "--note", "E1"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["lineage"]["parent_id"] == split.split_id and out["closure"] is None
+    main([*home, "splits"])
+    listed = {s["split_id"]: s for s in json.loads(capsys.readouterr().out)}
+    assert listed[new]["parent"] == split.split_id and "parent" not in listed[split.split_id]

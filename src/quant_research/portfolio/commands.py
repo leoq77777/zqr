@@ -49,6 +49,20 @@ def cmd_validate(args) -> None:
     _run(args, lambda paths, store: validate(paths, store, args.version_id))
 
 
+def cmd_dev(args) -> None:
+    from quant_research.portfolio.evaluate import run_dev
+
+    _run(args, lambda paths, store: run_dev(paths, store, args.version_id, args.reference))
+
+
+def cmd_periods(args) -> None:
+    from quant_research.portfolio.evaluate import version_periods
+    from quant_research.timeutil import parse_time
+
+    _run(args, lambda paths, store: version_periods(paths, store, args.version_id,
+                                                    [parse_time(c) for c in args.cut]))
+
+
 def cmd_show(args) -> None:
     from quant_research.portfolio.blend import member_shares
     from quant_research.portfolio.version import VersionError, VersionStore
@@ -112,6 +126,15 @@ def register(sub) -> None:
     p = pf.add_parser("validate", help="dev and validation runs; draft -> validated | failed_validation")
     p.add_argument("version_id")
     p.set_defaults(fn=cmd_validate)
+    p = pf.add_parser("dev", help="the dev run alone (a trial; no validation use; the state does not change)")
+    p.add_argument("version_id")
+    p.add_argument("--reference", action="store_true", help="record it as gate 1's reference for its product and "
+                   "split (D4; one per product and split)")
+    p.set_defaults(fn=cmd_dev)
+    p = pf.add_parser("periods", help="statistics of the version's dev run per period (from the recorded equity)")
+    p.add_argument("version_id")
+    p.add_argument("--cut", action="append", default=[], help="period boundary (UTC), repeatable")
+    p.set_defaults(fn=cmd_periods)
     p = pf.add_parser("show", help="a version: body, member shares, state, evidence and events")
     p.add_argument("version_id")
     p.set_defaults(fn=cmd_show)

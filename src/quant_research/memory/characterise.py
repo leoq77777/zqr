@@ -49,6 +49,27 @@ def characterise(paths: Paths, store: ExperimentStore, catalog: Catalog | None =
     return out
 
 
+def seed_periods(paths: Paths, store: ExperimentStore, product: str, cuts: list[int]) -> dict[str, Any]:
+    """Period statistics of each seed run on the product's desk split (dev data only)."""
+    import pandas as pd
+
+    from quant_research.evaluation.periods import period_stats
+    from quant_research.memory.returns import equity_file
+
+    mandate_id = load_config(paths).mandates.get(product)
+    if mandate_id is None:
+        raise ValueError(f"no desk mandate for {product}")
+    split_id = store.get_mandate(mandate_id)["body"]["split_id"]
+    out: dict[str, Any] = {}
+    for instance, exp_id in sorted(seed_runs(store, split_id).items()):
+        row = store.get_experiment(exp_id)
+        path = equity_file(paths, row) if row["status"] == "completed" else None
+        out[instance] = ({"experiment_id": exp_id, "status": row["status"], "periods": None} if path is None else
+                         {"experiment_id": exp_id, "status": row["status"],
+                          "periods": period_stats(pd.read_parquet(path), row["engine_config"]["initial_cash"], cuts)})
+    return {"product": product, "split_id": split_id, "seeds": out}
+
+
 def seed_summary(paths: Paths, store: ExperimentStore, instance: str) -> dict[str, Any] | None:
     """The instance's latest seed run: dev Sharpe (daily) and split DSR at the split's latest K."""
     from quant_research.evaluation.split_stats import dsr_k, sharpe_daily

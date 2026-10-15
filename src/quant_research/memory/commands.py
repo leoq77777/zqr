@@ -99,6 +99,12 @@ def cmd_status(args) -> None:
             out[split_id] = {"archived": len(ReturnArchive(paths, store).index(split_id)),
                              "trials": store.trial_count(split_id=split_id),
                              "k": last["k"] if last else None, "clustered_at": last["computed_at"] if last else None}
+            if (parent := store.split_parent(split_id)) is not None:
+                kb = clusters.k_breakdown(store, split_id)
+                out[split_id] |= {"parent": parent["parent_id"],
+                                  "trials_inherited": store.split_trial_count(split_id)["inherited"],
+                                  "k_inherited": kb["inherited"] if kb else None,
+                                  "k_total": kb["total"] if kb else None}
         _out(out)
     finally:
         store.close()

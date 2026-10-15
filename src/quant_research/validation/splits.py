@@ -91,6 +91,54 @@ def create_split(
     return split
 
 
+def create_split_like(paths: Paths, dataset_id: str, like_id: str) -> SplitConfig:
+    """A split of `dataset_id` with the validation and holdout windows of split `like_id` (appendix A13.4)."""
+    like = load_split(paths, like_id)
+    manifest = load_manifest(paths, dataset_id)
+    end = manifest["actual_last_open"] + granularity_seconds(manifest["granularity"])
+    if manifest["granularity"] != like.granularity or end != like.holdout[1]:
+        raise SplitError(f"{dataset_id} ends at {to_iso(end)} ({manifest['granularity']}); {like_id}'s holdout ends "
+                         f"at {to_iso(like.holdout[1])} ({like.granularity}): the windows would differ")
+    return create_split(paths, dataset_id, like.dev[1], like.validation[1])
+
+
+def dataset_lineage(paths: Paths, dataset_id: str) -> list[str]:
+    """The dataset and the datasets it extends, nearest first."""
+    out = [dataset_id]
+    while (base := load_manifest(paths, out[-1]).get("extends")) and base not in out:
+        out.append(base)
+    return out
+
+
+def link_split(paths: Paths, store, split_id: str, parent_id: str, note: str) -> dict:
+    """Record `parent_id` as the parent of `split_id` (appendix A13.4); a child of a closed split is closed."""
+    if not note.strip():
+        raise SplitError("a split lineage needs a note")
+    child, parent = load_split(paths, split_id), load_split(paths, parent_id)
+    cm, pm = load_manifest(paths, child.dataset_id), load_manifest(paths, parent.dataset_id)
+    problems = []
+    if (cm["instrument"], child.granularity) != (pm["instrument"], parent.granularity):
+        problems.append(f"product {cm['instrument']} {child.granularity} vs {pm['instrument']} {parent.granularity}")
+    if child.validation != parent.validation or child.holdout != parent.holdout:
+        problems.append("validation or holdout windows differ")
+    if not (child.dev[0] <= parent.dev[0] and child.dev[1] == parent.dev[1]):
+        problems.append("the child's dev does not contain the parent's")
+    if parent.dataset_id not in dataset_lineage(paths, child.dataset_id):
+        problems.append(f"{child.dataset_id} does not extend {parent.dataset_id}")
+    if problems:
+        raise SplitError(f"{split_id} cannot inherit from {parent_id}: " + "; ".join(problems))
+    try:
+        lineage = store.record_lineage(split_id, parent_id, note)
+    except ValueError as exc:
+        raise SplitError(str(exc)) from None
+    closure = store.holdout_closure(split_id)
+    if closure is None and lineage["parent_id"] == parent_id:
+        parent_closure = store.holdout_closure(parent_id)
+        if parent_closure is not None:
+            closure = store.close_holdout(split_id, f"inherits the closure of {parent_id}: {parent_closure['note']}")
+    return {"lineage": lineage, "closure": closure}
+
+
 def load_split(paths: Paths, split_id: str) -> SplitConfig:
     path = paths.splits / split_id / "split.json"
     if not path.exists():

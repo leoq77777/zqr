@@ -306,6 +306,19 @@ def cmd_soft_stop(args) -> None:
             raise SystemExit(str(exc)) from None
 
 
+def cmd_use_mandate(args) -> None:
+    from quant_research.desk.config import use_mandate
+
+    paths = get_paths(args.home)
+    store = _store(paths)
+    try:
+        _out(use_mandate(paths, store, args.product, args.mandate, args.note))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    finally:
+        store.close()
+
+
 def cmd_recover(args) -> None:
     from quant_research.desk.config import load_config
 
@@ -434,6 +447,12 @@ def register(sub) -> None:
     p.add_argument("--day", help="review day YYYY-MM-DD (UTC) for evaluate; default today")
     p.add_argument("--note", help="required for clear")
     p.set_defaults(fn=cmd_soft_stop)
+    p = desk.add_parser("use-mandate", help="point a desk product at another stored mandate (the human's decision; "
+                                            "recorded in desk/mandate_history.jsonl)")
+    p.add_argument("--product", required=True)
+    p.add_argument("--mandate", required=True)
+    p.add_argument("--note", required=True)
+    p.set_defaults(fn=cmd_use_mandate)
     p = desk.add_parser("research-loop", help="run the research loop in the foreground (the supervisor's child)")
     p.add_argument("--max-sessions", type=int)
     p.set_defaults(fn=cmd_research_loop)

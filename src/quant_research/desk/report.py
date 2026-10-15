@@ -22,7 +22,7 @@ from quant_research.desk.promotion import roster_path
 from quant_research.desk.supervisor import state_file
 from quant_research.evaluation.split_stats import NEXT_SPLIT_EARLIEST
 from quant_research.experiments.store import ExperimentStore
-from quant_research.memory.clusters import effective_k
+from quant_research.memory.clusters import k_label
 from quant_research.paper.barstore import BarStore
 from quant_research.paper.fleet import Roster, entry_costs, load_roster
 from quant_research.paper.ledger import Ledger
@@ -172,10 +172,15 @@ def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[li
             m = Mandate.model_validate(rec["body"])
             states = Counter(c["state"] for c in store.list_candidates() if c["mandate_id"] == mid)
             left = m.holdout.max_viewings - len(store.holdout_runs(m.split_id))
-            k = effective_k(store, m.split_id)
-            lines.append(f"| {product} | {store.trial_count(m.split_id)} | {'-' if k is None else k} | "
+            trials = store.split_trial_count(m.split_id)
+            parent = store.split_parent(m.split_id)
+            inherited = (f"; parent `{parent['parent_id']}` viewed {len(store.holdout_runs(parent['parent_id']))}"
+                         if parent else "")
+            split_trials = (f"{trials['total']} ({trials['own']} + {trials['inherited']} inherited)" if parent
+                            else str(trials["total"]))
+            lines.append(f"| {product} | {split_trials} | {k_label(store, m.split_id)} | "
                          f"{', '.join(f'{k} {v}' for k, v in sorted(states.items())) or '-'} | "
-                         f"{left}{' **(exhausted: no more automatic promotion)**' if left <= 0 else ''}"
+                         f"{left}{inherited}{' **(exhausted: no more automatic promotion)**' if left <= 0 else ''}"
                          f"{' **(closed)**' if store.holdout_closure(m.split_id) else ''}"
                          f"{' **(contaminated by override)**' if store.holdout_overrides(m.split_id) else ''} |")
         lines += versions_lines(store, cfg.mandates)

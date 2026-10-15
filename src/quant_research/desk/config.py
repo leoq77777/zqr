@@ -71,6 +71,44 @@ def save_config(paths: Paths, cfg: DeskConfig) -> None:
     config_path(paths).write_text(cfg.model_dump_json(indent=2))
 
 
+def mandate_history_path(paths: Paths) -> Path:
+    return paths.desk / "mandate_history.jsonl"
+
+
+def use_mandate(paths: Paths, store, product: str, mandate_id: str, note: str) -> dict:
+    """Point the desk's product at another stored mandate (the human's decision); appends to the history."""
+    import time
+
+    from quant_research.data.snapshot import load_manifest
+    from quant_research.validation.splits import load_split
+
+    if not note.strip():
+        raise ValueError("switching a desk mandate needs a note")
+    cfg = load_config(paths)
+    if cfg.research_enabled:
+        raise ValueError("research is enabled; set research_enabled to false before switching a desk mandate")
+    if product not in cfg.products:
+        raise ValueError(f"{product} is not a desk product ({', '.join(cfg.products)})")
+    rec = store.get_mandate(mandate_id)
+    if rec is None:
+        raise ValueError(f"unknown mandate {mandate_id}")
+    body = rec["body"]
+    split = load_split(paths, body["split_id"])
+    instrument = load_manifest(paths, split.dataset_id)["instrument"]
+    if instrument != product or split.dataset_id != body["dataset_id"]:
+        raise ValueError(f"{mandate_id} is for {instrument} (dataset {body['dataset_id']}, split of "
+                         f"{split.dataset_id}), not {product}")
+    event = {"product": product, "from": cfg.mandates.get(product), "to": mandate_id, "split_id": split.split_id,
+             "note": note, "at": time.time()}
+    if event["from"] == mandate_id:
+        return event | {"changed": False}
+    cfg.mandates[product] = mandate_id
+    save_config(paths, cfg)
+    with mandate_history_path(paths).open("a") as f:
+        f.write(json.dumps(event) + "\n")
+    return event | {"changed": True}
+
+
 def load_check(paths: Paths) -> dict:
     p = check_path(paths)
     return json.loads(p.read_text()) if p.exists() else {}
