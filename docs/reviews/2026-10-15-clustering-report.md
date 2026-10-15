@@ -59,10 +59,14 @@ Seed placement:
 | btc-turtle-s2 | 0.27 | 0.011 | `exp-0105d095cb8e` (454) | `exp-01d04bc6f3f0` (34) |
 | btc-voltarget-1m | 0.47 | 0.026 | `exp-032b6bd1dc99` (139) | `exp-16905e71f137` (10) |
 
-New-family proposals (2; clusters of at least 5 trials that no seed or family majority claims):
+New-family proposals (0; clusters of at least 5 trials that no seed or family majority claims):
 
-- `prop-split-1016c7c9873a-exp-07aaf1ad524b-51`: 51 trials; topics {"topic:multi_timeframe": 50, "topic:trend": 1}; median dev Sharpe -5.77; representative `exp-771fc75b485b` (plugin:ccf6f732042ca6481abb8d3c5fc5ea38e32aaa91625882e724a5ac6d36cd6a0c, Sharpe -5.16)
-- `prop-split-1016c7c9873a-exp-2d4b6bded0c0-8`: 8 trials; topics {"topic:trend": 8}; median dev Sharpe -3.93; representative `exp-d301f13cc5dc` (plugin:82227576f09880efb5c53d610e09208a095f9b39d86931f583e912bce8baed84, Sharpe -2.39)
+- none
+
+Rejected proposals (2; the clusters stay unmapped):
+
+- `prop-split-1016c7c9873a-exp-07aaf1ad524b-51`: 51 trials; Human ruling 2026-10-15: rejected. Dev Sharpe medians -3.9 to -5.8; deterministic losses under friction from early agent high-frequency trading; no literature prior and no economic logic. Kept unmapped as negative-result knowledge; no family, no sleeve.
+- `prop-split-1016c7c9873a-exp-2d4b6bded0c0-8`: 8 trials; Human ruling 2026-10-15: rejected. Dev Sharpe medians -3.9 to -5.8; deterministic losses under friction from early agent high-frequency trading; no literature prior and no economic logic. Kept unmapped as negative-result knowledge; no family, no sleeve.
 
 Top 10 non-flat trials by dev Sharpe (daily), split DSR against the legacy DSR:
 
@@ -136,9 +140,13 @@ Seed placement:
 | eth-turtle-s2 | 0.31 | 0.013 | `exp-0055d5485f98` (424) | `exp-3037cdfe9481` (2) |
 | eth-voltarget-1m | 0.73 | 0.072 | `exp-01aa1b30d06c` (143) | `exp-01aa1b30d06c` (8) |
 
-New-family proposals (1; clusters of at least 5 trials that no seed or family majority claims):
+New-family proposals (0; clusters of at least 5 trials that no seed or family majority claims):
 
-- `prop-split-c47a0be57a24-exp-19885780619b-36`: 36 trials; topics {"topic:multi_timeframe": 35, "topic:trend": 1}; median dev Sharpe -4.08; representative `exp-f15bbff0cfa6` (plugin:f43e2308feb48fd613c82b03a9609ea0c9fe58b8a87cd07407c4d3f28c32aee3, Sharpe -3.79)
+- none
+
+Rejected proposals (1; the clusters stay unmapped):
+
+- `prop-split-c47a0be57a24-exp-19885780619b-36`: 36 trials; Human ruling 2026-10-15: rejected. Dev Sharpe medians -3.9 to -5.8; deterministic losses under friction from early agent high-frequency trading; no literature prior and no economic logic. Kept unmapped as negative-result knowledge; no family, no sleeve.
 
 Top 10 non-flat trials by dev Sharpe (daily), split DSR against the legacy DSR:
 
