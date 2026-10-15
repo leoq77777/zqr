@@ -53,14 +53,19 @@ def cmd_list(args) -> None:
 
 
 def cmd_show(args) -> None:
-    store = _store(args)
+    from quant_research.experiments.store import ExperimentStore
+    from quant_research.memory.characterise import seed_summary
+
+    paths = get_paths(args.home)
+    store, exp = LibraryStore(paths.db), ExperimentStore(paths.db)
     try:
         row = store.entry(args.id)
         if row is None:
             raise SystemExit(f"unknown library entry {args.id!r}")
-        _out({**row, "events": store.events(args.id)})
+        _out({**row, "events": store.events(args.id), "seed_run": seed_summary(paths, exp, args.id)})
     finally:
         store.close()
+        exp.close()
 
 
 def register(sub) -> None:

@@ -19,7 +19,9 @@ from quant_research.desk import research as rl
 from quant_research.desk.config import load_config
 from quant_research.desk.promotion import roster_path
 from quant_research.desk.supervisor import state_file
+from quant_research.evaluation.split_stats import NEXT_SPLIT_EARLIEST
 from quant_research.experiments.store import ExperimentStore
+from quant_research.memory.clusters import effective_k
 from quant_research.paper.barstore import BarStore
 from quant_research.paper.fleet import Roster, entry_costs, load_roster
 from quant_research.paper.ledger import Ledger
@@ -160,8 +162,8 @@ def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[li
     summary = {"sessions": len(rows), "cost_usd": round(cost, 4), "failures": dict(failures)}
     mandate_ids = set(cfg.mandates.values())
     if mandate_ids:
-        lines += ["", "| product | trials on split (all time) | candidates by state | holdout viewings left |",
-                  "|---|---|---|---|"]
+        lines += ["", "| product | trials on split (all time) | effective K (ρ 0.7) | candidates by state | "
+                  "holdout viewings left |", "|---|---|---|---|---|"]
         for product, mid in cfg.mandates.items():
             rec = store.get_mandate(mid)
             if rec is None:
@@ -169,10 +171,13 @@ def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[li
             m = Mandate.model_validate(rec["body"])
             states = Counter(c["state"] for c in store.list_candidates() if c["mandate_id"] == mid)
             left = m.holdout.max_viewings - len(store.holdout_runs(m.split_id))
-            lines.append(f"| {product} | {store.trial_count(m.split_id)} | "
+            k = effective_k(store, m.split_id)
+            lines.append(f"| {product} | {store.trial_count(m.split_id)} | {'-' if k is None else k} | "
                          f"{', '.join(f'{k} {v}' for k, v in sorted(states.items())) or '-'} | "
                          f"{left}{' **(exhausted: no more automatic promotion)**' if left <= 0 else ''}"
                          f"{' **(contaminated by override)**' if store.holdout_overrides(m.split_id) else ''} |")
+        lines.append(f"- Next split: earliest {NEXT_SPLIT_EARLIEST} (182 days validation + 182 days holdout after "
+                     "the current holdout; appendix A11)")
     produced = [r for r in rows if r.get("candidate_id") or r.get("verdict")]
     if produced:
         lines += ["", "| run | product | topic | verdict | candidate | promotion | cost |",

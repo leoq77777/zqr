@@ -47,3 +47,26 @@ def characterise(paths: Paths, store: ExperimentStore, catalog: Catalog | None =
             out.append({"instance": inst.id, "experiment_id": res.experiment_id, "status": res.status,
                         "sharpe": (res.metrics or {}).get("sharpe")})
     return out
+
+
+def seed_summary(paths: Paths, store: ExperimentStore, instance: str) -> dict[str, Any] | None:
+    """The instance's latest seed run: dev Sharpe (daily) and split DSR at the split's latest K."""
+    from quant_research.evaluation.split_stats import dsr_k, sharpe_daily
+    from quant_research.memory.clusters import effective_k
+    from quant_research.memory.returns import ReturnArchive
+
+    rows = store.query("SELECT id, split_id, status FROM experiments WHERE kind='seed' "
+                       "AND json_extract(notes, '$.instance')=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                       (instance,))
+    if not rows:
+        return None
+    run = rows[0]
+    returns = ReturnArchive(paths, store).load(run["split_id"])
+    k = effective_k(store, run["split_id"])
+    out = {"experiment_id": run["id"], "split_id": run["split_id"], "status": run["status"], "k": k,
+           "dev_sharpe": None, "split_dsr": None}
+    if run["id"] in returns.columns:
+        r = returns[run["id"]].to_numpy()
+        out["dev_sharpe"] = round(sharpe_daily(r), 4)
+        out["split_dsr"] = None if k is None else round(dsr_k(r, k), 4)
+    return out

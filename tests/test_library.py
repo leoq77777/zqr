@@ -337,5 +337,6 @@ def test_cli_import_list_show(paths, capsys):
     shown = json.loads(capsys.readouterr().out)
     assert shown["kind"] == "overlay" and shown["parameters"]["target_vol"] == 0.4
     assert shown["meta"]["sources"][0].startswith("Moreira & Muir")
+    assert shown["seed_run"] is None
     with pytest.raises(SystemExit, match="unknown library entry"):
         main(["--home", home, "library", "show", "nope"])

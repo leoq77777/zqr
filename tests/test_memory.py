@@ -405,3 +405,9 @@ def test_memory_run_end_to_end_writes_the_clustering_report(paths, store, datase
         out["cluster"][split]["clustering"]
     main(["--home", home, "memory", "status"])
     assert json.loads(capsys.readouterr().out)[split]["k"] == out["cluster"][split]["k"]
+    main(["--home", home, "library", "import"])
+    capsys.readouterr()
+    main(["--home", home, "library", "show", "btc-tsmom-1m"])
+    seed = json.loads(capsys.readouterr().out)["seed_run"]
+    assert seed["split_id"] == split and seed["k"] == out["cluster"][split]["k"]["0.7"]
+    assert seed["dev_sharpe"] > 0 and 0 < seed["split_dsr"] < 1

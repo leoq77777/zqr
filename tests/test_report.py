@@ -40,6 +40,7 @@ def test_daily_report_from_fixed_data(tmp_path, dataset):
     assert "btc-bh vs backtest over 5 bars: equity" in text and "execution" in text
     assert "Sessions: 2 (none 1, environment.docker 1)" in text and "0.21 USD" in text
     assert "| BTC-USD |" in text and "holdout viewings left" in text
+    assert "effective K (ρ 0.7)" in text and "Next split: earliest 2027-10-12" in text
     assert "desk-b: environment.docker" in text
     assert "desk-old" not in text
 
