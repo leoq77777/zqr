@@ -29,7 +29,7 @@ from quant_research.memory import clusters
 from quant_research.memory.conclusions import conclusions
 from quant_research.memory.families import map_clusters
 from quant_research.memory.residuals import residuals, split_market_returns
-from quant_research.memory.returns import ReturnArchive, daily_returns
+from quant_research.memory.returns import ReturnArchive, daily_returns, equity_file
 from quant_research.paths import Paths
 from quant_research.portfolio.policy import PortfolioPolicy
 from quant_research.strategy.sandbox import SandboxConfig
@@ -74,8 +74,10 @@ def _cost_x2(paths: Paths, store: ExperimentStore, exp: dict[str, Any], sandbox:
         if res.status != "completed":
             return {"sharpe_2x": None, "note": f"rerun {res.status}"}
         rid, rdir = res.experiment_id, res.result_dir
-    r = daily_returns(pd.read_parquet(Path(rdir) / "equity.parquet", columns=["time", "equity"]),
-                      eng.initial_cash)
+    f = equity_file(paths, {"result_dir": rdir})
+    if f is None:
+        return {"sharpe_2x": None, "note": f"{rid}: equity file missing"}
+    r = daily_returns(pd.read_parquet(f, columns=["time", "equity"]), eng.initial_cash)
     return {"sharpe_2x": _r(sharpe_daily(r.to_numpy())), "experiment_id": rid}
 
 

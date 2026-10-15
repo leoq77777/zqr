@@ -86,6 +86,24 @@ def test_backfill_rebuilds_the_same_archive_and_is_idempotent(paths, store, data
     assert _sha(arc.path(split)) == before
 
 
+def test_backfill_finds_moved_results_and_retries_missing_equity(paths, store, dataset, tmp_path):
+    ok, _ = _trials(paths, store, dataset, tmp_path)
+    split = dataset[1].split_id
+    arc = ReturnArchive(paths, store)
+    before = _sha(arc.path(split))
+    for e in ok:
+        store.execute("UPDATE experiments SET result_dir=? WHERE id=?", (f"/elsewhere/results/{e}", e))
+    hidden = paths.results / ok[0] / "equity.parquet"
+    hidden.rename(hidden.with_suffix(".bak"))
+    arc.path(split).unlink()
+    store.execute("DELETE FROM return_index")
+    assert backfill(paths, store)[split] == {"added": 2, "no_returns": 1, "missing_equity": 1, "present": 0}
+    assert ok[0] not in {r["experiment_id"] for r in arc.index(split)}
+    hidden.with_suffix(".bak").rename(hidden)
+    assert backfill(paths, store)[split] == {"added": 1, "no_returns": 0, "missing_equity": 0, "present": 3}
+    assert _sha(arc.path(split)) == before
+
+
 # -- residuals (A2) --------------------------------------------------------------------------------------------
 
 DAYS = pd.date_range("2021-01-01", periods=1267, freq="D", name="day")

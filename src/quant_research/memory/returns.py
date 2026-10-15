@@ -2,6 +2,7 @@
 
 A trial is what `ExperimentStore.trial_count` counts, on the dev segment. Completed (and duplicate) trials store
 their daily returns; failed, rejected and aborted trials are indexed with `no_returns = 1`, each counting once in K.
+A completed trial whose equity file is missing is left out of the index, so a later backfill retries it.
 """
 
 from __future__ import annotations
@@ -44,6 +45,17 @@ def daily_returns(equity: pd.DataFrame, initial_cash: float) -> pd.Series:
     values = e.to_numpy()
     prev = np.concatenate([[initial_cash], values[:-1]])
     return pd.Series(values / prev - 1, index=pd.DatetimeIndex(e.index, name="day"))
+
+
+def equity_file(paths: Paths, row: dict[str, Any]) -> Path | None:
+    """The trial's equity file under this ZQR_HOME (a recorded `result_dir` may come from another mount point)."""
+    if not row.get("result_dir"):
+        return None
+    recorded = Path(row["result_dir"])
+    for d in (paths.results / recorded.name, recorded):
+        if (d / "equity.parquet").is_file():
+            return d / "equity.parquet"
+    return None
 
 
 def _decoded(row: dict[str, Any]) -> dict[str, Any]:
@@ -96,12 +108,13 @@ class ReturnArchive:
             for r in new:
                 series = None
                 if r["status"] in WITH_RETURNS:
-                    f = Path(r.get("result_dir") or "") / "equity.parquet"
-                    if f.is_file():
-                        cash = float((r.get("engine_config") or {}).get("initial_cash", DEFAULT_CASH))
-                        series = daily_returns(pd.read_parquet(f, columns=["time", "equity"]), cash)
-                    else:
+                    f = equity_file(self.paths, r)
+                    if f is None:
                         c["missing_equity"] += 1
+                        log.warning("%s: completed without an equity file; not archived", r["id"])
+                        continue
+                    cash = float((r.get("engine_config") or {}).get("initial_cash", DEFAULT_CASH))
+                    series = daily_returns(pd.read_parquet(f, columns=["time", "equity"]), cash)
                 if series is not None:
                     if len(frame.columns):
                         ref = frame.index
