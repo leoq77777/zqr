@@ -33,7 +33,7 @@ A personal systematic research desk for Coinbase BTC-USD and ETH-USD spot, long/
 | M5 Reliability and security | done | Network-enforced isolation, strict final-artifact grading, fault matrix, audit, cost ledger |
 | Desk (closed loop) | done, deployed | Paper fleet, research loop, auto_paper authorization, supervisor, daily report |
 | Release (images) | done | Runtime and agent images, `zqr release`, host wrapper `zqr`, desk as a container |
-| M6 Portfolio research | **not started** | Multi-asset aggregation; today each strategy trades one product independently |
+| M6 Portfolio research | phase 3a built | Portfolio versions per product: blend of library members, deadband, drawdown ladder, dev/validation runs, holdout gate, paper portfolio trader, parity, reports, soft stop (section 5.9). Not yet released |
 | M7 Paper (full) | partial | Parity on targets, orders and fills, stale-data halt, restart recovery from the bar store are in; reconciliation and drills beyond tests are not |
 
 ## 3. Architecture
@@ -110,6 +110,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `strategy/` | `StrategySpec`, templates (`buy_and_hold`, `cash`, `sma_cross`, `momentum`, `breakout`, and the seed templates `tsmom`, `ma_filter`, `ewma_trend`, `vol_target`), decision cadence (`cadence.py`), agent plugins, sandbox (subprocess or Docker) |
 | `library/` | Strategy library: seed catalog (`seeds.yaml`, reviewed in `docs/library/seeds.md`), catalog validation, library tables in `experiments.db`, `zqr library` commands |
 | `portfolio/policy.py` | Portfolio policy v1: vol target, asset/gross caps, rebalance cadence, no-trade band |
+| `portfolio/` (other modules) | Portfolio layer (section 5.9): versions and lifecycle (`version.py`), blend (`blend.py`), decision step (`decide.py`), backtest (`backtest.py`), dev/validation runs (`evaluate.py`), seed portfolio (`seed.py`), approve/resume (`paper.py`), `zqr portfolio` commands |
 | `backtest/engine.py` | Accounting engine (fills, fees, slippage, delay) |
 | `backtest/rebalance.py` | `needs_trade`: when a target becomes an order; shared by the engine and the paper trader |
 | `evaluation/` | Metrics, statistics (bootstrap, deflated Sharpe), diagnosis; `split_stats.py`: daily-return Sharpe, split DSR at K, registered appraisal test (appendix A4-A5) |
@@ -120,8 +121,8 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `controller/` | Research controller/session state, agent runners, budgets |
 | `gateway/` | `ToolGateway` service and MCP server (`submit_plan`, `submit_experiment`, `get_experiment`, `read_source`, compare, dataset info, research.json validation) |
 | `bench/` | Agent container adapter, egress network/proxy, isolation probe, audit, recovery, benchmark runner/grader |
-| `paper/` | Paper trader, broker simulator, risk limits, orders, ledger (decisions, fills, bars, marks), bar store, fleet, parity |
-| `desk/` | Desk config, presets, promotion, research loop, supervisor, daily report, setup/check, CLI commands |
+| `paper/` | Paper trader and portfolio trader, broker simulator, risk limits, orders, ledger (decisions, fills, bars, marks), bar store, fleet, parity |
+| `desk/` | Desk config, presets, promotion, research loop, supervisor, daily report and portfolio sections, monthly review, soft stop, setup/check, CLI commands |
 | `report/` | Markdown research reports |
 | `scripts/zqr-host.sh` | Host wrapper, installed from the image as `~/.local/bin/zqr` on the deployment host |
 | `scripts/windows/setup.ps1` | One-time Windows preparation: Docker check, power settings, `zqr.cmd` on PATH |
@@ -129,7 +130,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (237 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (279 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -348,6 +349,59 @@ Rules are in `docs/contracts-v2-appendix-a.md` (approved 2026-10-15).
   the legacy DSR, and conclusions by topic and decision.
 - `zqr memory run` performs all steps in order; each step is idempotent.
 
+### 5.9 Portfolio layer (`portfolio/`, phase 3a)
+
+Rules: `docs/investment-policy.md` (D1-D3) and appendix A14 (D4-D7). Plan:
+`docs/superpowers/plans/2026-10-15-phase3-portfolio.md`.
+
+- **Versions.** A `PortfolioVersion` is one product's blend: members (library entries of sleeve families), an
+  optional overlay, `member_cap` 0.15, `band` 0.10, the drawdown ladder, the engine config (no delay, no adverse
+  fill, no rebalance tolerance) and the dataset and split. Its id is `pv-` + the hash of the body; bodies never
+  change. Lifecycle in `portfolio_versions` / `portfolio_events`: draft → validated | failed_validation
+  (controller) → frozen (human) → final_evaluated | failed_final (evaluator) → paper (human); any non-terminal
+  state → retired (human).
+- **Blend.** Equal sleeves over families, equal weight within a family, each member capped at `member_cap` and
+  halved on probation; the overlay multiplies the sum; the target is clipped to [0, 1].
+- **Decision step** (`decide.py`). The deadband trades only when the target moves at least `band` from the last
+  executed target (which starts at 0: the account starts in cash), on a full exit, or when the ladder level
+  changes. Ladder on the drawdown from the peak bar-close equity: −20% yellow flag, −25% halved (×0.5), back to
+  full at −15%, −30% liquidated and halted until a human resume (which resets the peak). Paper catch-up bars update
+  the ladder without trading; a level change seen there trades at the next decision.
+- **Backtest.** `run_backtest(..., decider=...)` calls `decide(i, equity, position)` at each decision bar and
+  `executed(i, target)` after a fill; it needs delay 0 and uses tolerance 0. `run_portfolio` runs a version and
+  logs every decision; the same run with a ladder at −∞ gives the drawdown without the ladder (D4).
+- **Runs** (`evaluate.py`). A dev run is an experiment of kind `portfolio` (a trial, archived in the return
+  archive); a validation run is kind `portfolio_validation` (not a trial; counted in `validation_uses`). Both
+  record daily Sharpe (A4), drawdown with and without the ladder, ladder time, family contribution and buy and
+  hold. `zqr portfolio validate` applies the seed standard: validation daily Sharpe ≥ 0.5 and max drawdown ≥ −25%.
+  A failed version is recorded, not adjusted and retried (A6).
+- **Seed portfolio** (`seed.py`). Every non-retired library member of the product's sleeve families plus the
+  `vol_overlay` entry, with the desk mandate's engine config (rebalance tolerance 0), dataset and split.
+- **Holdout.** `run_portfolio_holdout` (`validation/holdout.py`) needs a frozen version, shares the split's viewing
+  cap with candidates, allows at most one portfolio version per split every 7 days (A9), and applies gate 3 (daily
+  Sharpe ≥ 0.5 and a positive return). A repeat returns the recorded result without a new viewing;
+  `--override-reason` lifts the cap or the 7-day rule and marks the split's holdout as contaminated.
+- **Paper.** `zqr portfolio approve` (final_evaluated → paper) adds the roster entry `portfolio-<product>`
+  (`source "portfolio"`, `portfolio_version`) and moves the version's candidate library entries to member. The
+  fleet loads the version body into `PaperConfig.portfolio` (part of the identity hash, so changing the version is
+  refused) and runs a `PortfolioTrader`: the blend on the trader's history, the same decider, order cap = capital
+  (D1), zero tolerance. Its state is the ledger key `portfolio_state`; every bar gets a decision record with a
+  `portfolio` block (blend, family targets, level, `pre_state`, order target). `zqr portfolio resume <name>
+  --note` writes `paper/<name>/resume.json`, applied once at the next bar and logged as an ALERT. Portfolio
+  entries do not count against the candidate paper slots.
+- **Parity** (`portfolio_parity`). Per decision: blend recomputed from the bar store, decider re-run from the
+  recorded `pre_state` with the marked equity and position, order side and size; path: `run_portfolio` from the
+  first decision's account and state.
+- **Reports.** The daily report has a portfolio section (equity, day and total return against buy and hold with
+  the same capital and costs, drawdown, ladder level, composition, family P&L for the day, fills, turnover, fees,
+  parity) and the combined account (sum of the products, yellow flag on its drawdown). The research table adds
+  portfolio versions by state and validation uses per split. On the last day of a month the report job also writes
+  `desk/reports/monthly-YYYY-MM.md` (`zqr desk monthly --month`).
+- **Soft stop** (D2, `desk/softstop.py`). On the monthly review, once the combined account has 365 days of daily
+  returns: trailing-365-day Sharpe minus buy and hold's < −0.5 writes `desk/soft_stop.json` and the research loop
+  pauses (paper continues). `zqr desk soft-stop clear --note` (human) keeps the record as
+  `soft_stop.cleared-<ts>.json`.
+
 ## 6. Security model and invariants
 
 These must hold after any change. Tests cover most of them.
@@ -363,8 +417,9 @@ These must hold after any change. Tests cover most of them.
    Nothing transitions to live.
 5. Every experiment, tool call, transition and paper decision is recorded. Session audits must reconcile
    experiments with tool events.
-6. Trials on a split are never deleted. DSR counts all of them. Holdout data is read only through `run_holdout`,
-   which caps viewings per split; exceeding the cap needs a recorded override and marks the split's holdout as
+6. Trials on a split are never deleted. DSR counts all of them. Holdout data is read only through
+   `validation/holdout.py` (`run_holdout` for candidates, `run_portfolio_holdout` for portfolio versions), which
+   caps viewings per split; exceeding the cap needs a recorded override and marks the split's holdout as
    contaminated. A test enforces that no other module reads it. Experiment replay refuses holdout runs and reads
    the split's research segment; `zqr paper replay` stops at the earliest protected holdout start of the product
    and granularity (`holdout_cutoff`: a holdout a later split folds into its research data is no longer protected).
@@ -378,14 +433,15 @@ These must hold after any change. Tests cover most of them.
 | `raw/`, `snapshots/`, `splits/`, `holdout/` | Imported data, frozen datasets, split definitions, holdout segments |
 | `artifacts/` | Frozen candidate code and identity |
 | `sessions/` | Controller session workspaces |
-| `paper/` | Bar stores (`bars/<product>-<granularity>.parquet`), fleet health/log and one directory per paper strategy |
+| `paper/` | Bar stores (`bars/<product>-<granularity>.parquet`), fleet health/log and one directory per paper strategy or portfolio (`portfolio-<product>/`, with `resume.json` while a resume is pending) |
 | `desk/config.json` | `DeskConfig` (below) |
 | `desk/check.json` | Last `desk check` result, including `isolation_ok` and the chosen network mode |
 | `desk/authorization.json` | Standing authorization |
 | `desk/roster.json` | Paper roster |
 | `desk/research_state.json`, `desk/research_ledger.jsonl` | Loop state, one line per session |
 | `desk/sessions/<run_id>/` | `run.json`, `result.json`, submission, egress log, agent transcript |
-| `desk/state.json`, `desk/logs/`, `desk/reports/` | Supervisor state, logs, daily reports |
+| `desk/state.json`, `desk/logs/`, `desk/reports/` | Supervisor state, logs, daily reports and monthly reviews (`monthly-YYYY-MM.md`) |
+| `desk/soft_stop.json`, `desk/soft_stop.cleared-*.json` | Active soft stop (research paused); cleared ones with the human's note |
 | `library/returns/`, `library/archives/`, `library/reports/` | Daily return archive per split, family archives, clustering reports |
 | `tmp/` | Release container only: scratch dirs mounted into sibling containers |
 
@@ -456,6 +512,11 @@ a one-off container with the same mounts while the desk is stopped).
 | `zqr library list [--product P] [--family F] [--status S] [--json]` / `zqr library show <id>` | Library entries; one entry with its events and its seed run (dev Sharpe, split DSR) |
 | `zqr memory backfill\|characterise\|cluster\|import-conclusions\|archive\|report` / `zqr memory run [--sandbox docker\|subprocess]` / `zqr memory status` | Research memory steps (section 5.8); all steps in order; archived trials and K per split |
 | `zqr memory proposals [--status open\|rejected\|all]` / `zqr memory reject <ids> --reason` | Family proposals; record a human rejection |
+| `zqr portfolio seed --product P` / `validate <vid>` | Define the seed portfolio (draft) / dev and validation runs and the seed standard (controller) |
+| `zqr portfolio list [--product P] [--state S]` / `show <vid>` | Versions; one version with shares, evidence and events |
+| `zqr portfolio freeze <vid> --note` / `holdout <vid> [--override-reason R]` | Human freeze / holdout test (gate 3, spends a viewing) |
+| `zqr portfolio approve <vid> --note` / `resume <name> --note` | Human: paper roster entry / resume a liquidated paper portfolio |
+| `zqr desk monthly --month YYYY-MM` / `zqr desk soft-stop status\|evaluate\|clear [--day D] [--note N]` | Monthly review; soft-stop rule (investment policy 2) |
 | `zqr release [--target HOST\|local] [--allow-dirty] [--no-up]` | Development machine: build, ship and start a version |
 
 Lower-level commands (`fetch-data`, `backtest`, `mandate`, `candidate`, `holdout-test`, `bench`, `paper`, …)
