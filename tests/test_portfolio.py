@@ -405,6 +405,18 @@ def test_one_version_per_split_per_seven_days(paths, store, dataset, monkeypatch
     assert later["prior_viewings"] == 1 and store.holdout_overrides(dataset[1].split_id) == []
 
 
+def test_a_closed_split_refuses_portfolio_holdouts(paths, store, dataset, monkeypatch):
+    from quant_research.validation import holdout
+
+    _desk(paths, store, dataset)
+    vid = _frozen(paths, store, dataset, monkeypatch)
+    store.close_holdout(dataset[1].split_id, "holdout seen")
+    monkeypatch.setattr(holdout, "load_holdout_data", lambda *a: pytest.fail("holdout data loaded"))
+    with pytest.raises(holdout.HoldoutError, match="is closed \\(holdout seen\\)"):
+        holdout.run_portfolio_holdout(paths, store, vid)
+    assert store.holdout_runs(dataset[1].split_id) == [] and VersionStore(store).get(vid)["state"] == "frozen"
+
+
 def test_portfolio_holdout_respects_the_split_cap_and_override(paths, store, dataset, monkeypatch):
     from quant_research.validation import holdout
 

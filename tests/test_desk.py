@@ -121,6 +121,15 @@ def test_promotion_does_not_freeze_on_an_exhausted_split(paths, store, dataset):
     assert out["steps"] == [] and not store.is_frozen(store.get_candidate(cid)["candidate_hash"])
 
 
+def test_promotion_does_not_freeze_on_a_closed_split(paths, store, dataset):
+    _authorize(paths, max_paper_strategies=3)
+    cid = _validated(paths, store, dataset, holdout={**EASY_HOLDOUT, "max_viewings": 5})
+    store.close_holdout(dataset[1].split_id, "holdout seen")
+    out = promotion.promote(paths, store, cid)
+    assert out["stopped"] == f"holdout of {dataset[1].split_id} is closed (holdout seen); not freezing"
+    assert out["state"] == "validated" and not store.is_frozen(store.get_candidate(cid)["candidate_hash"])
+
+
 def test_desk_promote_command_prints_the_result(paths, store, dataset, capsys):
     from quant_research.cli import main
 

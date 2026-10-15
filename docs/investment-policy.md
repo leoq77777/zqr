@@ -65,9 +65,17 @@ Decided 2026-10-15 (phase 3, D3):
   family's expected marginal contribution, to at most $5 per campaign.
 - Idle with no model calls when the queue is empty or the monthly cap is reached.
 
-To define (phase 4): the stage results that allow a top-up and the top-up amounts, as deterministic controller
-rules. Note that $1,000 a year is a 5% annual hurdle on $20,000: the portfolio must beat its benchmark by more than
-that before research pays for itself.
+Note that $1,000 a year is a 5% annual hurdle on $20,000: the portfolio must beat its benchmark by more than that
+before research pays for itself.
+
+Decided 2026-10-15 (phase 4, D7; `docs/superpowers/plans/2026-10-15-phase4-campaigns.md`):
+
+- Reservation: before a session starts, its maximum cost is reserved against the campaign, the month ($83.33) and
+  the day; the session is refused if the reservation does not fit. Model calls with unknown pricing stop the loop
+  until a price is configured; they are never counted as $0.
+- Campaign: $1 reserved at the start. One top-up of $2 when a registered variant passes gate 1 (marginal value on
+  dev), a second of $2 when it passes gate 2 (do no harm on validation); never more than $5. No other top-ups.
+- Daily cap $5 (was $20), so that one bad day cannot spend two months of budget.
 
 ## 6. Fees
 

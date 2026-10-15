@@ -158,6 +158,47 @@ def test_holdout_cap_applies_to_every_path_and_overrides_are_recorded(paths, sto
     assert store.holdout_overrides(split.split_id)[0]["reason"] == "manual check"
 
 
+def test_a_closed_holdout_refuses_new_viewings_but_repeats_answer(paths, store, dataset, monkeypatch):
+    from quant_research.validation import holdout as holdout_mod
+
+    manifest, split = dataset
+    reqs = [_req(manifest, split, parameters={"fast": f, "slow": 50}) for f in (5, 8)]
+    for r in reqs:
+        spec = r.spec.normalized()
+        store.freeze_candidate(spec.candidate_hash(), spec.strategy_ref, spec.parameters)
+    run_holdout(paths, store, reqs[0], max_viewings=10)
+    store.close_holdout(split.split_id, "seen by the human")
+    assert store.close_holdout(split.split_id, "again")["note"] == "seen by the human"
+    assert run_holdout(paths, store, reqs[0], max_viewings=10)[0].status == "duplicate"
+    real_load = holdout_mod.load_holdout_data
+    monkeypatch.setattr(holdout_mod, "load_holdout_data", lambda *a: pytest.fail("holdout data loaded"))
+    with pytest.raises(HoldoutError, match="is closed \\(seen by the human\\)"):
+        run_holdout(paths, store, reqs[1], max_viewings=10)
+    assert len(store.holdout_runs(split.split_id)) == 1
+    monkeypatch.setattr(holdout_mod, "load_holdout_data", real_load)
+    res, prior = run_holdout(paths, store, reqs[1], max_viewings=10, override_reason="human check")
+    assert res.status == "completed" and prior == 1
+    assert [o["reason"] for o in store.holdout_overrides(split.split_id)] == ["human check"]
+    notes = store.get_experiment(res.experiment_id)["notes"]
+    assert "is closed" in notes and "contaminated" in notes
+
+
+def test_close_holdout_command(paths, store, dataset, capsys):
+    import json
+
+    from quant_research.cli import main
+
+    split_id = dataset[1].split_id
+    with pytest.raises(SystemExit, match="unknown split"):
+        main(["--home", str(paths.root), "close-holdout", "--split", "split-nope", "--note", "x"])
+    with pytest.raises(SystemExit, match="needs a note"):
+        main(["--home", str(paths.root), "close-holdout", "--split", split_id, "--note", " "])
+    main(["--home", str(paths.root), "close-holdout", "--split", split_id, "--note", "holdout seen (A13.3)"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["split_id"] == split_id and out["note"] == "holdout seen (A13.3)" and out["viewings"] == 0
+    assert store.holdout_closure(split_id)["note"] == "holdout seen (A13.3)"
+
+
 def test_over_the_cap_only_an_exact_repeat_runs_without_an_override(paths, store, dataset, monkeypatch):
     from quant_research.backtest.engine import EngineConfig
     from quant_research.validation import holdout as holdout_mod

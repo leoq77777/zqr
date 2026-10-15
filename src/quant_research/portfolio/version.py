@@ -186,6 +186,13 @@ class VersionStore:
                            "at) VALUES (?,?,?,?,?,?,?)",
                            (vid, frm, to, actor, json.dumps(evidence, default=str) if evidence else None, note, at))
 
+    def record(self, vid: str, actor: Actor, evidence: dict[str, Any], note: str = "") -> None:
+        """An event that leaves the state unchanged (for example the start of a shadow trader)."""
+        row = self.get(vid)
+        if row is None:
+            raise VersionError(f"unknown portfolio version {vid}")
+        self._event(vid, row["state"], row["state"], actor, evidence, note, time.time())
+
     def events(self, vid: str) -> list[dict[str, Any]]:
         return self.store.query("SELECT * FROM portfolio_events WHERE version_id=? ORDER BY id", (vid,))
 

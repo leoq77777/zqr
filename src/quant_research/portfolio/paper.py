@@ -16,9 +16,45 @@ from quant_research.paper.portfolio_trader import RESUME_FILE, STATE_KEY
 from quant_research.paths import Paths
 from quant_research.portfolio.version import VersionError, VersionStore
 
+SHADOW_STATES = {"validated", "failed_validation", "failed_final"}
+
 
 def entry_name(product: str) -> str:
     return f"portfolio-{product.lower()}"
+
+
+def shadow_name(product: str) -> str:
+    return f"shadow-{product.lower()}"
+
+
+def _entry(version, vid: str, name: str, shadow: bool) -> RosterEntry:
+    eng = version.engine_config
+    return RosterEntry(name=name, product=version.product, granularity=version.granularity,
+                       strategy_ref=f"portfolio:{vid}", parameters={"version_id": vid},
+                       initial_cash=eng.initial_cash, fee_rate=eng.costs.fee_rate,
+                       slippage_bps=eng.costs.slippage_bps, min_trade_notional=eng.min_trade_notional,
+                       source="portfolio", portfolio_version=vid, shadow=shadow)
+
+
+def start_shadow(paths: Paths, store: ExperimentStore, vid: str, note: str) -> dict[str, Any]:
+    """Run a version that is not approved for paper as the shadow trader `shadow-<product>` (phase 4, D2): forward
+    evidence only. The version's state and the library statuses do not change; the start is a version event."""
+    if not note.strip():
+        raise VersionError("a shadow start needs a note")
+    vs = VersionStore(store)
+    row = vs.get(vid)
+    if row is None:
+        raise VersionError(f"unknown portfolio version {vid}")
+    if row["state"] not in SHADOW_STATES:
+        raise VersionError(f"a shadow runs a version in {sorted(SHADOW_STATES)} ({vid} is {row['state']})")
+    version = vs.version(vid)
+    name = shadow_name(version.product)
+    path = roster_path(paths)
+    if path.exists() and any(e.name == name for e in load_roster(path).entries):
+        raise VersionError(f"the roster already has {name}")
+    add_entry(path, _entry(version, vid, name, shadow=True))
+    vs.record(vid, "human", {"shadow": name}, note)
+    return {"version_id": vid, "state": row["state"], "roster_name": name, "shadow": True}
 
 
 def approve(paths: Paths, store: ExperimentStore, vid: str, note: str) -> dict[str, Any]:
@@ -35,12 +71,7 @@ def approve(paths: Paths, store: ExperimentStore, vid: str, note: str) -> dict[s
     path = roster_path(paths)
     if path.exists() and any(e.name == name for e in load_roster(path).entries):
         raise VersionError(f"the roster already has {name}; replacing a running portfolio is phase 3b")
-    eng = version.engine_config
-    entry = RosterEntry(name=name, product=version.product, granularity=version.granularity,
-                        strategy_ref=f"portfolio:{vid}", parameters={"version_id": vid},
-                        initial_cash=eng.initial_cash, fee_rate=eng.costs.fee_rate,
-                        slippage_bps=eng.costs.slippage_bps, min_trade_notional=eng.min_trade_notional,
-                        source="portfolio", portfolio_version=vid)
+    entry = _entry(version, vid, name, shadow=False)
     lib = LibraryStore(paths.db)
     moved = []
     try:

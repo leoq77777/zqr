@@ -33,7 +33,7 @@ A personal systematic research desk for Coinbase BTC-USD and ETH-USD spot, long/
 | M5 Reliability and security | done | Network-enforced isolation, strict final-artifact grading, fault matrix, audit, cost ledger |
 | Desk (closed loop) | done, deployed | Paper fleet, research loop, auto_paper authorization, supervisor, daily report |
 | Release (images) | done | Runtime and agent images, `zqr release`, host wrapper `zqr`, desk as a container |
-| M6 Portfolio research | phase 3a released | Portfolio versions per product: blend of library members, deadband, drawdown ladder, dev/validation runs, holdout gate, paper portfolio trader, parity, reports, soft stop (section 5.9). Phase 3b (new hypotheses, version switching, probation) not started |
+| M6 Portfolio research | phase 3a released | Portfolio versions per product: blend of library members, deadband, drawdown ladder, dev/validation runs, holdout gate, paper portfolio trader, parity, reports, soft stop (section 5.9). Seed portfolios failed (BTC holdout, ETH validation; `docs/reviews/2026-10-15-seed-portfolio-review.md`). Phase 4 (`docs/superpowers/plans/2026-10-15-phase4-campaigns.md`): holdout closure and shadow portfolios built; registration, gates 1-2 and campaigns not started |
 | M7 Paper (full) | partial | Parity on targets, orders and fills, stale-data halt, restart recovery from the bar store are in; reconciliation and drills beyond tests are not |
 
 ## 3. Architecture
@@ -76,7 +76,9 @@ caller's limit (the mandate's for a candidate) and the tightest limit of the spl
 newer mandate cannot reopen a split. A repeat of an already viewed candidate is not a new viewing; over the
 limit only an exact repeat runs without an override. `zqr holdout-test --override-reason` (dataset/split path
 only) exceeds the limit; the override is recorded in `holdout_overrides` and marks the split's holdout as
-contaminated.
+contaminated. `zqr close-holdout --split --note` (human, appendix A13.3) closes a split's holdout permanently: every
+new viewing is refused (promotion stops before freezing), repeats still answer, and an override lifts the closure
+as a recorded contamination.
 
 All state lives under `ZQR_HOME`: `/zqr` (the `zqr-data` volume) in the release container, `./var` in a
 development checkout. There is one SQLite database writer per process (WAL, busy timeout).
@@ -130,7 +132,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (279 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (286 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -380,7 +382,8 @@ Rules: `docs/investment-policy.md` (D1-D3) and appendix A14 (D4-D7). Plan:
 - **Holdout.** `run_portfolio_holdout` (`validation/holdout.py`) needs a frozen version, shares the split's viewing
   cap with candidates, allows at most one portfolio version per split every 7 days (A9), and applies gate 3 (daily
   Sharpe ≥ 0.5 and a positive return). A repeat returns the recorded result without a new viewing;
-  `--override-reason` lifts the cap or the 7-day rule and marks the split's holdout as contaminated.
+  `--override-reason` lifts a closure (A13.3), the cap or the 7-day rule and marks the split's holdout as
+  contaminated.
 - **Paper.** `zqr portfolio approve` (final_evaluated → paper) adds the roster entry `portfolio-<product>`
   (`source "portfolio"`, `portfolio_version`) and moves the version's candidate library entries to member. The
   fleet loads the version body into `PaperConfig.portfolio` (part of the identity hash, so changing the version is
@@ -389,6 +392,12 @@ Rules: `docs/investment-policy.md` (D1-D3) and appendix A14 (D4-D7). Plan:
   `portfolio` block (blend, family targets, level, `pre_state`, order target). `zqr portfolio resume <name>
   --note` writes `paper/<name>/resume.json`, applied once at the next bar and logged as an ALERT. Portfolio
   entries do not count against the candidate paper slots.
+- **Shadow portfolios** (phase 4, D2). `zqr portfolio shadow <vid> --note` (human) runs a version in `validated`,
+  `failed_validation` or `failed_final` as the roster entry `shadow-<product>` (`shadow: true`), the same
+  `PortfolioTrader` with the version's capital and costs, for forward evidence only. The version's state and the
+  library statuses do not change; the start is a version event with from_state = to_state. The `shadow` flag is not
+  part of the identity hash. Reports show shadows in their own table, labelled not approved; they are excluded
+  from the combined account and the soft stop.
 - **Parity** (`portfolio_parity`). Per decision: blend recomputed from the bar store, decider re-run from the
   recorded `pre_state` with the marked equity and position, order side and size; path: `run_portfolio` from the
   first decision's account and state.
@@ -419,8 +428,8 @@ These must hold after any change. Tests cover most of them.
    experiments with tool events.
 6. Trials on a split are never deleted. DSR counts all of them. Holdout data is read only through
    `validation/holdout.py` (`run_holdout` for candidates, `run_portfolio_holdout` for portfolio versions), which
-   caps viewings per split; exceeding the cap needs a recorded override and marks the split's holdout as
-   contaminated. A test enforces that no other module reads it. Experiment replay refuses holdout runs and reads
+   caps viewings per split and refuses closed splits (A13.3); exceeding the cap or viewing a closed split needs a
+   recorded override and marks the split's holdout as contaminated. A test enforces that no other module reads it. Experiment replay refuses holdout runs and reads
    the split's research segment; `zqr paper replay` stops at the earliest protected holdout start of the product
    and granularity (`holdout_cutoff`: a holdout a later split folds into its research data is no longer protected).
 7. No trading credentials exist. Paper fills are simulated against public market data.
@@ -516,6 +525,8 @@ a one-off container with the same mounts while the desk is stopped).
 | `zqr portfolio list [--product P] [--state S]` / `show <vid>` | Versions; one version with shares, evidence and events |
 | `zqr portfolio freeze <vid> --note` / `holdout <vid> [--override-reason R]` | Human freeze / holdout test (gate 3, spends a viewing) |
 | `zqr portfolio approve <vid> --note` / `resume <name> --note` | Human: paper roster entry / resume a liquidated paper portfolio |
+| `zqr portfolio shadow <vid> --note` | Human: run a version not approved for paper as `shadow-<product>` (forward evidence only) |
+| `zqr close-holdout --split S --note` | Human: close a split's holdout to new viewings, permanently (A13.3) |
 | `zqr desk monthly --month YYYY-MM` / `zqr desk soft-stop status\|evaluate\|clear [--day D] [--note N]` | Monthly review; soft-stop rule (investment policy 2) |
 | `zqr release [--target HOST\|local] [--allow-dirty] [--no-up]` | Development machine: build, ship and start a version |
 

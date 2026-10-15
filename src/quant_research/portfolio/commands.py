@@ -1,5 +1,5 @@
-"""`zqr portfolio ...` subcommands (design 5.9). `seed` and `validate` act as the controller; `freeze`, `approve`
-and `resume` are the human's decisions and need a note; `holdout` acts as the evaluator."""
+"""`zqr portfolio ...` subcommands (design 5.9). `seed` and `validate` act as the controller; `freeze`, `approve`,
+`shadow` and `resume` are the human's decisions and need a note; `holdout` acts as the evaluator."""
 
 from __future__ import annotations
 
@@ -90,6 +90,12 @@ def cmd_approve(args) -> None:
     _run(args, lambda paths, store: approve(paths, store, args.version_id, args.note))
 
 
+def cmd_shadow(args) -> None:
+    from quant_research.portfolio.paper import start_shadow
+
+    _run(args, lambda paths, store: start_shadow(paths, store, args.version_id, args.note))
+
+
 def cmd_resume(args) -> None:
     from quant_research.portfolio.paper import request_resume
 
@@ -97,7 +103,8 @@ def cmd_resume(args) -> None:
 
 
 def register(sub) -> None:
-    pf = sub.add_parser("portfolio", help="portfolio versions: seed, validate, freeze, holdout, approve, resume")
+    pf = sub.add_parser("portfolio", help="portfolio versions: seed, validate, freeze, holdout, approve, shadow, "
+                        "resume")
     pf = pf.add_subparsers(dest="pcmd", required=True)
     p = pf.add_parser("seed", help="define the seed portfolio of a product from the library (a draft version)")
     p.add_argument("--product", required=True)
@@ -124,7 +131,12 @@ def register(sub) -> None:
     p.add_argument("version_id")
     p.add_argument("--note", required=True)
     p.set_defaults(fn=cmd_approve)
+    p = pf.add_parser("shadow", help="run a version not approved for paper as shadow-<product> (forward evidence "
+                      "only; the human's decision)")
+    p.add_argument("version_id")
+    p.add_argument("--note", required=True)
+    p.set_defaults(fn=cmd_shadow)
     p = pf.add_parser("resume", help="resume a liquidated paper portfolio at its next bar (resets the peak)")
-    p.add_argument("name", help="roster name, e.g. portfolio-btc-usd")
+    p.add_argument("name", help="roster name, e.g. portfolio-btc-usd or shadow-btc-usd")
     p.add_argument("--note", required=True)
     p.set_defaults(fn=cmd_resume)

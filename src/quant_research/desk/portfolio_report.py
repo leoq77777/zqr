@@ -1,5 +1,6 @@
-"""Portfolio sections of the desk reports (design 5.9): per product portfolio, the combined account, the monthly
-review. Read-only: ledgers, marks, decision records, events and `VersionStore`.
+"""Portfolio sections of the desk reports (design 5.9): per product portfolio, the combined account, shadow
+portfolios (phase 4, D2), the monthly review. Read-only: ledgers, marks, decision records, events and
+`VersionStore`.
 
 Buy and hold uses the portfolio's capital bought at its first decision price with the entry fee and slippage. The
 combined account is the sum of the product portfolios with the yellow flag on its drawdown only (the ladder acts per
@@ -57,14 +58,16 @@ def _pct(x: float | None) -> str:
     return "-" if x is None else f"{x:+.2%}"
 
 
-def load_books(paths: Paths, roster: Roster | None = None) -> list[Book]:
+def load_books(paths: Paths, roster: Roster | None = None, shadow: bool = False) -> list[Book]:
+    """The approved portfolio books, or with `shadow` the shadow books (never both: shadows stay out of the
+    combined account and the soft stop)."""
     if roster is None:
         rp = roster_path(paths)
         roster = load_roster(rp) if rp.exists() else Roster()
     books = []
     for e in sorted(roster.entries, key=lambda e: e.name):
         db = paths.paper / e.name / "paper.db"
-        if e.source != "portfolio" or not db.exists():
+        if e.source != "portfolio" or e.shadow != shadow or not db.exists():
             continue
         ledger = Ledger(db)
         try:
@@ -157,15 +160,37 @@ def _drawdown(series: pd.Series) -> pd.Series:
     return series / series.cummax() - 1
 
 
+TABLE_HEADER = ["| portfolio | version | state | equity | day | day B&H | total | total B&H | drawdown | ladder | "
+                "fills | turnover | fees | parity |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+
+
 def portfolio_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[list[str], dict[str, Any]]:
     t0, t1 = _window(day, (datetime.strptime(day, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d"))
     rp = roster_path(paths)
     roster = load_roster(rp) if rp.exists() else Roster()
     books = load_books(paths, roster)
-    summary = {"portfolios": len(books), "parity_mismatches": 0, "alerts": 0}
-    if not books:
-        return [], summary
+    shadows = load_books(paths, roster, shadow=True)
+    summary = {"portfolios": len(books), "shadows": len(shadows), "parity_mismatches": 0, "alerts": 0}
     vs = VersionStore(store)
+    lines: list[str] = []
+    if books:
+        rows, details = _book_rows(paths, roster, vs, books, t0, t1, summary)
+        lines += ["## Portfolios", "",
+                  "Each product portfolio is one paper account (blend, deadband and drawdown ladder of its version). "
+                  "Buy & hold: the same capital bought at the first decision price with entry costs.", "",
+                  *TABLE_HEADER, *rows, "", *details]
+        lines += _combined_lines(books, t0, t1, summary)
+    if shadows:
+        rows, details = _book_rows(paths, roster, vs, shadows, t0, t1, summary)
+        lines += [*([""] if lines else []), "## Shadow portfolios (not approved)", "",
+                  "Versions that did not pass validation or the holdout, run on paper for forward evidence only "
+                  "(phase 4, D2). They are not part of the combined account or the soft stop.", "",
+                  *TABLE_HEADER, *rows, "", *details]
+    return lines, summary
+
+
+def _book_rows(paths: Paths, roster: Roster, vs: VersionStore, books: list[Book], t0: float, t1: float,
+               summary: dict[str, Any]) -> tuple[list[str], list[str]]:
     rows, details = [], []
     for b in books:
         e, m = b.entry, b.marks.set_index("at")
@@ -220,12 +245,11 @@ def portfolio_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[l
             details.append(f"  - vs backtest over {path['bars']} bars: equity {path['equity_gap_bps']:+.1f} bps "
                            f"(execution {path['execution_bps']:+.1f}, sizing and timing "
                            f"{path['sizing_timing_bps']:+.1f})")
-    lines = ["## Portfolios", "",
-             "Each product portfolio is one paper account (blend, deadband and drawdown ladder of its version). "
-             "Buy & hold: the same capital bought at the first decision price with entry costs.", "",
-             "| portfolio | version | state | equity | day | day B&H | total | total B&H | drawdown | ladder | "
-             "fills | turnover | fees | parity |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
-             *rows, "", *details]
+    return rows, details
+
+
+def _combined_lines(books: list[Book], t0: float, t1: float, summary: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
     comb = combined(books)
     if len(comb):
         c, bench = comb["combined"], comb["benchmark"]
@@ -240,7 +264,7 @@ def portfolio_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[l
                       f"{_pct((_value_at(bench, t1) or capital) / capital - 1)}; drawdown {_pct(dd)}"
                       + (" ⚠ yellow flag" if dd is not None and dd <= COMBINED_YELLOW else "")]
         summary["combined_equity"] = end
-    return lines, summary
+    return lines
 
 
 def versions_lines(store: ExperimentStore, mandates: dict[str, str]) -> list[str]:
@@ -269,13 +293,14 @@ def write_monthly_report(paths: Paths, store: ExperimentStore, month: str) -> Pa
     nxt = (first + timedelta(days=32)).replace(day=1)
     t0, t1 = _window(first.strftime("%Y-%m-%d"), nxt.strftime("%Y-%m-%d"))
     books = load_books(paths)
+    shadows = load_books(paths, shadow=True)
     vs = VersionStore(store)
     lines = [f"# Monthly review {month} (UTC)", "",
              f"Generated {datetime.now(UTC):%Y-%m-%d %H:%M} UTC. Paper trading only; no live orders exist.", "",
              "| portfolio | version | state | month | month B&H | max drawdown in month | ladder events |",
              "|---|---|---|---|---|---|---|"]
     contrib_lines = []
-    for b in books:
+    for b in books + shadows:
         m = b.marks.set_index("at")
         dd = _drawdown(m["equity"])
         in_month = dd[(dd.index > t0) & (dd.index <= t1)]
@@ -290,12 +315,13 @@ def write_monthly_report(paths: Paths, store: ExperimentStore, month: str) -> Pa
         events += [f"{datetime.fromtimestamp(ev['ts'], UTC):%Y-%m-%d %H:%M} resumed" for ev in b.events
                    if ev.get("event") == "portfolio_resumed" and t0 <= ev.get("ts", 0) < t1]
         vrow = vs.get(b.entry.portfolio_version) if b.entry.portfolio_version else None
-        lines.append(f"| {b.entry.name} | {b.entry.portfolio_version} | {vrow['state'] if vrow else '-'} | "
+        label = f"{b.entry.name} (shadow, not approved)" if b.entry.shadow else b.entry.name
+        lines.append(f"| {label} | {b.entry.portfolio_version} | {vrow['state'] if vrow else '-'} | "
                      f"{_pct(_period_return(m['equity'], t0, t1))} | {_pct(_period_return(m['price'], t0, t1))} | "
                      f"{_pct(float(in_month.min()) if len(in_month) else None)} | {'; '.join(events) or '-'} |")
         contrib = family_contribution(b, t0, t1)
         if contrib:
-            contrib_lines.append(f"- {b.entry.name} (USD): " + ", ".join(f"{k} {v:+.2f}" for k, v in contrib.items()))
+            contrib_lines.append(f"- {label} (USD): " + ", ".join(f"{k} {v:+.2f}" for k, v in contrib.items()))
     comb = combined(books)
     if len(comb):
         dd = _drawdown(comb["combined"])

@@ -48,6 +48,7 @@ class RosterEntry(BaseModel):
     source: Literal["preset", "candidate", "portfolio"] = "preset"
     candidate_id: str | None = None
     portfolio_version: str | None = None  # source "portfolio": the version traded, `strategy_ref` portfolio:<id>
+    shadow: bool = False  # source "portfolio": a version not approved for paper, run for forward evidence only
     enabled: bool = True
     added_at: float | None = None
 

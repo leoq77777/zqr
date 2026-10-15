@@ -25,13 +25,13 @@ from tests.test_portfolio_paper import OVERLAY, _bars, _cfg, _version
 DAY = 86_400
 
 
-def _entry(vid, product="BTC-USD", initial=10_000.0, fee=0.001, slip=2.0):
-    return RosterEntry(name=f"portfolio-{product.lower()}", product=product, strategy_ref=f"portfolio:{vid}",
-                       parameters={"version_id": vid}, source="portfolio", portfolio_version=vid,
-                       initial_cash=initial, fee_rate=fee, slippage_bps=slip)
+def _entry(vid, product="BTC-USD", initial=10_000.0, fee=0.001, slip=2.0, shadow=False):
+    return RosterEntry(name=f"{'shadow' if shadow else 'portfolio'}-{product.lower()}", product=product,
+                       strategy_ref=f"portfolio:{vid}", parameters={"version_id": vid}, source="portfolio",
+                       portfolio_version=vid, initial_cash=initial, fee_rate=fee, slippage_bps=slip, shadow=shadow)
 
 
-def _paper_portfolios(tmp_path, products=("BTC-USD",)):
+def _paper_portfolios(tmp_path, products=("BTC-USD",), shadows=()):
     paths = get_paths(tmp_path / "home")
     store = ExperimentStore(paths.db)
     entries = []
@@ -40,7 +40,7 @@ def _paper_portfolios(tmp_path, products=("BTC-USD",)):
         vid = VersionStore(store).put(v)
         bars = _bars(seed=3 + k)
         BarStore.for_feed(paths, product, "ONE_HOUR").append(bars)
-        e = _entry(vid, product)
+        e = _entry(vid, product, shadow=product in shadows)
         entries.append(e)
         run_replay(_cfg(v, name=e.name, instrument=product), bars, paths.paper / e.name,
                    PRODUCT).ledger.close()
@@ -54,7 +54,8 @@ def test_report_has_a_portfolio_section(tmp_path):
     assert "## Portfolios" in text and "| portfolio-btc-usd | pv-" in text
     row = next(line for line in text.splitlines() if line.startswith("| portfolio-btc-usd |"))
     assert "| draft |" in row and "| full" in row and "24/24 |" in row
-    assert "Summary: 1 paper portfolios, 0 paper strategies" in text and "0 parity mismatches" in text
+    assert "Summary: 1 paper portfolios, 0 shadow portfolios, 0 paper strategies" in text
+    assert "0 parity mismatches" in text
     assert "families hold" in text and "day P&L by family (USD)" in text and "Combined account" in text
     assert "(no paper strategies with a ledger)" in text
     store.close()
@@ -74,6 +75,32 @@ def test_combined_account_is_the_sum_of_the_two_portfolios(tmp_path):
     assert np.allclose(comb["combined"], comb.filter(like="equity:").sum(axis=1))
     text = write_daily_report(paths, store, "2024-01-05").read_text()
     assert "Combined account: equity" in text and "BTC-USD" in text and "ETH-USD" in text
+    store.close()
+
+
+def test_shadows_have_their_own_table_and_stay_out_of_the_combined_account(tmp_path):
+    paths, store = _paper_portfolios(tmp_path, ("BTC-USD", "ETH-USD"), shadows=("ETH-USD",))
+    assert [b.entry.name for b in load_books(paths)] == ["portfolio-btc-usd"]
+    assert [b.entry.name for b in load_books(paths, shadow=True)] == ["shadow-eth-usd"]
+    assert len(combined(load_books(paths)).filter(like="equity:").columns) == 1
+    text = write_daily_report(paths, store, "2024-01-05").read_text()
+    assert "Summary: 1 paper portfolios, 1 shadow portfolios, 0 paper strategies" in text
+    approved, shadow_part = text.split("## Shadow portfolios (not approved)")
+    assert "| portfolio-btc-usd | pv-" in approved and "shadow-eth-usd" not in approved
+    assert "| shadow-eth-usd | pv-" in shadow_part and "24/24 |" in shadow_part
+    combined_line = next(line for line in text.splitlines() if line.startswith("Combined account"))
+    assert "BTC-USD" in combined_line and "ETH-USD" not in combined_line
+    monthly = write_monthly_report(paths, store, "2024-01").read_text()
+    assert "| shadow-eth-usd (shadow, not approved) | pv-" in monthly
+    store.close()
+
+
+def test_a_shadow_alone_has_no_combined_account_or_soft_stop(tmp_path):
+    paths, store = _paper_portfolios(tmp_path, ("BTC-USD",), shadows=("BTC-USD",))
+    text = write_daily_report(paths, store, "2024-01-05").read_text()
+    assert "## Shadow portfolios (not approved)" in text and "## Portfolios" not in text
+    assert "Combined account" not in text
+    assert softstop.evaluate(paths, "2024-02-01")["reason"] == "no portfolio in paper"
     store.close()
 
 

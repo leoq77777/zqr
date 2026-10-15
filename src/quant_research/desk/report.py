@@ -176,6 +176,7 @@ def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[li
             lines.append(f"| {product} | {store.trial_count(m.split_id)} | {'-' if k is None else k} | "
                          f"{', '.join(f'{k} {v}' for k, v in sorted(states.items())) or '-'} | "
                          f"{left}{' **(exhausted: no more automatic promotion)**' if left <= 0 else ''}"
+                         f"{' **(closed)**' if store.holdout_closure(m.split_id) else ''}"
                          f"{' **(contaminated by override)**' if store.holdout_overrides(m.split_id) else ''} |")
         lines += versions_lines(store, cfg.mandates)
         lines.append(f"- Next split: earliest {NEXT_SPLIT_EARLIEST} (182 days validation + 182 days holdout after "
@@ -204,7 +205,8 @@ def write_daily_report(paths: Paths, store: ExperimentStore, day: str) -> Path:
     lines = [f"# Desk report {day} (UTC)", "",
              f"Generated {datetime.now(UTC):%Y-%m-%d %H:%M} UTC. Paper trading only; no live orders exist. "
              "Backtests and paper results are not evidence of live profitability.", "",
-             f"Summary: {pfs['portfolios']} paper portfolios, {ps['strategies']} paper strategies, "
+             f"Summary: {pfs['portfolios']} paper portfolios, {pfs['shadows']} shadow portfolios, "
+             f"{ps['strategies']} paper strategies, "
              f"{ps['alerts'] + pfs['alerts']} alerts, {ps['parity_mismatches'] + pfs['parity_mismatches']} parity "
              f"mismatches; {rs['sessions']} research sessions, {rs['cost_usd']} USD.", "",
              *([*portfolios, ""] if portfolios else []), *paper, "", *research, ""]

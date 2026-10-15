@@ -277,6 +277,32 @@ list the cluster with `is_shared`; the report's deduplicated total equals the ma
 `zqr memory cluster` (the mapping is recomputed from the recorded clustering; K does not change) and
 `zqr memory archive --sandbox docker`.
 
+### A13.3 Closing a holdout that the human has seen (approved 2026-10-15)
+
+**Problem.** A9 allows ten holdout viewings per split, one portfolio version per split every 7 days. On
+2026-10-15 the BTC seed portfolio failed gate 3 on its first viewing (`docs/reviews/2026-10-15-seed-portfolio-review.md`),
+and the human saw the holdout path quarter by quarter. The BTC and ETH holdouts cover the same dates. Any later
+version on either current split would be built by people who know that path, so a viewing would test a
+hypothesis on the data that suggested it; the viewing count would still show an untouched test.
+
+**Amended rule (adds to A9).**
+
+- The human can close a split's holdout: `zqr close-holdout --split <id> --note <reason>`. The closure is
+  permanent and recorded (`holdout_closures`: split, note, time); closing twice keeps the first record.
+- A closed split refuses every new holdout viewing, of portfolio versions and of single candidates (the desk's
+  standing authorization stops before freezing). A repeat of an earlier viewing still returns its recorded result.
+- `--override-reason` lifts the closure as it lifts the cap: the viewing is recorded, the override too, and the
+  split's holdout is marked contaminated.
+- A closure is not a contamination: no unrecorded viewing happened. The report marks the split "closed".
+- Gate 3 resumes on the next split (A11), whose holdout is data after 2026-10-13 06:00 UTC.
+
+**Applied on release:** `split-1016c7c9873a` (BTC, 1 viewing) and `split-c47a0be57a24` (ETH, 0 viewings).
+
+**Implementation.** `ExperimentStore.close_holdout` / `holdout_closure`; `validation/holdout.py` checks the closure
+in `run_holdout` and `run_portfolio_holdout` before the cap; `desk/promotion.py` stops before freezing. Tests: a
+closed split refuses a new candidate and a frozen version without loading holdout data, answers a repeat, and
+records an override as contamination; promotion stops on a closed split.
+
 ## A14. Portfolio layer decisions (approved 2026-10-15)
 
 Decided with the phase 3 plan (`docs/superpowers/plans/2026-10-15-phase3-portfolio.md`, D4-D7); the investment

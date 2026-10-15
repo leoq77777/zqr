@@ -228,6 +228,21 @@ def cmd_freeze_strategy(args) -> None:
     _out({"frozen": spec.candidate_hash(), "strategy_ref": spec.strategy_ref, "parameters": spec.parameters})
 
 
+def cmd_close_holdout(args) -> None:
+    from quant_research.validation.splits import SplitError, load_split
+
+    if not args.note.strip():
+        raise SystemExit("closing a holdout needs a note")
+    paths, store = _ctx(args)
+    try:
+        load_split(paths, args.split)
+    except SplitError as exc:
+        raise SystemExit(str(exc)) from None
+    closure = store.close_holdout(args.split, args.note)
+    _out({**closure, "viewings": len(store.holdout_runs(args.split)),
+          "overrides": len(store.holdout_overrides(args.split))})
+
+
 def cmd_holdout(args) -> None:
     from quant_research.report.markdown import write_experiment_report
     from quant_research.validation.holdout import HoldoutError, run_holdout, split_viewing_cap
@@ -813,6 +828,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--candidate", help="registry candidate id (frozen); uses its mandate's viewing limit and rule")
     p.add_argument("--override-reason", help="exceed the split's viewing limit; recorded, and marks the split's "
                    "holdout as contaminated")
+    p = sub.add_parser("close-holdout", help="close a split's holdout to new viewings, permanently (the human's "
+                       "decision; appendix A13.3)")
+    p.add_argument("--split", required=True)
+    p.add_argument("--note", required=True)
+    p.set_defaults(fn=cmd_close_holdout)
 
     p = sub.add_parser("freeze-strategy", help="freeze a candidate before the holdout test")
     _add_strategy(p)

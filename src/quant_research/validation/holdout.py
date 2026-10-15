@@ -48,6 +48,12 @@ def split_viewing_cap(store: ExperimentStore, split_id: str) -> int:
     return min(caps) if caps else DEFAULT_MAX_VIEWINGS
 
 
+def closed_refusal(store: ExperimentStore, split_id: str) -> str | None:
+    """Why a closed split refuses new holdout viewings (appendix A13.3), or None when it is open."""
+    closure = store.holdout_closure(split_id)
+    return None if closure is None else f"holdout of {split_id} is closed ({closure['note']})"
+
+
 def _repeats_a_completed_run(paths: Paths, store: ExperimentStore, request: ExperimentRequest, chash: str) -> bool:
     """Whether the gatekeeper would answer this holdout request with an earlier identical result."""
     split = load_split(paths, request.split_id)
@@ -70,9 +76,9 @@ def run_holdout(
     """The single gate to holdout data; returns the result and the viewings recorded before this candidate's.
 
     The limit is the tighter of `max_viewings` and `split_viewing_cap`. A candidate already viewed on the split
-    gets its recorded result back without a new viewing. Otherwise the split must be under the limit, unless
-    `override_reason` is given; an override is recorded and marks the split's holdout as contaminated. Over the
-    limit, only an exact repeat of a completed run proceeds without an override.
+    gets its recorded result back without a new viewing. Otherwise the split must be open and under the limit,
+    unless `override_reason` is given; an override is recorded and marks the split's holdout as contaminated. On a
+    closed split or over the limit, only an exact repeat of a completed run proceeds without an override.
     """
     spec = request.spec.normalized()
     chash = spec.candidate_hash()
@@ -81,10 +87,13 @@ def run_holdout(
     runs = store.holdout_runs(request.split_id)
     earlier = next((r for r in runs if r["candidate_hash"] == chash), None)
     cap = min(max_viewings, split_viewing_cap(store, request.split_id))
-    over = len(runs) >= cap
+    refusal = closed_refusal(store, request.split_id) or (
+        f"holdout of {request.split_id} already viewed {len(runs)} time(s); the limit is {cap}"
+        if len(runs) >= cap else None)
+    over = refusal is not None
     if over and not override_reason and not (earlier is not None
                                              and _repeats_a_completed_run(paths, store, request, chash)):
-        raise HoldoutError(f"holdout of {request.split_id} already viewed {len(runs)} time(s); the limit is {cap}")
+        raise HoldoutError(refusal)
     data = load_holdout_data(paths, request.split_id)
     result = run_experiment(paths, store, request.model_copy(update={"parameters": spec.parameters}),
                             kind="holdout", data=data, sandbox=sandbox, gate=GateContext(caller="holdout"))
@@ -94,7 +103,7 @@ def run_holdout(
     prior = store.record_holdout_run(request.split_id, chash, result.experiment_id)
     if over:
         store.record_holdout_override(request.split_id, result.experiment_id, override_reason)
-        note = f"over the viewing limit ({override_reason}); this split's holdout is contaminated"
+        note = f"{refusal}; overridden ({override_reason}); this split's holdout is contaminated"
     elif prior == 0:
         note = "first holdout viewing on this split"
     else:
@@ -144,10 +153,10 @@ VERSION_BATCH_SECONDS = 7 * 86_400
 
 def run_portfolio_holdout(paths: Paths, store: ExperimentStore, version_id: str, override_reason: str | None = None,
                           now: Callable[[], float] = time.time) -> dict:
-    """frozen -> final_evaluated | failed_final on gate 3 (A6), under the split's viewing cap and the A9 batching
-    rule: at most one portfolio version per split every 7 days. A version already viewed gets its recorded result
-    back without a new viewing. `override_reason` lifts the cap and the batching rule; it is recorded and marks the
-    split's holdout as contaminated."""
+    """frozen -> final_evaluated | failed_final on gate 3 (A6), on an open split (A13.3), under the split's viewing
+    cap and the A9 batching rule: at most one portfolio version per split every 7 days. A version already viewed
+    gets its recorded result back without a new viewing. `override_reason` lifts the closure, the cap and the
+    batching rule; it is recorded and marks the split's holdout as contaminated."""
     from quant_research.portfolio.evaluate import record_run
     from quant_research.portfolio.version import VersionStore
 
@@ -167,10 +176,11 @@ def run_portfolio_holdout(paths: Paths, store: ExperimentStore, version_id: str,
         cap = split_viewing_cap(store, version.split_id)
         recent = [r for r in runs if r["candidate_hash"].startswith("pv-")
                   and now() - r["run_at"] < VERSION_BATCH_SECONDS]
-        refusal = (f"holdout of {version.split_id} already viewed {len(runs)} time(s); the limit is {cap}"
-                   if len(runs) >= cap else
-                   f"portfolio version {recent[-1]['candidate_hash']} viewed this split's holdout less than 7 days "
-                   "ago (A9)" if recent else None)
+        refusal = (closed_refusal(store, version.split_id) or
+                   (f"holdout of {version.split_id} already viewed {len(runs)} time(s); the limit is {cap}"
+                    if len(runs) >= cap else
+                    f"portfolio version {recent[-1]['candidate_hash']} viewed this split's holdout less than 7 days "
+                    "ago (A9)" if recent else None))
         if refusal and not override_reason:
             raise HoldoutError(refusal)
         data = load_holdout_data(paths, version.split_id)

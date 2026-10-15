@@ -3,8 +3,10 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** draft. The decisions D1-D8 below change the scope the design assumed, so they come first. The task
-list is an outline; each task gets its detailed steps and file list once the decisions are approved.
+**Status:** D1-D8 approved by the human on 2026-10-15. Tasks 0-2 (holdout closure, shadow portfolios) ship first
+as release 4a so the shadows start accruing forward evidence. Tasks 3-16 are an outline; they get detailed steps
+after the data decisions raised on 2026-10-15 (longer history, see the end of this plan), which change the dev
+segment gate 1 runs on.
 
 **Goal:** Replace the topic loop with campaigns that produce registered hypotheses, run admission gates 1-2 on
 them, and build up a queue of portfolio versions for the next split's holdout. Keep the seed portfolios running as
@@ -27,7 +29,7 @@ investment policy sections 2 and 5; seed review `docs/reviews/2026-10-15-seed-po
   in paper and gate 1 against "the current paper version". None of that has a base now.
 - Research is disabled (`research_enabled = false`); the paper fleet runs 16 single-strategy controls.
 
-## Decisions for the human (approve before Task 1)
+## Decisions for the human (approved 2026-10-15)
 
 - **D1. Close the current splits' holdouts to new versions.** The human has seen the BTC holdout path quarter by
   quarter, and the BTC and ETH holdouts cover the same dates. Any new version on either current split would be
@@ -89,12 +91,22 @@ investment policy sections 2 and 5; seed review `docs/reviews/2026-10-15-seed-po
 
 ## Task outline
 
-0. **Record decisions.** Amendment A13.3 (holdout closure), investment policy section 5 (budget rules), design
-   deviations (D3-D5) noted in `docs/development.md`.
-1. **Holdout closure.** `holdout_closures` table; checked in `run_holdout` and `run_portfolio_holdout`; `zqr
-   validation close-holdout --split --note` (human); report line.
-2. **Shadow portfolios.** Roster flag `shadow`; `zqr portfolio shadow`; report table; combined account and soft
-   stop exclude shadows; parity as for portfolios.
+0. [x] **Record decisions.** Amendment A13.3 (holdout closure) in the appendix; investment policy section 5 (D7
+   budget rules; implemented in Task 9, research stays disabled until then); `docs/development.md` sections 4, 5.9,
+   6 and the commands table.
+1. [x] **Holdout closure.** `holdout_closures` table (`ExperimentStore.close_holdout` / `holdout_closure`);
+   `closed_refusal` checked in `run_holdout` and `run_portfolio_holdout` before the cap (repeats still answer, an
+   override is a recorded contamination); promotion stops before freezing; `zqr close-holdout --split --note`;
+   report column "(closed)".
+2. [x] **Shadow portfolios.** `RosterEntry.shadow` (not in the identity hash); `zqr portfolio shadow <vid> --note`
+   for `validated`, `failed_validation`, `failed_final`, roster name `shadow-<product>`, version event without a
+   state change, library untouched; daily report table "Shadow portfolios (not approved)" with parity; monthly
+   review rows labelled; combined account and soft stop read approved books only.
+
+   **Release 4a and after it (human commands on the host):**
+   `zqr close-holdout --split split-1016c7c9873a --note ...`, `zqr close-holdout --split split-c47a0be57a24
+   --note ...`, `zqr portfolio shadow pv-4864fc813a30 --note ...`, `zqr portfolio shadow pv-6b52caaf11b5
+   --note ...`; the shadows start at the next fleet roster reload (cash, from the release day).
 3. **Hypothesis registration.** Immutable `hypotheses` table: prior text, citations (published or experiment
    ids), 1-3 variants (code hash, parameters), campaign id. More than three variants or a second registration per
    campaign refused. Human CLI `zqr hypothesis register` and a gateway tool for campaigns.

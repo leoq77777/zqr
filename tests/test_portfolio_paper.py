@@ -189,6 +189,43 @@ def test_fleet_attaches_a_portfolio_entry(tmp_path):
     os.utime(roster, (t["now"] + 5, t["now"] + 5))
     fleet.step()
     assert fleet.errors["portfolio-btc-usd"].startswith("config change refused")
+    shadow = entry.model_copy(update={"name": "shadow-btc-usd", "shadow": True})
+    plain = entry.model_copy(update={"name": "shadow-btc-usd"})
+    assert fleet._config(shadow).identity_hash() == fleet._config(plain).identity_hash()
+
+
+def test_shadow_runs_an_unapproved_version_without_changing_it(paths, store, dataset, monkeypatch):
+    from quant_research.library.store import LibraryStore
+    from quant_research.paper.fleet import load_roster
+    from quant_research.portfolio import evaluate
+    from quant_research.portfolio.paper import start_shadow
+    from quant_research.portfolio.seed import define_seed
+    from tests.test_portfolio import _desk
+
+    _desk(paths, store, dataset)
+    vid = define_seed(paths, store, "BTC-USD")
+    with pytest.raises(VersionError, match="is draft"):
+        start_shadow(paths, store, vid, "too early")
+    monkeypatch.setitem(evaluate.SEED_STANDARD, "min_sharpe_daily", 100.0)
+    evaluate.validate(paths, store, vid)
+    vs = VersionStore(store)
+    assert vs.get(vid)["state"] == "failed_validation"
+    with pytest.raises(VersionError, match="needs a note"):
+        start_shadow(paths, store, vid, " ")
+    out = start_shadow(paths, store, vid, "forward evidence")
+    assert out["roster_name"] == "shadow-btc-usd" and vs.get(vid)["state"] == "failed_validation"
+    entry = next(e for e in load_roster(paths.desk / "roster.json").entries if e.name == "shadow-btc-usd")
+    eng = vs.version(vid).engine_config
+    assert entry.shadow and entry.source == "portfolio" and entry.portfolio_version == vid
+    assert entry.initial_cash == eng.initial_cash and entry.fee_rate == eng.costs.fee_rate
+    event = vs.events(vid)[-1]
+    assert event["from_state"] == event["to_state"] == "failed_validation"
+    assert event["actor"] == "human" and event["note"] == "forward evidence"
+    lib = LibraryStore(paths.db)
+    assert lib.entry("btc-tsmom-1w")["status"] == "candidate"
+    lib.close()
+    with pytest.raises(VersionError, match="already has shadow-btc-usd"):
+        start_shadow(paths, store, vid, "twice")
 
 
 def test_approve_adds_the_roster_entry(paths, store, dataset, monkeypatch):

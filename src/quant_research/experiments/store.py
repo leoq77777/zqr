@@ -59,6 +59,9 @@ CREATE TABLE IF NOT EXISTS holdout_runs (
 CREATE TABLE IF NOT EXISTS holdout_overrides (
     id INTEGER PRIMARY KEY AUTOINCREMENT, split_id TEXT, experiment_id TEXT, reason TEXT, at REAL
 );
+CREATE TABLE IF NOT EXISTS holdout_closures (
+    split_id TEXT PRIMARY KEY, note TEXT NOT NULL, at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY, created_at REAL, updated_at REAL, question TEXT, dataset_id TEXT, split_id TEXT,
     state TEXT, budget TEXT, usage TEXT, config TEXT, stop_reason TEXT, workspace TEXT
@@ -258,6 +261,17 @@ class ExperimentStore:
     def holdout_overrides(self, split_id: str) -> list[dict[str, Any]]:
         rows = self._exec("SELECT * FROM holdout_overrides WHERE split_id=? ORDER BY at", (split_id,)).fetchall()
         return [dict(r) for r in rows]
+
+    def close_holdout(self, split_id: str, note: str) -> dict[str, Any]:
+        """Close a split's holdout to new viewings (appendix A13.3). Permanent; closing twice keeps the first."""
+        if (existing := self.holdout_closure(split_id)) is not None:
+            return existing
+        self._insert("holdout_closures", {"split_id": split_id, "note": note, "at": time.time()})
+        return self.holdout_closure(split_id)
+
+    def holdout_closure(self, split_id: str) -> dict[str, Any] | None:
+        row = self._exec("SELECT * FROM holdout_closures WHERE split_id=?", (split_id,)).fetchone()
+        return dict(row) if row else None
 
     # -- sessions --------------------------------------------------------------------------------
     def create_session(self, **fields: Any) -> str:
