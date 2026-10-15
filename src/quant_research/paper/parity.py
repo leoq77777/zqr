@@ -26,6 +26,7 @@ from quant_research.backtest.rebalance import needs_trade
 from quant_research.data.bars import to_epoch
 from quant_research.paper.fleet import Roster, RosterEntry, entry_costs
 from quant_research.paper.ledger import Ledger
+from quant_research.paper.risk import RiskLimits
 from quant_research.paper.trader import PaperConfig
 from quant_research.strategy.compute import compute_targets, strategy_weights
 from quant_research.strategy.sandbox import SandboxConfig
@@ -33,6 +34,9 @@ from quant_research.strategy.spec import StrategySpec
 from quant_research.timeutil import granularity_seconds, periods_per_year
 
 CASH_BUFFER = PaperConfig.model_fields["buy_cash_buffer"].default
+# Decisions recorded before the cap was stored with them (commit cfd7d05) ran under the default cap: every roster
+# kept it until then, so the current roster's cap does not apply to them.
+UNRECORDED_ORDER_CAP = RiskLimits.model_fields["max_order_notional"].default
 
 
 def _epoch(value: Any) -> int:
@@ -103,7 +107,6 @@ def paper_parity(entry: RosterEntry, roster: Roster, ledger: Ledger, bars: pd.Da
     mark_at = {_epoch(r["bar_open"]): r for r in ledger.marks().to_dict("records")}
     fills = _fills_by_order(ledger)
     fee_rate, slip_bps, min_notional = entry_costs(entry, roster)
-    cap = roster.risk.max_order_notional
     next_open = bars["open"].to_numpy(float)
     last_i = index[_epoch(checkable[-1]["bar_open"])]
     slips, fee_errors, allowed = [], [], Counter()
@@ -131,7 +134,7 @@ def paper_parity(entry: RosterEntry, roster: Roster, ledger: Ledger, bars: pd.Da
         elif paper_side is not None and m is not None:
             paper_qty = float(d["intent"]["base_size"])
             verdict, rule = _size_check(paper_side, paper_qty, target, m, fee_rate, slip_bps,
-                                        d.get("max_order_notional", cap))
+                                        d.get("max_order_notional", UNRECORDED_ORDER_CAP))
             if verdict == "mismatch":
                 out["size_mismatches"].append(f"{d['bar_open']}: paper {paper_side} {paper_qty:.8f}, backtest rule "
                                               f"{rule:.8f}")
@@ -251,7 +254,7 @@ def portfolio_parity(entry: RosterEntry, roster: Roster, ledger: Ledger, bars: p
         elif paper_side is not None:
             paper_qty = float(d["intent"]["base_size"])
             verdict, rule = _size_check(paper_side, paper_qty, target, m, fee_rate, slip_bps,
-                                        d.get("max_order_notional", roster.risk.max_order_notional))
+                                        d.get("max_order_notional", UNRECORDED_ORDER_CAP))
             if verdict == "mismatch":
                 out["size_mismatches"].append(f"{d['bar_open']}: paper {paper_side} {paper_qty:.8f}, backtest rule "
                                               f"{rule:.8f}")

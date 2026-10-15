@@ -253,6 +253,22 @@ def test_parity_counts_the_order_cap_as_an_allowed_difference(tmp_path):
     assert abs(out["path"]["exposure_gap_pp"]) < 100 and out["path"]["sizing_timing_bps"] != 0
 
 
+def test_parity_of_decisions_without_a_recorded_cap_uses_the_cap_they_ran_under(tmp_path):
+    from quant_research.paper.fleet import Roster
+    from quant_research.paper.parity import paper_parity
+
+    old = RiskLimits(max_orders_per_hour=100, max_daily_loss_fraction=0.99)  # the default cap, as before cfd7d05
+    trader, entry, _, bars, _ = _parity_run(tmp_path, risk=old, buy_cash_buffer=0.0)
+    conn = trader.ledger._conn
+    for row_id, data in conn.execute("SELECT id, data FROM decisions").fetchall():
+        d = json.loads(data)
+        d.pop("max_order_notional")
+        conn.execute("UPDATE decisions SET data=? WHERE id=?", (json.dumps(d), row_id))
+    raised = Roster(risk=old.model_copy(update={"max_order_notional": 10_000.0}))
+    out = paper_parity(entry, raised, trader.ledger, bars, None)
+    assert out["size_mismatches"] == [] and out["allowed"]["order_cap"] > 2
+
+
 def test_parity_counts_the_cash_buffer_as_an_allowed_difference(tmp_path):
     *_, out = _parity_run(tmp_path)  # default 1% buffer: full-exposure buys stop short of the backtest's size
     assert out["size_mismatches"] == [] and out["allowed"].get("cash_buffer", 0) > 2
