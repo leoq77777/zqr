@@ -139,6 +139,43 @@ investment policy sections 2 and 5; seed review `docs/reviews/2026-10-15-seed-po
     and `zqr portfolio shadow` by the human; generate the first campaign queue; the human reviews it, then sets
     `research_enabled = true`.
 
+## Data decisions (open, raised by the human on 2026-10-15)
+
+The research data starts on 2021-01-01, a start date chosen when the project began fetching, not a limit of the
+source. Checked on 2026-10-15 from the production host (probe in a temporary directory, production data unchanged):
+
+| | Coinbase hourly from | Extra history before 2021 | Coverage 2015/16-2020 | Missing bars |
+|---|---|---|---|---|
+| BTC-USD | 2015-07-20 21:00 | 5.5 years (47,745 bars) | 99.87% | 42 in 18 gaps (largest 15 h, 2018-08-10) |
+| ETH-USD | 2016-05-18 00:00 | 4.6 years (40,336 bars) | 99.51% | 200 in 61 gaps, 175 of them in the first week after listing |
+
+The extra years hold the 2017 bubble, the 2018 bear market (BTC −84%), the 2019 recovery and the March 2020 crash:
+the regimes the seed portfolios have not been tested in. They cannot add unseen validation or holdout data (those
+must lie after 2026-10-13), but they add dev: about 3.5 → 8.9 years for BTC and 3.5 → 8.1 for ETH, which lowers the
+standard error of an annualised Sharpe from about 0.54 to 0.34 and the gate 1 appraisal-ratio bar for one variant
+from about 0.69 to about 0.43.
+
+Options, to decide before Tasks 3-16 are detailed:
+
+- **E1. Extend dev backwards (proposal).** Fetch from the listing dates; freeze new datasets (the current ones stay);
+  create new splits per product with dev from the listing date to 2024-06-20 and the same validation and holdout
+  boundaries, closed at creation (A13.3, the same data); new desk mandates written by the human. An amendment says
+  how the old splits' trials count on the new ones (proposal: the old split's K(0.7) is added to the new split's K,
+  since that search covered part of the new dev). Seed characterisation runs (A7) and the seed portfolios' dev runs
+  are repeated on the new dev; the 2015/16-2020 part is reported separately as the first look at those years. Gate
+  1 and campaign diagnostics then run on the long dev.
+- **E2. Keep the early years as a one-time backward test** of the frozen seed versions before anyone looks at them.
+  Weak as out-of-sample evidence (the seeds' published priors were estimated on 2014-2020 crypto data, and market
+  history is common knowledge); E1 includes the same first look as a diagnostic.
+- **E3. Other coins as research-only evidence** (more breadth: does a rule work beyond BTC and ETH). Few Coinbase
+  coins have long history (LTC 2016, BCH 2017; most others 2021 or later) and they correlate strongly with BTC.
+  Needs a mandate and K design across instruments; a later phase.
+- **E4. Longer daily history from another venue** (Bitstamp BTC from 2011). Different venue and prices, daily
+  families only, a new data client and contract; a later phase.
+
+Data alone does not fix the holdout: periods already seen stay seen. Unseen evidence accrues only forward (shadows,
+controls, the next split from 2027-10-12).
+
 ## Open points to settle while detailing the tasks
 
 - Family quotas per split (the design names them, no values yet).
