@@ -5,6 +5,9 @@ Execution contract (docs/contracts-v2.md section 4):
   a target whose fill bar lies beyond the window is never filled.
 - market orders only: buys fill at open*(1+slippage), sells at open*(1-slippage); taker fee on notional.
   With `adverse_fill`, the reference price is the worse of the decision close and the fill open.
+- at an isolated open (appendix A13.8: more than 20% from both the previous close and its own close) the order is
+  sized at the previous close and fills at the worse of that close and the open. Screened datasets have none (the
+  data rule corrects them); the guard covers bars that were not screened.
 - buys are capped so cash never goes negative; no leverage, no shorting.
 - with `base_increment`, traded quantities are rounded down to the increment.
 - a NaN target means no order at that bar; the position is left to drift.
@@ -26,6 +29,7 @@ from quant_research import ENGINE_VERSION
 from quant_research.backtest.rebalance import EPS as _EPS
 from quant_research.backtest.rebalance import needs_trade
 from quant_research.data.bars import to_epoch
+from quant_research.data.validate import isolated_opens
 from quant_research.hashing import hash_obj
 
 
@@ -105,6 +109,7 @@ def run_backtest(
 
     o = bars["open"].to_numpy(float)
     c = bars["close"].to_numpy(float)
+    guarded = isolated_opens(o, c)
     times = bars["bar_open_time"]
     fee_rate = config.costs.fee_rate
     slip = config.costs.slippage_bps / 10_000.0
@@ -131,14 +136,16 @@ def run_backtest(
             target = float(targets[decided]) if decided >= 0 else math.nan
         filled = False
         if not math.isnan(target):  # NaN = no instruction at this bar (warmup or unscheduled rebalance)
-            equity_open = cash + qty * o[i]
-            delta = target * equity_open - qty * o[i]
+            mark = c[i - 1] if guarded[i] else o[i]
+            equity_open = cash + qty * mark
+            delta = target * equity_open - qty * mark
             full_exit = target == 0.0 and qty > 0
-            if needs_trade(target, qty * o[i], equity_open, tolerance=tolerance,
+            if needs_trade(target, qty * mark, equity_open, tolerance=tolerance,
                            min_notional=config.min_trade_notional):
                 value_before = equity_open
                 if delta > 0:
-                    ref = max(o[i], c[decided]) if config.adverse_fill else o[i]
+                    ref = max(o[i], mark)
+                    ref = max(ref, c[decided]) if config.adverse_fill else ref
                     px = ref * (1 + slip)
                     q = _round(min(delta, cash / (1 + fee_rate)) / px)
                     notional = q * px
@@ -147,14 +154,15 @@ def run_backtest(
                         cash = max(cash - notional - fee, 0.0)
                         was_flat = qty == 0
                         qty += q
-                        fills.append((times[i], i, "buy", q, px, o[i], notional, fee, q * (px - o[i]), target))
+                        fills.append((times[i], i, "buy", q, px, mark, notional, fee, q * (px - mark), target))
                         filled = True
                         if was_flat:
                             trip_entry = (times[i], i, value_before)
                 elif delta < 0 or full_exit:
-                    ref = min(o[i], c[decided]) if config.adverse_fill else o[i]
+                    ref = min(o[i], mark)
+                    ref = min(ref, c[decided]) if config.adverse_fill else ref
                     px = ref * (1 - slip)
-                    q = qty if target == 0.0 else _round(min(qty, -delta / o[i]))
+                    q = qty if target == 0.0 else _round(min(qty, -delta / mark))
                     if q > 0:
                         notional = q * px
                         fee = notional * fee_rate
@@ -162,7 +170,7 @@ def run_backtest(
                         qty -= q
                         if qty <= 1e-15:
                             qty = 0.0
-                        fills.append((times[i], i, "sell", q, px, o[i], notional, fee, q * (o[i] - px), target))
+                        fills.append((times[i], i, "sell", q, px, mark, notional, fee, q * (mark - px), target))
                         filled = True
                         if qty == 0.0 and trip_entry is not None:
                             pnl = cash - trip_entry[2]

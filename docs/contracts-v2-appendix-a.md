@@ -1,6 +1,6 @@
 # Contracts v2, appendix A: statistics and admission rules for portfolio research
 
-Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12, amendments A13.1 to A13.7, and the phase 3 decisions in A14. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
+Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12, amendments A13.1 to A13.8 (A13.8 supersedes A13.5), and the phase 3 decisions in A14. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
 for portfolio research, as decided in `docs/superpowers/specs/2026-10-13-research-library-portfolio-design.md`
 (sections 4.4, 5.3, 5.4, 5.5, 5.6 and 6.5). Takes effect for a mandate only when the mandate version names it
 (`statistics: appendix-a-v1`); mandates already stored are immutable and keep their rules.
@@ -343,6 +343,9 @@ closed split refuses a holdout without loading holdout data.
 
 ### A13.5 Isolated bad prints in candle data (approved 2026-10-15)
 
+Superseded by A13.8 (2026-10-15). The text below stays as the record of how the current long-dev datasets were
+built.
+
 **Problem.** The E1 rehearsal on a copy of production data found three bars in Coinbase's pre-2021 hourly candles
 at prices no order of any size could have traded at:
 
@@ -436,6 +439,58 @@ built, how validation uses are counted for the reference, and what else gate 1 r
 
 **Caveat.** The human has seen the seed portfolios' validation results (the seed review), so on the current
 splits gate 2 is a harm check, not independent evidence; the next split's holdout is the independent test.
+
+### A13.8 Isolated prints stay in the data; isolated opens are corrected (approved 2026-10-15; supersedes A13.5)
+
+**Problem.** A13.5 drops the three bars it lists as prices no order could have traded at, and fills each with a
+flat bar at the previous close. The ETH-USD 2017-06-21 19:00 low of 0.10 did trade: the exchange's account
+(Adam White, then GDAX's head, "ETH-USD trading update 3") says stop orders and margin liquidations filled down to
+0.10 and were honoured. Dropping the bar also replaced its real close (298.00) and volume with a bar that never
+existed. The two 2017-04-15 23:00 opens follow an exchange outage and are not verified either way; the harm A13.5
+was written against is real for them (fills at a 0.06 open).
+
+The sensitivity comparison (`docs/reviews/2026-10-15-a13-8-sensitivity/`, dev only) found that guarding fills is
+not enough: the ETH isolated open is also that bar's high, so the channel members read 74.98 against a previous
+close of 48.53, and the ETH seed portfolio's dev run liquidated in 2017 (Sharpe 1.21 → 0.94). With the open
+corrected the run is close to the current one (1.18), and what remains comes from the real flash crash.
+
+**Amended rule (replaces A13.5's drop; the detectors and thresholds are A13.5's).**
+
+- `validate_bars` keeps every bar that passes the structural checks of contracts v2 and lists each isolated print
+  in the validation report with its recorded open, high, low and close and its kinds (`isolated_open`,
+  `isolated_wick`).
+- An isolated wick stays as recorded: strategies that read highs and lows see the real event.
+- An isolated open is corrected in the bar: the open becomes the previous close; a high or low that equalled the
+  recorded open becomes the larger or smaller of the previous close and the close; the other extreme is widened
+  to the previous close if needed. Close and volume are never changed. The previous close is that of the previous
+  valid bar, whatever the gap; the first bar of a request has no previous close and is not checked for an
+  isolated open.
+- **Execution guard.** At a bar whose open is still isolated (bars that did not go through this rule), the backtest
+  sizes the order at the previous close and fills a buy at the higher of the previous close and the open, a sell
+  at the lower. Screened datasets have no such bar. The guard is not a general adverse-fill setting.
+- The correction is part of the bars, so it enters the dataset's hash; the report in the manifest keeps the
+  recorded values.
+- Applies to every dataset frozen or extended after this release. Frozen datasets are immutable and unchanged; the
+  detectors flag no bar in any of them, so the guard changes no recorded result and the engine version stays.
+
+**Revalidated splits (adds to A13.4).** A split may also name as parent a split whose dataset it rebuilds under a
+later data rule: same product, granularity, validation and holdout windows, the same first and last bar, and the
+same base datasets (`zqr split-lineage`, kind `revalidates`; A13.4's kind is `extends`). Everything A13.4 says about
+inheritance applies: K, trials and holdout closures of the ancestors count on the child.
+
+**Family quotas (amends P1 of the phase 4 plan).** A family's trials on a split include its trials on the split's
+ancestors (A13.4 or revalidated), so a data revision or a backward extension does not reset a quota.
+
+**Applied:** pending; the migration (new datasets, splits and lineage, mandates, seeds and references,
+campaigns) is in the phase 4 plan, section "After 4d: reassessment fixes".
+
+**Implementation.** `data/validate.py` (`flag_prints`, `isolated_opens`, `print_flags`, `_correct_opens`);
+`backtest/engine.py` (the guard); `validation/splits.py` (`revalidates`, `link_split` returns the kind);
+`campaign/store.py` (`family_trials` over ancestors). Tests: prints kept and reported with their recorded values,
+both directions of isolated open corrected, close and volume unchanged, a genuine 25% fall kept, the correction
+changes the hash; a guarded buy at a 0.06 open fills at the previous close and a sell at a 150 open fills at the
+previous close, a genuine fall is not guarded; a revalidated split inherits trials and its ancestors; a family's
+quota counts the parent split.
 
 ## A14. Portfolio layer decisions (approved 2026-10-15)
 

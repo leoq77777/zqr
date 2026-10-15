@@ -98,7 +98,7 @@ def _validated(args, paths: Paths):
     end = parse_time(args.end) if args.end else int(time.time())
     raw = load_raw_candles(raw_dir)
     bars, rep = validate_bars(raw, VENUE, args.product, args.granularity, parse_time(args.start), end,
-                              fill_policy=args.fill_policy, drop_isolated_prints=True)
+                              fill_policy=args.fill_policy, flag_prints=True)
     return bars, rep, raw_dir
 
 
@@ -135,7 +135,7 @@ def cmd_extend_dataset(args) -> None:
         raw_dir = raw_dir_for(paths.raw, base["instrument"], base["granularity"])
         bars, rep = validate_bars(load_raw_candles(raw_dir), VENUE, base["instrument"], base["granularity"],
                                   parse_time(args.start), base["actual_first_open"], fill_policy=args.fill_policy,
-                                  drop_isolated_prints=True)
+                                  flag_prints=True)
         m = extend_dataset(paths, args.dataset, bars, rep, raw_dir)
     except SnapshotError as exc:
         raise SystemExit(str(exc)) from None
@@ -852,8 +852,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--like", help="take the validation and holdout windows of this split (A13.4)")
     p.set_defaults(fn=cmd_split)
     sub.add_parser("splits").set_defaults(fn=cmd_splits)
-    p = sub.add_parser("split-lineage", help="name a split's parent: K and trials are inherited, a closed "
-                                             "parent's holdout closes the child (A13.4; the human's decision)")
+    p = sub.add_parser("split-lineage", help="name a split's parent: K, trials and family quotas are inherited, a "
+                                             "closed parent's holdout closes the child (A13.4 extension, A13.8 "
+                                             "revalidation; the human's decision)")
     p.add_argument("--split", required=True)
     p.add_argument("--parent", required=True)
     p.add_argument("--note", required=True)

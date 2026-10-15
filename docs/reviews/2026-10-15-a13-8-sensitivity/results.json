@@ -1,0 +1,1615 @@
+{
+  "current_datasets": {
+    "coinbase-btc-usd-one_hour-0d7202d6b155": {
+      "isolated_opens": [],
+      "isolated_wicks": []
+    },
+    "coinbase-btc-usd-one_hour-bb860569c238": {
+      "isolated_opens": [],
+      "isolated_wicks": []
+    },
+    "coinbase-eth-usd-one_hour-74218a83af9a": {
+      "isolated_opens": [],
+      "isolated_wicks": []
+    },
+    "coinbase-eth-usd-one_hour-8e0c6c544c93": {
+      "isolated_opens": [],
+      "isolated_wicks": []
+    }
+  },
+  "BTC-USD": {
+    "window": [
+      1437436800,
+      1718906400
+    ],
+    "rebuild": {
+      "dataset_id": "coinbase-btc-usd-one_hour-f9799521097f",
+      "split_id": "split-73c3f6dcee5a",
+      "kind": "revalidates",
+      "rows": [
+        98454,
+        98454
+      ],
+      "filled_rows": [
+        56,
+        55
+      ],
+      "isolated_prints": [
+        {
+          "start": 1492297200,
+          "open": 0.06,
+          "high": 1186.6,
+          "low": 0.06,
+          "close": 1178.85,
+          "kinds": [
+            "isolated_open"
+          ]
+        }
+      ],
+      "ancestors": [
+        "split-f0d7a178e08b",
+        "split-1016c7c9873a"
+      ],
+      "trials": {
+        "own": 0,
+        "inherited": 960,
+        "total": 960
+      },
+      "K": [
+        241,
+        null
+      ],
+      "quotas_old": [
+        {
+          "family": "channel_breakout",
+          "split_id": "split-f0d7a178e08b",
+          "used": 0,
+          "quota": 100,
+          "room": 1.0
+        },
+        {
+          "family": "ewma_trend",
+          "split_id": "split-f0d7a178e08b",
+          "used": 27,
+          "quota": 100,
+          "room": 0.73
+        },
+        {
+          "family": "trend_filter",
+          "split_id": "split-f0d7a178e08b",
+          "used": 0,
+          "quota": 100,
+          "room": 1.0
+        },
+        {
+          "family": "tsmom",
+          "split_id": "split-f0d7a178e08b",
+          "used": 18,
+          "quota": 100,
+          "room": 0.82
+        },
+        {
+          "family": "exploration",
+          "split_id": "split-f0d7a178e08b",
+          "used": 28,
+          "quota": 100.0,
+          "room": 0.72
+        }
+      ],
+      "quotas_new": [
+        {
+          "family": "channel_breakout",
+          "split_id": "split-73c3f6dcee5a",
+          "used": 0,
+          "quota": 100,
+          "room": 1.0
+        },
+        {
+          "family": "ewma_trend",
+          "split_id": "split-73c3f6dcee5a",
+          "used": 27,
+          "quota": 100,
+          "room": 0.73
+        },
+        {
+          "family": "trend_filter",
+          "split_id": "split-73c3f6dcee5a",
+          "used": 0,
+          "quota": 100,
+          "room": 1.0
+        },
+        {
+          "family": "tsmom",
+          "split_id": "split-73c3f6dcee5a",
+          "used": 18,
+          "quota": 100,
+          "room": 0.82
+        },
+        {
+          "family": "exploration",
+          "split_id": "split-73c3f6dcee5a",
+          "used": 28,
+          "quota": 100.0,
+          "room": 0.72
+        }
+      ]
+    },
+    "rows_changed": [
+      {
+        "start": 1492297200,
+        "A": [
+          1182.99,
+          1182.99,
+          1182.99,
+          1182.99
+        ],
+        "B": [
+          1182.99,
+          1186.6,
+          1178.85,
+          1178.85
+        ],
+        "R": [
+          0.06,
+          1186.6,
+          0.06,
+          1178.85
+        ]
+      }
+    ],
+    "flags_B": {
+      "isolated_opens": [],
+      "isolated_wicks": []
+    },
+    "recorded_A": {
+      "total_return": 5.560951672789038,
+      "cagr": 0.2346202287620598,
+      "ann_volatility": 0.20213626951168018,
+      "sharpe": 1.1442252762039984,
+      "sortino": 1.5582007317246742,
+      "max_drawdown": -0.30109485470174224,
+      "calmar": 0.7792236403191588,
+      "n_fills": 88,
+      "n_round_trips": 3,
+      "win_rate": 0.6666666666666666,
+      "turnover": 6.8678283589884686,
+      "exposure": 0.14103364530628582,
+      "total_fees": 2171.34798419904,
+      "total_slippage": 180.96015580611927,
+      "final_equity": 65609.51672789038,
+      "liquidation_equity": 65609.51672789038,
+      "bars": 78186,
+      "periods_per_year": 8760.0,
+      "sharpe_daily": 1.200695,
+      "max_drawdown_no_ladder": -0.3892100768210598,
+      "sharpe_daily_no_ladder": 1.501476,
+      "total_return_no_ladder": 27.322589219309737,
+      "ladder_time": {
+        "full": 0.322082,
+        "halved": 0.198823,
+        "liquidated": 0.479094
+      },
+      "yellow_time": 0.683123,
+      "mean_target": 0.334589,
+      "family_contribution": {
+        "channel_breakout": 1.905527,
+        "ewma_trend": 0.606609,
+        "none": -0.002483,
+        "trend_filter": 1.56091,
+        "tsmom": 1.490388
+      }
+    },
+    "portfolio": {
+      "A": {
+        "sharpe_daily": 1.200695,
+        "total_return": 5.5609516727890425,
+        "max_drawdown": -0.301094854701742,
+        "sharpe_daily_no_ladder": 1.501476,
+        "total_return_no_ladder": 27.32258921930975,
+        "max_drawdown_no_ladder": -0.38921007682106,
+        "n_fills": 88,
+        "turnover": 6.867828358988473,
+        "total_fees": 2171.347984199043,
+        "ladder_time": {
+          "full": 0.322082,
+          "halved": 0.198823,
+          "liquidated": 0.479094
+        },
+        "final_equity": 65609.52,
+        "ladder_events": [
+          {
+            "at": 1516136400,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2533
+          },
+          {
+            "at": 1557554400,
+            "from": "halved",
+            "to": "full",
+            "drawdown": -0.1458
+          },
+          {
+            "at": 1569510000,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2562
+          },
+          {
+            "at": 1584054000,
+            "from": "halved",
+            "to": "liquidated",
+            "drawdown": -0.3009
+          }
+        ],
+        "buy_and_hold": {
+          "sharpe_daily": 1.216162,
+          "total_return": 228.64655646566135,
+          "max_drawdown": -0.8417991334758562
+        }
+      },
+      "B": {
+        "sharpe_daily": 1.200883,
+        "total_return": 5.56357534288005,
+        "max_drawdown": -0.3010948551325783,
+        "sharpe_daily_no_ladder": 1.501612,
+        "total_return_no_ladder": 27.333904116310894,
+        "max_drawdown_no_ladder": -0.38921272903084647,
+        "n_fills": 88,
+        "turnover": 6.867336055104298,
+        "total_fees": 2172.010924235534,
+        "ladder_time": {
+          "full": 0.322082,
+          "halved": 0.198823,
+          "liquidated": 0.479094
+        },
+        "final_equity": 65635.75,
+        "ladder_events": [
+          {
+            "at": 1516136400,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2533
+          },
+          {
+            "at": 1557554400,
+            "from": "halved",
+            "to": "full",
+            "drawdown": -0.1458
+          },
+          {
+            "at": 1569510000,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2562
+          },
+          {
+            "at": 1584054000,
+            "from": "halved",
+            "to": "liquidated",
+            "drawdown": -0.3009
+          }
+        ],
+        "buy_and_hold": {
+          "sharpe_daily": 1.216165,
+          "total_return": 228.64655646566135,
+          "max_drawdown": -0.8417991334758562
+        }
+      },
+      "R": {
+        "sharpe_daily": 1.200883,
+        "total_return": 5.56357534288005,
+        "max_drawdown": -0.3010948551325783,
+        "sharpe_daily_no_ladder": 1.501612,
+        "total_return_no_ladder": 27.333904116310894,
+        "max_drawdown_no_ladder": -0.38921272903084647,
+        "n_fills": 88,
+        "turnover": 6.867336055104298,
+        "total_fees": 2172.010924235534,
+        "ladder_time": {
+          "full": 0.322082,
+          "halved": 0.198823,
+          "liquidated": 0.479094
+        },
+        "final_equity": 65635.75,
+        "ladder_events": [
+          {
+            "at": 1516136400,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2533
+          },
+          {
+            "at": 1557554400,
+            "from": "halved",
+            "to": "full",
+            "drawdown": -0.1458
+          },
+          {
+            "at": 1569510000,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2562
+          },
+          {
+            "at": 1584054000,
+            "from": "halved",
+            "to": "liquidated",
+            "drawdown": -0.3009
+          }
+        ],
+        "buy_and_hold": {
+          "sharpe_daily": 1.216165,
+          "total_return": 228.64655646566135,
+          "max_drawdown": -0.8417991334758562
+        }
+      },
+      "C": {
+        "sharpe_daily": 1.200883,
+        "total_return": 5.56357534288005,
+        "max_drawdown": -0.3010948551325783,
+        "sharpe_daily_no_ladder": 1.501612,
+        "total_return_no_ladder": 27.333904116310894,
+        "max_drawdown_no_ladder": -0.38921272903084647,
+        "n_fills": 88,
+        "turnover": 6.867336055104298,
+        "total_fees": 2172.010924235534,
+        "ladder_time": {
+          "full": 0.322082,
+          "halved": 0.198823,
+          "liquidated": 0.479094
+        },
+        "final_equity": 65635.75,
+        "ladder_events": [
+          {
+            "at": 1516136400,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2533
+          },
+          {
+            "at": 1557554400,
+            "from": "halved",
+            "to": "full",
+            "drawdown": -0.1458
+          },
+          {
+            "at": 1569510000,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2562
+          },
+          {
+            "at": 1584054000,
+            "from": "halved",
+            "to": "liquidated",
+            "drawdown": -0.3009
+          }
+        ],
+        "buy_and_hold": {
+          "sharpe_daily": 1.216165,
+          "total_return": 228.64655646566135,
+          "max_drawdown": -0.8417991334758562
+        }
+      },
+      "only 1492297200": {
+        "sharpe_daily": 1.200883,
+        "total_return": 5.56357534288005,
+        "max_drawdown": -0.3010948551325783,
+        "sharpe_daily_no_ladder": 1.501612,
+        "total_return_no_ladder": 27.333904116310894,
+        "max_drawdown_no_ladder": -0.38921272903084647,
+        "n_fills": 88,
+        "turnover": 6.867336055104298,
+        "total_fees": 2172.010924235534,
+        "ladder_time": {
+          "full": 0.322082,
+          "halved": 0.198823,
+          "liquidated": 0.479094
+        },
+        "final_equity": 65635.75,
+        "ladder_events": [
+          {
+            "at": 1516136400,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2533
+          },
+          {
+            "at": 1557554400,
+            "from": "halved",
+            "to": "full",
+            "drawdown": -0.1458
+          },
+          {
+            "at": 1569510000,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2562
+          },
+          {
+            "at": 1584054000,
+            "from": "halved",
+            "to": "liquidated",
+            "drawdown": -0.3009
+          }
+        ],
+        "buy_and_hold": {
+          "sharpe_daily": 1.216165,
+          "total_return": 228.64655646566135,
+          "max_drawdown": -0.8417991334758562
+        }
+      }
+    },
+    "members": {
+      "btc-turtle-s1": {
+        "A": {
+          "sharpe_daily": 1.096034,
+          "total_return": 38.65600554162878,
+          "max_drawdown": -0.6660189821165019,
+          "n_fills": 102
+        },
+        "B": {
+          "sharpe_daily": 1.096043,
+          "total_return": 38.65600554162878,
+          "max_drawdown": -0.6660189821165019,
+          "n_fills": 102
+        },
+        "R": {
+          "sharpe_daily": 1.096043,
+          "total_return": 38.65600554162878,
+          "max_drawdown": -0.6660189821165019,
+          "n_fills": 102
+        },
+        "C": {
+          "sharpe_daily": 1.096043,
+          "total_return": 38.65600554162878,
+          "max_drawdown": -0.6660189821165019,
+          "n_fills": 102
+        }
+      },
+      "btc-turtle-s2": {
+        "A": {
+          "sharpe_daily": 1.311802,
+          "total_return": 98.33286286990722,
+          "max_drawdown": -0.5991157679179455,
+          "n_fills": 46
+        },
+        "B": {
+          "sharpe_daily": 1.311802,
+          "total_return": 98.33286286990722,
+          "max_drawdown": -0.5991157679179455,
+          "n_fills": 46
+        },
+        "R": {
+          "sharpe_daily": 1.311802,
+          "total_return": 98.33286286990722,
+          "max_drawdown": -0.5991157679179455,
+          "n_fills": 46
+        },
+        "C": {
+          "sharpe_daily": 1.311802,
+          "total_return": 98.33286286990722,
+          "max_drawdown": -0.5991157679179455,
+          "n_fills": 46
+        }
+      },
+      "btc-ewma-16-48": {
+        "A": {
+          "sharpe_daily": 1.037757,
+          "total_return": 15.00250461074182,
+          "max_drawdown": -0.5054902234285766,
+          "n_fills": 37363
+        },
+        "B": {
+          "sharpe_daily": 1.037813,
+          "total_return": 15.004874922836606,
+          "max_drawdown": -0.5054902234435661,
+          "n_fills": 37365
+        },
+        "R": {
+          "sharpe_daily": 1.037813,
+          "total_return": 15.004874922836606,
+          "max_drawdown": -0.5054902234435661,
+          "n_fills": 37365
+        },
+        "C": {
+          "sharpe_daily": 0.335087,
+          "total_return": 47527.93932731794,
+          "max_drawdown": -0.5054969596843477,
+          "n_fills": 39566
+        }
+      },
+      "btc-ewma-32-96": {
+        "A": {
+          "sharpe_daily": 0.544251,
+          "total_return": 1.7767514547738212,
+          "max_drawdown": -0.48630309499035895,
+          "n_fills": 29663
+        },
+        "B": {
+          "sharpe_daily": 0.544249,
+          "total_return": 1.776738709128101,
+          "max_drawdown": -0.4863032701989972,
+          "n_fills": 29663
+        },
+        "R": {
+          "sharpe_daily": 0.544249,
+          "total_return": 1.776738709128101,
+          "max_drawdown": -0.4863032701989972,
+          "n_fills": 29663
+        },
+        "C": {
+          "sharpe_daily": 0.340107,
+          "total_return": 236.15224154008152,
+          "max_drawdown": -0.48656058046384554,
+          "n_fills": 37224
+        }
+      },
+      "btc-ewma-8-24": {
+        "A": {
+          "sharpe_daily": 1.22353,
+          "total_return": 32.133927727017124,
+          "max_drawdown": -0.4621685091465504,
+          "n_fills": 37012
+        },
+        "B": {
+          "sharpe_daily": 1.223511,
+          "total_return": 32.13130769603942,
+          "max_drawdown": -0.4621870370466018,
+          "n_fills": 37012
+        },
+        "R": {
+          "sharpe_daily": 1.223511,
+          "total_return": 32.13130769603942,
+          "max_drawdown": -0.4621870370466018,
+          "n_fills": 37012
+        },
+        "C": {
+          "sharpe_daily": 0.335179,
+          "total_return": 97788.51968774316,
+          "max_drawdown": -0.46218894399616806,
+          "n_fills": 37993
+        }
+      },
+      "btc-brock-1-200": {
+        "A": {
+          "sharpe_daily": 1.271872,
+          "total_return": 135.48940386523944,
+          "max_drawdown": -0.6963688019426766,
+          "n_fills": 39
+        },
+        "B": {
+          "sharpe_daily": 1.27188,
+          "total_return": 135.48940386523944,
+          "max_drawdown": -0.6963688019426766,
+          "n_fills": 39
+        },
+        "R": {
+          "sharpe_daily": 1.27188,
+          "total_return": 135.48940386523944,
+          "max_drawdown": -0.6963688019426766,
+          "n_fills": 39
+        },
+        "C": {
+          "sharpe_daily": 1.27188,
+          "total_return": 135.48940386523944,
+          "max_drawdown": -0.6963688019426766,
+          "n_fills": 39
+        }
+      },
+      "btc-faber-10m": {
+        "A": {
+          "sharpe_daily": 1.249845,
+          "total_return": 143.24617653959262,
+          "max_drawdown": -0.7354581229667203,
+          "n_fills": 13
+        },
+        "B": {
+          "sharpe_daily": 1.249852,
+          "total_return": 143.24617653959262,
+          "max_drawdown": -0.7354581229667203,
+          "n_fills": 13
+        },
+        "R": {
+          "sharpe_daily": 1.249852,
+          "total_return": 143.24617653959262,
+          "max_drawdown": -0.7354581229667203,
+          "n_fills": 13
+        },
+        "C": {
+          "sharpe_daily": 1.249852,
+          "total_return": 143.24617653959262,
+          "max_drawdown": -0.7354581229667203,
+          "n_fills": 13
+        }
+      },
+      "btc-tsmom-12m": {
+        "A": {
+          "sharpe_daily": 1.117115,
+          "total_return": 82.19857433281608,
+          "max_drawdown": -0.8457075445132118,
+          "n_fills": 7
+        },
+        "B": {
+          "sharpe_daily": 1.11712,
+          "total_return": 82.19857433281608,
+          "max_drawdown": -0.8457075445132118,
+          "n_fills": 7
+        },
+        "R": {
+          "sharpe_daily": 1.11712,
+          "total_return": 82.19857433281608,
+          "max_drawdown": -0.8457075445132118,
+          "n_fills": 7
+        },
+        "C": {
+          "sharpe_daily": 1.11712,
+          "total_return": 82.19857433281608,
+          "max_drawdown": -0.8457075445132118,
+          "n_fills": 7
+        }
+      },
+      "btc-tsmom-1m": {
+        "A": {
+          "sharpe_daily": 1.123696,
+          "total_return": 58.6756054672556,
+          "max_drawdown": -0.6905402609937383,
+          "n_fills": 51
+        },
+        "B": {
+          "sharpe_daily": 1.123696,
+          "total_return": 58.6756054672556,
+          "max_drawdown": -0.6905402609937383,
+          "n_fills": 51
+        },
+        "R": {
+          "sharpe_daily": 1.123696,
+          "total_return": 58.6756054672556,
+          "max_drawdown": -0.6905402609937383,
+          "n_fills": 51
+        },
+        "C": {
+          "sharpe_daily": 1.123696,
+          "total_return": 58.6756054672556,
+          "max_drawdown": -0.6905402609937383,
+          "n_fills": 51
+        }
+      },
+      "btc-tsmom-1w": {
+        "A": {
+          "sharpe_daily": 0.72288,
+          "total_return": 7.485389808115611,
+          "max_drawdown": -0.8529274069259211,
+          "n_fills": 240
+        },
+        "B": {
+          "sharpe_daily": 0.722883,
+          "total_return": 7.485389808115611,
+          "max_drawdown": -0.8529274069259211,
+          "n_fills": 240
+        },
+        "R": {
+          "sharpe_daily": 0.722883,
+          "total_return": 7.485389808115611,
+          "max_drawdown": -0.8529274069259211,
+          "n_fills": 240
+        },
+        "C": {
+          "sharpe_daily": 0.722883,
+          "total_return": 7.485389808115611,
+          "max_drawdown": -0.8529274069259211,
+          "n_fills": 240
+        }
+      },
+      "btc-tsmom-3m": {
+        "A": {
+          "sharpe_daily": 1.279294,
+          "total_return": 185.39821492527014,
+          "max_drawdown": -0.7330896163764608,
+          "n_fills": 19
+        },
+        "B": {
+          "sharpe_daily": 1.2793,
+          "total_return": 185.39821492527014,
+          "max_drawdown": -0.7330896163764608,
+          "n_fills": 19
+        },
+        "R": {
+          "sharpe_daily": 1.2793,
+          "total_return": 185.39821492527014,
+          "max_drawdown": -0.7330896163764608,
+          "n_fills": 19
+        },
+        "C": {
+          "sharpe_daily": 1.2793,
+          "total_return": 185.39821492527014,
+          "max_drawdown": -0.7330896163764608,
+          "n_fills": 19
+        }
+      }
+    },
+    "after_flagged": {
+      "B": {
+        "1492297200": {
+          "member_bars_differing": {
+            "btc-ewma-16-48": 720,
+            "btc-ewma-32-96": 720,
+            "btc-ewma-8-24": 720
+          },
+          "blend_bars_differing": 720
+        }
+      },
+      "R": {
+        "1492297200": {
+          "member_bars_differing": {
+            "btc-ewma-16-48": 720,
+            "btc-ewma-32-96": 720,
+            "btc-ewma-8-24": 720
+          },
+          "blend_bars_differing": 720
+        }
+      }
+    }
+  },
+  "ETH-USD": {
+    "window": [
+      1464739200,
+      1718906400
+    ],
+    "rebuild": {
+      "dataset_id": "coinbase-eth-usd-one_hour-d46750883306",
+      "split_id": "split-aac34333945d",
+      "kind": "revalidates",
+      "rows": [
+        90870,
+        90870
+      ],
+      "filled_rows": [
+        75,
+        73
+      ],
+      "isolated_prints": [
+        {
+          "start": 1492297200,
+          "open": 74.98,
+          "high": 74.98,
+          "low": 47.2,
+          "close": 48.94,
+          "kinds": [
+            "isolated_open"
+          ]
+        },
+        {
+          "start": 1498071600,
+          "open": 315.97,
+          "high": 318.95,
+          "low": 0.1,
+          "close": 298.0,
+          "kinds": [
+            "isolated_wick"
+          ]
+        }
+      ],
+      "ancestors": [
+        "split-d6a76022a19d",
+        "split-c47a0be57a24"
+      ],
+      "trials": {
+        "own": 0,
+        "inherited": 978,
+        "total": 978
+      },
+      "K": [
+        250,
+        null
+      ],
+      "quotas_old": [
+        {
+          "family": "channel_breakout",
+          "split_id": "split-d6a76022a19d",
+          "used": 0,
+          "quota": 100,
+          "room": 1.0
+        },
+        {
+          "family": "ewma_trend",
+          "split_id": "split-d6a76022a19d",
+          "used": 25,
+          "quota": 100,
+          "room": 0.75
+        },
+        {
+          "family": "trend_filter",
+          "split_id": "split-d6a76022a19d",
+          "used": 0,
+          "quota": 100,
+          "room": 1.0
+        },
+        {
+          "family": "tsmom",
+          "split_id": "split-d6a76022a19d",
+          "used": 24,
+          "quota": 100,
+          "room": 0.76
+        },
+        {
+          "family": "exploration",
+          "split_id": "split-d6a76022a19d",
+          "used": 25,
+          "quota": 100.0,
+          "room": 0.75
+        }
+      ],
+      "quotas_new": [
+        {
+          "family": "channel_breakout",
+          "split_id": "split-aac34333945d",
+          "used": 0,
+          "quota": 100,
+          "room": 1.0
+        },
+        {
+          "family": "ewma_trend",
+          "split_id": "split-aac34333945d",
+          "used": 25,
+          "quota": 100,
+          "room": 0.75
+        },
+        {
+          "family": "trend_filter",
+          "split_id": "split-aac34333945d",
+          "used": 0,
+          "quota": 100,
+          "room": 1.0
+        },
+        {
+          "family": "tsmom",
+          "split_id": "split-aac34333945d",
+          "used": 24,
+          "quota": 100,
+          "room": 0.76
+        },
+        {
+          "family": "exploration",
+          "split_id": "split-aac34333945d",
+          "used": 25,
+          "quota": 100.0,
+          "room": 0.75
+        }
+      ]
+    },
+    "rows_changed": [
+      {
+        "start": 1492297200,
+        "A": [
+          48.53,
+          48.53,
+          48.53,
+          48.53
+        ],
+        "B": [
+          48.53,
+          48.94,
+          47.2,
+          48.94
+        ],
+        "R": [
+          74.98,
+          74.98,
+          47.2,
+          48.94
+        ]
+      },
+      {
+        "start": 1498071600,
+        "A": [
+          316.0,
+          316.0,
+          316.0,
+          316.0
+        ],
+        "B": [
+          315.97,
+          318.95,
+          0.1,
+          298.0
+        ],
+        "R": [
+          315.97,
+          318.95,
+          0.1,
+          298.0
+        ]
+      }
+    ],
+    "flags_B": {
+      "isolated_opens": [],
+      "isolated_wicks": [
+        1498071600
+      ]
+    },
+    "recorded_A": {
+      "total_return": 7.470431613362958,
+      "cagr": 0.3035588039378381,
+      "ann_volatility": 0.24790013257694463,
+      "sharpe": 1.1934508295096917,
+      "sortino": 1.6868646215222296,
+      "max_drawdown": -0.3012925593228757,
+      "calmar": 1.0075217410614306,
+      "n_fills": 99,
+      "n_round_trips": 8,
+      "win_rate": 0.375,
+      "turnover": 11.8478077960118,
+      "exposure": 0.16589362988306897,
+      "total_fees": 3984.6804663344624,
+      "total_slippage": 332.0764607961024,
+      "final_equity": 84704.31613362957,
+      "liquidation_equity": 84704.31613362957,
+      "bars": 70602,
+      "periods_per_year": 8760.0,
+      "sharpe_daily": 1.207018,
+      "max_drawdown_no_ladder": -0.3252714414970893,
+      "sharpe_daily_no_ladder": 1.413831,
+      "total_return_no_ladder": 18.902979528332107,
+      "ladder_time": {
+        "full": 0.474852,
+        "halved": 0.428974,
+        "liquidated": 0.096174
+      },
+      "yellow_time": 0.593589,
+      "mean_target": 0.24672,
+      "family_contribution": {
+        "channel_breakout": 2.239141,
+        "ewma_trend": 1.171829,
+        "none": -0.011171,
+        "trend_filter": 2.224203,
+        "tsmom": 1.846429
+      }
+    },
+    "portfolio": {
+      "A": {
+        "sharpe_daily": 1.207018,
+        "total_return": 7.470431613362962,
+        "max_drawdown": -0.30129255932287713,
+        "sharpe_daily_no_ladder": 1.413831,
+        "total_return_no_ladder": 18.90297952833217,
+        "max_drawdown_no_ladder": -0.3252714414970893,
+        "n_fills": 99,
+        "turnover": 11.847807796011818,
+        "total_fees": 3984.680466334471,
+        "ladder_time": {
+          "full": 0.474852,
+          "halved": 0.428974,
+          "liquidated": 0.096174
+        },
+        "final_equity": 84704.32,
+        "ladder_events": [
+          {
+            "at": 1499752800,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2528
+          },
+          {
+            "at": 1511564400,
+            "from": "halved",
+            "to": "full",
+            "drawdown": -0.1491
+          },
+          {
+            "at": 1522306800,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2502
+          },
+          {
+            "at": 1559188800,
+            "from": "halved",
+            "to": "full",
+            "drawdown": -0.1483
+          },
+          {
+            "at": 1569348000,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2563
+          },
+          {
+            "at": 1596250800,
+            "from": "halved",
+            "to": "full",
+            "drawdown": -0.1494
+          },
+          {
+            "at": 1661025600,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2524
+          },
+          {
+            "at": 1694458800,
+            "from": "halved",
+            "to": "liquidated",
+            "drawdown": -0.3008
+          }
+        ],
+        "buy_and_hold": {
+          "sharpe_daily": 1.18823,
+          "total_return": 248.9755526551366,
+          "max_drawdown": -0.9426974291736276
+        }
+      },
+      "B": {
+        "sharpe_daily": 1.178171,
+        "total_return": 7.0261091577707955,
+        "max_drawdown": -0.30129255932241106,
+        "sharpe_daily_no_ladder": 1.383167,
+        "total_return_no_ladder": 18.21883789442684,
+        "max_drawdown_no_ladder": -0.35344923783327753,
+        "n_fills": 98,
+        "turnover": 11.816369152196707,
+        "total_fees": 3772.7592126682935,
+        "ladder_time": {
+          "full": 0.473973,
+          "halved": 0.429852,
+          "liquidated": 0.096174
+        },
+        "final_equity": 80261.09,
+        "ladder_events": [
+          {
+            "at": 1499720400,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2519
+          },
+          {
+            "at": 1511755200,
+            "from": "halved",
+            "to": "full",
+            "drawdown": -0.1495
+          },
+          {
+            "at": 1522306800,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2502
+          },
+          {
+            "at": 1559188800,
+            "from": "halved",
+            "to": "full",
+            "drawdown": -0.1483
+          },
+          {
+            "at": 1569348000,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2563
+          },
+          {
+            "at": 1596250800,
+            "from": "halved",
+            "to": "full",
+            "drawdown": -0.1494
+          },
+          {
+            "at": 1661025600,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2524
+          },
+          {
+            "at": 1694458800,
+            "from": "halved",
+            "to": "liquidated",
+            "drawdown": -0.3008
+          }
+        ],
+        "buy_and_hold": {
+          "sharpe_daily": 1.18822,
+          "total_return": 248.9755526551366,
+          "max_drawdown": -0.9426974291736276
+        }
+      },
+      "R": {
+        "sharpe_daily": 0.936443,
+        "total_return": 1.5082960228752809,
+        "max_drawdown": -0.3010487495239089,
+        "sharpe_daily_no_ladder": 1.358945,
+        "total_return_no_ladder": 17.562124327737067,
+        "max_drawdown_no_ladder": -0.39379994985989053,
+        "n_fills": 14,
+        "turnover": 1.4637127205661005,
+        "total_fees": 206.60420887547807,
+        "ladder_time": {
+          "full": 0.132831,
+          "halved": 0.027436,
+          "liquidated": 0.839733
+        },
+        "final_equity": 25082.96,
+        "ladder_events": [
+          {
+            "at": 1498500000,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2678
+          },
+          {
+            "at": 1505473200,
+            "from": "halved",
+            "to": "liquidated",
+            "drawdown": -0.3004
+          }
+        ],
+        "buy_and_hold": {
+          "sharpe_daily": 1.18822,
+          "total_return": 248.9755526551366,
+          "max_drawdown": -0.9426974291736276
+        }
+      },
+      "C": {
+        "sharpe_daily": 0.936443,
+        "total_return": 1.5082960228752809,
+        "max_drawdown": -0.3010487495239089,
+        "sharpe_daily_no_ladder": 1.358945,
+        "total_return_no_ladder": 17.562124327737067,
+        "max_drawdown_no_ladder": -0.39379994985989053,
+        "n_fills": 14,
+        "turnover": 1.4637127205661005,
+        "total_fees": 206.60420887547807,
+        "ladder_time": {
+          "full": 0.132831,
+          "halved": 0.027436,
+          "liquidated": 0.839733
+        },
+        "final_equity": 25082.96,
+        "ladder_events": [
+          {
+            "at": 1498500000,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2678
+          },
+          {
+            "at": 1505473200,
+            "from": "halved",
+            "to": "liquidated",
+            "drawdown": -0.3004
+          }
+        ],
+        "buy_and_hold": {
+          "sharpe_daily": 1.18822,
+          "total_return": 248.9755526551366,
+          "max_drawdown": -0.9426974291736276
+        }
+      },
+      "only 1492297200": {
+        "sharpe_daily": 0.946849,
+        "total_return": 1.4995125837010086,
+        "max_drawdown": -0.303496305848342,
+        "sharpe_daily_no_ladder": 1.409684,
+        "total_return_no_ladder": 18.702314342540138,
+        "max_drawdown_no_ladder": -0.33629735893037793,
+        "n_fills": 17,
+        "turnover": 1.6664386049410922,
+        "total_fees": 234.5696297114374,
+        "ladder_time": {
+          "full": 0.132831,
+          "halved": 0.027408,
+          "liquidated": 0.839761
+        },
+        "final_equity": 24995.13,
+        "ladder_events": [
+          {
+            "at": 1498500000,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2523
+          },
+          {
+            "at": 1505466000,
+            "from": "halved",
+            "to": "liquidated",
+            "drawdown": -0.3029
+          }
+        ],
+        "buy_and_hold": {
+          "sharpe_daily": 1.18822,
+          "total_return": 248.9755526551366,
+          "max_drawdown": -0.9426974291736276
+        }
+      },
+      "only 1498071600": {
+        "sharpe_daily": 1.193462,
+        "total_return": 7.2885917137643546,
+        "max_drawdown": -0.30129255932287646,
+        "sharpe_daily_no_ladder": 1.368878,
+        "total_return_no_ladder": 17.86708762002156,
+        "max_drawdown_no_ladder": -0.3739443697995851,
+        "n_fills": 98,
+        "turnover": 11.816874190839123,
+        "total_fees": 3892.2477617686345,
+        "ladder_time": {
+          "full": 0.469143,
+          "halved": 0.434682,
+          "liquidated": 0.096174
+        },
+        "final_equity": 82885.92,
+        "ladder_events": [
+          {
+            "at": 1498500000,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2543
+          },
+          {
+            "at": 1511762400,
+            "from": "halved",
+            "to": "full",
+            "drawdown": -0.1492
+          },
+          {
+            "at": 1522306800,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2502
+          },
+          {
+            "at": 1559188800,
+            "from": "halved",
+            "to": "full",
+            "drawdown": -0.1483
+          },
+          {
+            "at": 1569348000,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2563
+          },
+          {
+            "at": 1596250800,
+            "from": "halved",
+            "to": "full",
+            "drawdown": -0.1494
+          },
+          {
+            "at": 1661025600,
+            "from": "full",
+            "to": "halved",
+            "drawdown": -0.2524
+          },
+          {
+            "at": 1694458800,
+            "from": "halved",
+            "to": "liquidated",
+            "drawdown": -0.3008
+          }
+        ],
+        "buy_and_hold": {
+          "sharpe_daily": 1.18823,
+          "total_return": 248.9755526551366,
+          "max_drawdown": -0.9426974291736276
+        }
+      }
+    },
+    "members": {
+      "eth-turtle-s1": {
+        "A": {
+          "sharpe_daily": 1.671315,
+          "total_return": 1531.2337646643025,
+          "max_drawdown": -0.45740288396675977,
+          "n_fills": 82
+        },
+        "B": {
+          "sharpe_daily": 1.629772,
+          "total_return": 1281.8936025361165,
+          "max_drawdown": -0.4574028839667593,
+          "n_fills": 82
+        },
+        "R": {
+          "sharpe_daily": 1.564489,
+          "total_return": 846.0005933281982,
+          "max_drawdown": -0.45740288396675965,
+          "n_fills": 82
+        },
+        "C": {
+          "sharpe_daily": 1.564489,
+          "total_return": 846.0005933281982,
+          "max_drawdown": -0.45740288396675965,
+          "n_fills": 82
+        }
+      },
+      "eth-turtle-s2": {
+        "A": {
+          "sharpe_daily": 1.324218,
+          "total_return": 184.81644928502718,
+          "max_drawdown": -0.6833864010125767,
+          "n_fills": 44
+        },
+        "B": {
+          "sharpe_daily": 1.256532,
+          "total_return": 137.78311849021304,
+          "max_drawdown": -0.6833864010125767,
+          "n_fills": 44
+        },
+        "R": {
+          "sharpe_daily": 1.256532,
+          "total_return": 137.78311849021304,
+          "max_drawdown": -0.6833864010125767,
+          "n_fills": 44
+        },
+        "C": {
+          "sharpe_daily": 1.256532,
+          "total_return": 137.78311849021304,
+          "max_drawdown": -0.6833864010125767,
+          "n_fills": 44
+        }
+      },
+      "eth-ewma-16-48": {
+        "A": {
+          "sharpe_daily": 0.875814,
+          "total_return": 10.51773546967528,
+          "max_drawdown": -0.6076238882290552,
+          "n_fills": 32177
+        },
+        "B": {
+          "sharpe_daily": 0.875814,
+          "total_return": 10.517786802606075,
+          "max_drawdown": -0.607623888181339,
+          "n_fills": 32177
+        },
+        "R": {
+          "sharpe_daily": 0.875814,
+          "total_return": 10.517786802606075,
+          "max_drawdown": -0.607623888181339,
+          "n_fills": 32177
+        },
+        "C": {
+          "sharpe_daily": 0.875814,
+          "total_return": 10.517786802606075,
+          "max_drawdown": -0.607623888181339,
+          "n_fills": 32177
+        }
+      },
+      "eth-ewma-32-96": {
+        "A": {
+          "sharpe_daily": 0.788203,
+          "total_return": 7.290574423002292,
+          "max_drawdown": -0.7845808019028113,
+          "n_fills": 32208
+        },
+        "B": {
+          "sharpe_daily": 0.788209,
+          "total_return": 7.290768358293397,
+          "max_drawdown": -0.7845758387969192,
+          "n_fills": 32208
+        },
+        "R": {
+          "sharpe_daily": 0.788209,
+          "total_return": 7.290768358293397,
+          "max_drawdown": -0.7845758387969192,
+          "n_fills": 32208
+        },
+        "C": {
+          "sharpe_daily": 0.788209,
+          "total_return": 7.290768358293397,
+          "max_drawdown": -0.7845758387969192,
+          "n_fills": 32208
+        }
+      },
+      "eth-ewma-8-24": {
+        "A": {
+          "sharpe_daily": 0.828738,
+          "total_return": 8.292242859181835,
+          "max_drawdown": -0.5513024530749285,
+          "n_fills": 31403
+        },
+        "B": {
+          "sharpe_daily": 0.828736,
+          "total_return": 8.292133477842558,
+          "max_drawdown": -0.551299580019789,
+          "n_fills": 31403
+        },
+        "R": {
+          "sharpe_daily": 0.828736,
+          "total_return": 8.292133477842558,
+          "max_drawdown": -0.551299580019789,
+          "n_fills": 31403
+        },
+        "C": {
+          "sharpe_daily": 0.828736,
+          "total_return": 8.292133477842558,
+          "max_drawdown": -0.551299580019789,
+          "n_fills": 31403
+        }
+      },
+      "eth-brock-1-200": {
+        "A": {
+          "sharpe_daily": 1.397615,
+          "total_return": 565.6576166888601,
+          "max_drawdown": -0.8402269097914846,
+          "n_fills": 41
+        },
+        "B": {
+          "sharpe_daily": 1.397566,
+          "total_return": 565.6576166888601,
+          "max_drawdown": -0.8402269097914846,
+          "n_fills": 41
+        },
+        "R": {
+          "sharpe_daily": 1.397566,
+          "total_return": 565.6576166888601,
+          "max_drawdown": -0.8402269097914846,
+          "n_fills": 41
+        },
+        "C": {
+          "sharpe_daily": 1.397566,
+          "total_return": 565.6576166888601,
+          "max_drawdown": -0.8402269097914846,
+          "n_fills": 41
+        }
+      },
+      "eth-faber-10m": {
+        "A": {
+          "sharpe_daily": 0.988952,
+          "total_return": 39.611474955575666,
+          "max_drawdown": -0.9474447909323148,
+          "n_fills": 17
+        },
+        "B": {
+          "sharpe_daily": 0.98893,
+          "total_return": 39.611474955575666,
+          "max_drawdown": -0.9474447909323148,
+          "n_fills": 17
+        },
+        "R": {
+          "sharpe_daily": 0.98893,
+          "total_return": 39.611474955575666,
+          "max_drawdown": -0.9474447909323148,
+          "n_fills": 17
+        },
+        "C": {
+          "sharpe_daily": 0.98893,
+          "total_return": 39.611474955575666,
+          "max_drawdown": -0.9474447909323148,
+          "n_fills": 17
+        }
+      },
+      "eth-tsmom-12m": {
+        "A": {
+          "sharpe_daily": 0.752017,
+          "total_return": 8.449536704136548,
+          "max_drawdown": -0.9096683806114656,
+          "n_fills": 11
+        },
+        "B": {
+          "sharpe_daily": 0.752017,
+          "total_return": 8.449536704136548,
+          "max_drawdown": -0.9096683806114656,
+          "n_fills": 11
+        },
+        "R": {
+          "sharpe_daily": 0.752017,
+          "total_return": 8.449536704136548,
+          "max_drawdown": -0.9096683806114656,
+          "n_fills": 11
+        },
+        "C": {
+          "sharpe_daily": 0.752017,
+          "total_return": 8.449536704136548,
+          "max_drawdown": -0.9096683806114656,
+          "n_fills": 11
+        }
+      },
+      "eth-tsmom-1m": {
+        "A": {
+          "sharpe_daily": 1.169593,
+          "total_return": 137.76734016175308,
+          "max_drawdown": -0.7396953293651936,
+          "n_fills": 43
+        },
+        "B": {
+          "sharpe_daily": 1.169562,
+          "total_return": 137.76734016175308,
+          "max_drawdown": -0.7396953293651936,
+          "n_fills": 43
+        },
+        "R": {
+          "sharpe_daily": 1.169562,
+          "total_return": 137.76734016175308,
+          "max_drawdown": -0.7396953293651936,
+          "n_fills": 43
+        },
+        "C": {
+          "sharpe_daily": 1.169562,
+          "total_return": 137.76734016175308,
+          "max_drawdown": -0.7396953293651936,
+          "n_fills": 43
+        }
+      },
+      "eth-tsmom-1w": {
+        "A": {
+          "sharpe_daily": 1.070669,
+          "total_return": 60.73267048950158,
+          "max_drawdown": -0.8096307977649307,
+          "n_fills": 198
+        },
+        "B": {
+          "sharpe_daily": 1.070669,
+          "total_return": 60.73267048950158,
+          "max_drawdown": -0.8096307977649307,
+          "n_fills": 198
+        },
+        "R": {
+          "sharpe_daily": 1.070669,
+          "total_return": 60.73267048950158,
+          "max_drawdown": -0.8096307977649307,
+          "n_fills": 198
+        },
+        "C": {
+          "sharpe_daily": 1.070669,
+          "total_return": 60.73267048950158,
+          "max_drawdown": -0.8096307977649307,
+          "n_fills": 198
+        }
+      },
+      "eth-tsmom-3m": {
+        "A": {
+          "sharpe_daily": 1.263956,
+          "total_return": 262.65295531809437,
+          "max_drawdown": -0.8515839128130315,
+          "n_fills": 21
+        },
+        "B": {
+          "sharpe_daily": 1.26392,
+          "total_return": 262.65295531809437,
+          "max_drawdown": -0.8515839128130315,
+          "n_fills": 21
+        },
+        "R": {
+          "sharpe_daily": 1.26392,
+          "total_return": 262.65295531809437,
+          "max_drawdown": -0.8515839128130315,
+          "n_fills": 21
+        },
+        "C": {
+          "sharpe_daily": 1.26392,
+          "total_return": 262.65295531809437,
+          "max_drawdown": -0.8515839128130315,
+          "n_fills": 21
+        }
+      }
+    },
+    "after_flagged": {
+      "B": {
+        "1492297200": {
+          "member_bars_differing": {},
+          "blend_bars_differing": 720
+        },
+        "1498071600": {
+          "member_bars_differing": {
+            "eth-turtle-s1": 292,
+            "eth-turtle-s2": 461
+          },
+          "blend_bars_differing": 482
+        }
+      },
+      "R": {
+        "1492297200": {
+          "member_bars_differing": {
+            "eth-turtle-s1": 106
+          },
+          "blend_bars_differing": 720
+        },
+        "1498071600": {
+          "member_bars_differing": {
+            "eth-turtle-s1": 292,
+            "eth-turtle-s2": 461
+          },
+          "blend_bars_differing": 482
+        }
+      }
+    }
+  }
+}

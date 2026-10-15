@@ -110,8 +110,18 @@ def dataset_lineage(paths: Paths, dataset_id: str) -> list[str]:
     return out
 
 
+def revalidates(paths: Paths, child_id: str, parent_id: str) -> bool:
+    """`child_id` rebuilds `parent_id`'s rows from the same sources under a later data rule (appendix A13.8): the
+    same first and last bar and the same base datasets."""
+    cm, pm = load_manifest(paths, child_id), load_manifest(paths, parent_id)
+    return (child_id != parent_id and (cm["actual_first_open"], cm["actual_last_open"])
+            == (pm["actual_first_open"], pm["actual_last_open"])
+            and dataset_lineage(paths, child_id)[1:] == dataset_lineage(paths, parent_id)[1:])
+
+
 def link_split(paths: Paths, store, split_id: str, parent_id: str, note: str) -> dict:
-    """Record `parent_id` as the parent of `split_id` (appendix A13.4); a child of a closed split is closed."""
+    """Record `parent_id` as the parent of `split_id`: the child's dataset extends the parent's backwards (A13.4) or
+    revalidates it (A13.8). K, trials and family quotas are inherited; a child of a closed split is closed."""
     if not note.strip():
         raise SplitError("a split lineage needs a note")
     child, parent = load_split(paths, split_id), load_split(paths, parent_id)
@@ -123,8 +133,10 @@ def link_split(paths: Paths, store, split_id: str, parent_id: str, note: str) ->
         problems.append("validation or holdout windows differ")
     if not (child.dev[0] <= parent.dev[0] and child.dev[1] == parent.dev[1]):
         problems.append("the child's dev does not contain the parent's")
-    if parent.dataset_id not in dataset_lineage(paths, child.dataset_id):
-        problems.append(f"{child.dataset_id} does not extend {parent.dataset_id}")
+    kind = "extends" if parent.dataset_id in dataset_lineage(paths, child.dataset_id) else (
+        "revalidates" if revalidates(paths, child.dataset_id, parent.dataset_id) else None)
+    if kind is None:
+        problems.append(f"{child.dataset_id} neither extends nor revalidates {parent.dataset_id}")
     if problems:
         raise SplitError(f"{split_id} cannot inherit from {parent_id}: " + "; ".join(problems))
     try:
@@ -136,7 +148,7 @@ def link_split(paths: Paths, store, split_id: str, parent_id: str, note: str) ->
         parent_closure = store.holdout_closure(parent_id)
         if parent_closure is not None:
             closure = store.close_holdout(split_id, f"inherits the closure of {parent_id}: {parent_closure['note']}")
-    return {"lineage": lineage, "closure": closure}
+    return {"lineage": lineage, "kind": kind, "closure": closure}
 
 
 def load_split(paths: Paths, split_id: str) -> SplitConfig:

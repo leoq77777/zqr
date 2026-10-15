@@ -236,8 +236,11 @@ class CampaignStore:
 
     # -- quotas (P1) -------------------------------------------------------------------------------
     def family_trials(self, split_id: str, family: str) -> int:
-        """The split's own trials of a family: dev experiments of its campaigns' sessions, their marginal
-        evaluations and the variant runs of its registered hypotheses."""
+        """Trials of a family on the split and its ancestors (A13.8): dev experiments of their campaigns' sessions,
+        their marginal evaluations and the variant runs of their registered hypotheses."""
+        return sum(self._own_family_trials(s, family) for s in [split_id, *self.store.split_ancestors(split_id)])
+
+    def _own_family_trials(self, split_id: str, family: str) -> int:
         sessions = self.store.query(
             f"SELECT COUNT(*) AS n FROM experiments e JOIN campaign_sessions s ON s.session_id = e.session_id "
             f"JOIN campaigns c ON c.id = s.campaign_id WHERE c.split_id=? AND c.family=? AND e.split_id=? "

@@ -374,7 +374,7 @@ def test_split_lineage_checks_windows_and_data_and_inherits_the_closure(paths, s
     other = create_split(paths, child_ds["dataset_id"], fractions=(0.5, 0.2))
     with pytest.raises(SplitError, match="windows differ"):
         link_split(paths, store, other.split_id, split.split_id, "x")
-    with pytest.raises(SplitError, match="does not extend"):
+    with pytest.raises(SplitError, match="neither extends nor revalidates"):
         link_split(paths, store, split.split_id, child.split_id, "x")
     with pytest.raises(SplitError, match="needs a note"):
         link_split(paths, store, child.split_id, split.split_id, " ")
@@ -392,6 +392,29 @@ def test_split_lineage_checks_windows_and_data_and_inherits_the_closure(paths, s
     monkeypatch.setattr(holdout_mod, "load_holdout_data", lambda *a: pytest.fail("holdout data loaded"))
     with pytest.raises(HoldoutError, match="inherits the closure"):
         run_holdout(paths, store, req, max_viewings=10)
+
+
+def test_a_revalidated_split_inherits_from_the_split_it_rebuilds(paths, store, dataset):
+    from quant_research.data.snapshot import extend_dataset
+    from quant_research.data.validate import validate_bars
+    from quant_research.validation.splits import create_split_like, link_split
+    from tests.conftest import HOUR, T0, make_raw
+
+    manifest, split = dataset
+    old_ds, old = _extended_split(paths, manifest, split)
+    start = T0 - 500 * HOUR
+    raw = make_raw(500, start=start, seed=3)
+    raw.loc[100, "low"] = 0.1  # the bar a later data rule keeps instead of filling
+    prefix, rep = validate_bars(raw, "coinbase", "BTC-USD", "ONE_HOUR", start, T0)
+    new_ds = extend_dataset(paths, manifest["dataset_id"], prefix, rep)
+    new = create_split_like(paths, new_ds["dataset_id"], split.split_id)
+    assert new_ds["dataset_id"] != old_ds["dataset_id"]
+    store.record_lineage(old.split_id, split.split_id, "E1")
+    run_experiment(paths, store, _req(old_ds, old))
+    out = link_split(paths, store, new.split_id, old.split_id, "A13.8: flash crash kept")
+    assert out["kind"] == "revalidates" and store.split_ancestors(new.split_id) == [old.split_id, split.split_id]
+    assert store.split_trial_count(new.split_id)["inherited"] == 1
+    assert link_split(paths, store, old.split_id, split.split_id, "E1")["kind"] == "extends"
 
 
 def test_trials_of_ancestors_count_on_the_child(paths, store, dataset):

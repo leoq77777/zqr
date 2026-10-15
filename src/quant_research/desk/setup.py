@@ -81,7 +81,7 @@ def prepare_dataset(paths: Paths, product: str, start: int, rps: float = 5.0) ->
     fetch_range(CoinbasePublicClient(limiter=RateLimiter(rps)), product, GRANULARITY, start, end, paths.raw)
     raw_dir = raw_dir_for(paths.raw, product, GRANULARITY)
     bars, rep = validate_bars(load_raw_candles(raw_dir), VENUE, product, GRANULARITY, start, end,
-                              fill_policy="ffill_flat", drop_isolated_prints=True)
+                              fill_policy="ffill_flat", flag_prints=True)
     manifest = freeze_dataset(paths, bars, rep, raw_dir)
     split = create_split(paths, manifest["dataset_id"])
     return manifest, split

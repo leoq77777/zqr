@@ -2,6 +2,7 @@ import json
 
 import httpx
 import numpy as np
+import pandas as pd
 import pytest
 import respx
 
@@ -132,24 +133,36 @@ def test_leading_missing_is_not_an_internal_gap():
     assert rep.leading_missing_bars == 10 and rep.internal_gap_bars == 0
 
 
-def test_isolated_prints_are_dropped_only_when_asked():
+def test_isolated_prints_are_kept_and_isolated_opens_corrected():
+    from quant_research.data.snapshot import content_hash
+
     raw = make_raw(60)
-    prev = raw.loc[9, "close"]
+    prev, prev_down = raw.loc[9, "close"], raw.loc[39, "close"]
     raw.loc[10, ["open", "high"]] = 1.5 * prev  # isolated open: the close stays near the previous close
     raw.loc[20, "low"] = 0.1  # isolated wick
     fall = raw.loc[30, "open"]
     raw.loc[30, ["high", "close", "low"]] = [fall, 0.75 * fall, 0.74 * fall]  # a genuine 25% fall
+    raw.loc[40, ["open", "low"]] = 0.5 * prev_down  # isolated open below
 
     bars, rep = validate_bars(raw, "coinbase", "BTC-USD", "1h", T0, T0 + 60 * HOUR, fill_policy="ffill_flat")
-    assert rep.invalid_dropped == {} and not bars["filled"].any()
+    assert rep.invalid_dropped == {} and not bars["filled"].any() and rep.isolated_prints == []
 
-    bars, rep = validate_bars(raw, "coinbase", "BTC-USD", "1h", T0, T0 + 60 * HOUR, fill_policy="ffill_flat",
-                              drop_isolated_prints=True)
-    assert rep.invalid_dropped == {"isolated_print": 2}
-    assert [p["start"] for p in rep.isolated_prints] == [T0 + 10 * HOUR, T0 + 20 * HOUR]
-    assert rep.isolated_prints[1]["low"] == 0.1
-    assert len(bars) == 60 and bars.loc[[10, 20], "filled"].all() and not bars.loc[30, "filled"]
-    assert bars.loc[10, "open"] == prev and bars.loc[30, "close"] == 0.75 * fall
+    screened, rep = validate_bars(raw, "coinbase", "BTC-USD", "1h", T0, T0 + 60 * HOUR, fill_policy="ffill_flat",
+                                  flag_prints=True)
+    assert rep.invalid_dropped == {} and len(screened) == len(bars)
+    assert [(p["start"], p["kinds"]) for p in rep.isolated_prints] == [
+        (T0 + 10 * HOUR, ["isolated_open"]), (T0 + 20 * HOUR, ["isolated_wick"]), (T0 + 40 * HOUR, ["isolated_open"])]
+    assert rep.isolated_prints[0]["open"] == 1.5 * prev and rep.isolated_prints[2]["low"] == 0.5 * prev_down
+
+    up, down = screened.loc[10], screened.loc[40]
+    assert up["open"] == prev and up["high"] == max(prev, up["close"]) and up["low"] == min(bars.loc[10, "low"], prev)
+    assert down["open"] == prev_down and down["low"] == min(prev_down, down["close"])
+    assert down["high"] == max(bars.loc[40, "high"], prev_down)
+    assert screened.loc[20, "low"] == 0.1 and screened.loc[30, "close"] == 0.75 * fall
+    rest = ~screened.index.isin([10, 40])
+    pd.testing.assert_frame_equal(screened[rest], bars[rest])
+    assert (screened[["close", "volume"]] == bars[["close", "volume"]]).all().all()
+    assert content_hash(screened) != content_hash(bars)
 
 
 def test_snapshot_is_immutable_and_verified(paths):

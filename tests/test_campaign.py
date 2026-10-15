@@ -296,6 +296,18 @@ def test_family_quota_is_enforced_per_action(paths, store, dataset, monkeypatch)
     assert cs.quota(paths, dataset[1].split_id, "tsmom")["used"] == 1
 
 
+def test_family_quota_counts_the_parent_split(paths, store, dataset):
+    _reference(paths, store, dataset)
+    _queued(paths, store)
+    loop, _ = _loop(paths, store, FakeAgent(paths, store))
+    loop.step()
+    cs, sid = CampaignStore(store), dataset[1].split_id
+    used = cs.quota(paths, sid, "tsmom")["used"]
+    assert used == 2 and cs.quota(paths, "split-revalidated", "tsmom")["used"] == 0
+    store.record_lineage("split-revalidated", sid, "A13.8")
+    assert cs.quota(paths, "split-revalidated", "tsmom")["used"] == used
+
+
 def test_registration_reserves_room_for_every_variant(paths, store, dataset, monkeypatch):
     _reference(paths, store, dataset)
     monkeypatch.setattr(cstore, "FAMILY_QUOTA", 1)

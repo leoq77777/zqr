@@ -766,5 +766,22 @@ and drafting R5 for approval.
 - [x] R3: `zqr portfolio resume` enforces P6: 30 days from the recorded liquidation and a `docs/reviews/` review
       carried with the request (`--stdin` on hosts), re-checked by the trader at the next bar.
 - [x] Tests converted from the probes; full suite 372 passed, ruff.
-- [ ] R5: draft amendment A13.8 and the new dataset versions,
-      `docs/superpowers/specs/2026-10-15-a13-8-extreme-prints-draft.md`; awaiting the human's decisions.
+- [x] R5: amendment A13.8 (draft `docs/superpowers/specs/2026-10-15-a13-8-extreme-prints-draft.md`), approved
+      2026-10-15 after the sensitivity comparison (`docs/reviews/2026-10-15-a13-8-sensitivity/`): prints kept,
+      isolated opens corrected (the human revised decision 1 when the comparison showed signals reading the ETH
+      open), the guard only at isolated opens, revalidated lineage, family quotas over ancestors. Code and tests;
+      full suite 375 passed, ruff.
+- [ ] R5 migration on the host, after the release (the rehearsal on a production copy produced the dataset ids
+      below; the ids are content hashes, so the host should reproduce them):
+  1. `zqr research stop`; let a running campaign session end.
+  2. Agent: `zqr extend-dataset --dataset coinbase-btc-usd-one_hour-0d7202d6b155 --start 2015-07-21
+     --fill-policy ffill_flat` (expect `coinbase-btc-usd-one_hour-f9799521097f`) and the same for ETH from
+     `coinbase-eth-usd-one_hour-8e0c6c544c93`, `--start 2016-06-01` (expect `coinbase-eth-usd-one_hour-d46750883306`);
+     `zqr create-split --dataset <new> --like split-f0d7a178e08b` (BTC) and `--like split-d6a76022a19d` (ETH).
+  3. Human: `zqr split-lineage --split <new> --parent <current long-dev split> --note "A13.8"` (kind
+     `revalidates`); new mandates on the new splits; `zqr desk use-mandate`.
+  4. Agent: `zqr memory characterise`, `zqr memory run --sandbox docker`, seed portfolios,
+     `zqr portfolio dev <vid> --reference`.
+  5. Human: cancel queued campaigns and re-approve their replacements on the new splits (a running one finishes on
+     the old split).
+  6. Agent: first-look review, old against new long dev for the seeds and references.

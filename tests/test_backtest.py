@@ -39,6 +39,20 @@ def test_golden_hand_calculated_round_trip():
     assert res.trips["bars_held"].item() == 2
 
 
+def test_isolated_opens_are_sized_and_filled_at_the_previous_close():
+    cfg = EngineConfig(initial_cash=1000, costs=CostConfig(fee_rate=0, slippage_bps=0), min_trade_notional=0)
+    # A13.8: bar 1 opens at 0.06 after a close of 100 and closes at 99 (the 2017-04-15 BTC shape)
+    buy = run_backtest(_bars([100, 0.06, 99], [100, 99, 99]), np.array([1.0, 1.0, 1.0]), cfg)
+    assert buy.fills["price"].item() == 100 and buy.fills["qty"].item() == pytest.approx(10.0)
+    assert buy.fills["mark_price"].item() == 100
+    # a spuriously high open (the ETH shape): a sell fills at the previous close, not at the high open
+    sell = run_backtest(_bars([100, 100, 150, 101], [100, 100, 101, 101]), np.array([1.0, 0.0, 0.0, 0.0]), cfg)
+    assert sell.fills["price"].tolist() == [100, 100]
+    # a genuine 25% fall opens at the previous close and is not guarded
+    fall = run_backtest(_bars([100, 100, 75], [100, 100, 75]), np.array([1.0, 0.0, 0.0]), cfg)
+    assert fall.fills["price"].tolist() == [100, 75]
+
+
 def test_signal_never_fills_on_its_own_bar():
     bars = _bars([100, 200, 300], [150, 250, 350])
     cfg = EngineConfig(initial_cash=100, costs=CostConfig(fee_rate=0, slippage_bps=0), min_trade_notional=0)

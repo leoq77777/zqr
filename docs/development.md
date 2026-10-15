@@ -136,7 +136,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (372 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (375 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -358,9 +358,10 @@ Rules are in `docs/contracts-v2-appendix-a.md` (approved 2026-10-15).
 - **Seed characterisation.** `zqr memory characterise` runs each seed instance once on its product's desk mandate
   (kind `seed`, counted as trials, duplicates not reused). `zqr library periods --product P --cut D` gives each
   seed run's statistics per period from its recorded equity (`evaluation/periods.py`).
-- **Split lineage** (amendment A13.4). A split that extends an earlier split's dev backwards names it as parent
-  (`zqr split-lineage`, human; same product and granularity, equal validation and holdout windows, the child's
-  dataset extends the parent's). K at each threshold is the split's own clustering plus its ancestors' latest
+- **Split lineage** (amendments A13.4, A13.8). A split names a parent (`zqr split-lineage`, human; same product
+  and granularity, equal validation and holdout windows) when its dataset extends the parent's dev backwards (kind
+  `extends`) or rebuilds the parent's rows under a later data rule (kind `revalidates`: same first and last bar,
+  same base datasets; `splits.revalidates`). K at each threshold is the split's own clustering plus its ancestors' latest
   (`clusters.k_breakdown`; `effective_k` returns the total), and the legacy DSR deflates with the trial count of
   the split and its ancestors (`ExperimentStore.split_trial_count`). A split refuses holdout requests when it or
   any ancestor is closed (`closed_refusal`), whichever was recorded first. Reports show K and trials as own +
@@ -493,8 +494,9 @@ Rules: design section 6 (campaigns), investment policy 5 (budget), plan D1-D8 an
 - **Caps** (P3). $1, 4 sessions and 40 experiments at the start; +$2, +2 sessions and +20 experiments after a gate 1
   pass and again after a gate 2 pass; at most $5, 8 sessions and 80 experiments. A running session counts at its
   reservation. Sessions that fail for environment reasons, crashes or stops do not count.
-- **Family quotas** (P1). 100 trials per family per product split, counted from the split's own trials: the
-  campaign sessions' experiments, `marginal_eval` calls (each experiment once) and gate 1's variant runs.
+- **Family quotas** (P1, A13.8). 100 trials per family per product split, counted over the split and its
+  ancestors: the campaign sessions' experiments, `marginal_eval` calls (each experiment once) and gate 1's variant
+  runs.
   Exploration campaigns share 25% of the sum of the sleeve families' quotas. A family at quota gets no campaign and
   no registration. The quota holds per action: a session's allowance is at most the trials its campaign and family
   have left; before each experiment and each `marginal_eval` the gateway re-checks both with the session's own
@@ -693,8 +695,8 @@ a one-off container with the same mounts while the desk is stopped).
 | `zqr portfolio approve <vid> --note` / `resume <name> --note` | Human: paper roster entry / resume a liquidated paper portfolio |
 | `zqr portfolio shadow <vid> --note` | Human: run a version not approved for paper as `shadow-<product>` (forward evidence only) |
 | `zqr close-holdout --split S --note` | Human: close a split's holdout to new viewings, permanently (A13.3) |
-| `zqr extend-dataset --dataset D --start T [--fill-policy ffill_flat]` | Freeze earlier candles (fetched first with `zqr fetch-data`) followed by D's bars, copied verbatim; isolated bad prints are dropped and listed (A13.5, as in every research freeze) |
-| `zqr create-split --dataset D --like S` / `zqr split-lineage --split C --parent S --note` | A split with S's validation and holdout windows / human: name its parent (A13.4: K and trials inherited, closure inherited) |
+| `zqr extend-dataset --dataset D --start T [--fill-policy ffill_flat]` | Freeze earlier candles (fetched first with `zqr fetch-data`) followed by D's bars, copied verbatim; isolated prints are kept and listed, isolated opens corrected (A13.8, as in every research freeze) |
+| `zqr create-split --dataset D --like S` / `zqr split-lineage --split C --parent S --note` | A split with S's validation and holdout windows / human: name its parent (A13.4 extends, A13.8 revalidates: K, trials, family quotas and closure inherited) |
 | `zqr desk use-mandate --product P --mandate M --note` | Human: point a desk product at another stored mandate (research disabled; history in `desk/mandate_history.jsonl`) |
 | `zqr portfolio dev <vid> [--reference] [--sandbox docker]` / `periods <vid> --cut D` / `zqr library periods --product P --cut D` | Dev run alone, optionally gate 1's reference / per-period statistics of recorded dev runs |
 | `zqr hypothesis register --file F --note` / `list [--product] [--state]` / `show <id>` | Human: register a hypothesis (immutable; A6, A13.7) / list / body, events, gate evidence |

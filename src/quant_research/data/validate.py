@@ -87,12 +87,14 @@ def validate_bars(
     start: int,
     end: int,
     fill_policy: FillPolicy = "none",
-    drop_isolated_prints: bool = False,
+    flag_prints: bool = False,
 ) -> tuple[pd.DataFrame, ValidationReport]:
     """Clip to [start, end), dedupe, drop incomplete/invalid bars and report gaps.
 
     `raw` needs columns start (epoch s), open, high, low, close, volume, fetched_at, source_version.
-    `drop_isolated_prints` applies appendix A13.5 (datasets frozen or extended for research).
+    `flag_prints` lists isolated prints in the report with their recorded values and keeps the bars (appendix
+    A13.8, which supersedes A13.5's drop). Wicks stay as recorded; an isolated open is replaced by the previous
+    close, and a high or low that was that open by the extreme of the previous close and the close.
     """
     granularity = parse_granularity(granularity)
     step = granularity_seconds(granularity)
@@ -140,13 +142,13 @@ def validate_bars(
             rep.invalid_dropped[reason] = int(mask.sum())
         bad |= mask
     df = df[~bad]
-    if drop_isolated_prints and len(df):
-        iso = isolated_prints(df)
-        if iso.any():
-            rep.invalid_dropped["isolated_print"] = int(iso.sum())
-            rep.isolated_prints = [{"start": int(r.start), "open": float(r.open), "high": float(r.high),
-                                    "low": float(r.low), "close": float(r.close)} for r in df[iso].itertuples()]
-        df = df[~iso]
+    if flag_prints and len(df):
+        iso_open, iso_wick = print_flags(df)
+        rep.isolated_prints = [
+            {"start": int(r.start), "open": float(r.open), "high": float(r.high), "low": float(r.low),
+             "close": float(r.close), "kinds": [k for k, m in (("isolated_open", o), ("isolated_wick", w)) if m]}
+            for r, o, w in zip(df.itertuples(), iso_open, iso_wick, strict=True) if o or w]
+        df = _correct_opens(df, iso_open)
 
     grid_start = ceil_to(start, step)
     last_fetch = float(raw["fetched_at"].max()) if len(raw) else start
@@ -198,18 +200,38 @@ ISOLATED_OPEN = 0.2
 ISOLATED_WICK = 2.0
 
 
-def isolated_prints(df: pd.DataFrame) -> pd.Series:
-    """Bars no order could have traded at (A13.5): an open more than 20% from both the previous close and its own
-    close, or a low below half (a high above twice) the extreme of open, close and previous close.
+def isolated_opens(opens: np.ndarray, closes: np.ndarray) -> np.ndarray:
+    """An open more than 20% from both the previous close and its own close (the A13.5 detector; A13.8 corrects it
+    in screened data and the engine guards it elsewhere); the first bar has no previous close and is never
+    flagged."""
+    out = np.zeros(len(opens), bool)
+    if len(opens) > 1:
+        out[1:] = (np.abs(opens[1:] / closes[:-1] - 1) > ISOLATED_OPEN) & \
+                  (np.abs(opens[1:] / closes[1:] - 1) > ISOLATED_OPEN)
+    return out
 
-    `df` is sorted by start; the previous close is the previous row's, whatever the gap.
-    """
+
+def print_flags(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Isolated opens and isolated wicks (a low below half, a high above twice, the extreme of open, close and
+    previous close). `df` is sorted by start; the previous close is the previous row's, whatever the gap."""
     prev = df["close"].shift(1)
-    far_prev = (df["open"] / prev - 1).abs() > ISOLATED_OPEN
-    far_close = (df["open"] / df["close"] - 1).abs() > ISOLATED_OPEN
     refs = pd.concat([df["open"], df["close"], prev], axis=1)
     wick = (df["low"] < refs.min(axis=1) / ISOLATED_WICK) | (df["high"] > refs.max(axis=1) * ISOLATED_WICK)
-    return (far_prev & far_close) | wick
+    return isolated_opens(df["open"].to_numpy(float), df["close"].to_numpy(float)), wick.to_numpy(bool)
+
+
+def _correct_opens(df: pd.DataFrame, iso_open: np.ndarray) -> pd.DataFrame:
+    if not iso_open.any():
+        return df
+    df = df.copy()
+    o, h, lo, c = (df[k].to_numpy(float).copy() for k in ("open", "high", "low", "close"))
+    for i in np.flatnonzero(iso_open):
+        prev = c[i - 1]
+        h[i] = max(prev, c[i]) if h[i] == o[i] else max(h[i], prev)
+        lo[i] = min(prev, c[i]) if lo[i] == o[i] else min(lo[i], prev)
+        o[i] = prev
+    df["open"], df["high"], df["low"] = o, h, lo
+    return df
 
 
 def _group_gaps(missing: np.ndarray, step: int) -> list[Gap]:

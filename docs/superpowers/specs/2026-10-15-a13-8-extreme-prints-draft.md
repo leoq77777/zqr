@@ -1,6 +1,11 @@
 # Draft amendment A13.8: extreme prints stay in the data, execution is guarded (supersedes A13.5)
 
-Date: 2026-10-15. Status: **draft for the human's approval; no code, no data change until approved.** Source: the
+Date: 2026-10-15. Status: **approved 2026-10-15 with changes; the rule as approved is A13.8 in
+`docs/contracts-v2-appendix-a.md`.** Changes from this draft: isolated opens are corrected in the bars (decision 1
+revised after the sensitivity comparison, `docs/reviews/2026-10-15-a13-8-sensitivity/`, showed the channel members
+reading the ETH open as that bar's high); no flag column and no corrections file (the report keeps the recorded
+values; the detectors are a function of the bars); the lineage kind is named `revalidates`. The text below is the
+draft as reviewed. Source: the
 reassessment `docs/reviews/2026-10-15-reassessment/zqr-reassessment.md`, finding R5. When approved, the rule below
 goes into `docs/contracts-v2-appendix-a.md` as A13.8, and A13.5 gets one line "Superseded by A13.8 (date)"; its
 text stays as the record of what the current datasets were built with.
