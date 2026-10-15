@@ -1,6 +1,6 @@
 # Contracts v2, appendix A: statistics and admission rules for portfolio research
 
-Date: 2026-10-15. Status: draft for human review. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
+Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
 for portfolio research, as decided in `docs/superpowers/specs/2026-10-13-research-library-portfolio-design.md`
 (sections 4.4, 5.3, 5.4, 5.5, 5.6 and 6.5). Takes effect for a mandate only when the mandate version names it
 (`statistics: appendix-a-v1`); mandates already stored are immutable and keep their rules.
@@ -167,7 +167,7 @@ holdout are the last 2 × 182 days, in that order; dev is everything before, so 
 fold into dev. Trials, K and holdout viewings belong to a split; the archives carry the earlier splits' conclusions
 forward. The daily report shows the earliest cut date.
 
-## A12. Points decided here that the design left open (approve or amend each)
+## A12. Points decided here that the design left open (all approved 2026-10-15)
 
 1. **Trials without returns** (`failed`, `rejected`) each add 1 to K (A3). Conservative; currently 5 BTC and 2 ETH
    trials.
