@@ -155,6 +155,21 @@ def test_flat_and_passive_series_are_flagged():
     assert flags["passive"].tolist() == [False, True, False]
 
 
+def test_passive_is_judged_on_the_winsorised_residual():
+    from quant_research.memory.residuals import PASSIVE_SD, residuals
+
+    m = _market()
+    entry = m.to_numpy().copy()
+    entry[0] -= 0.0092
+    out = m.to_numpy().copy()
+    out[np.random.default_rng(4).random(len(DAYS)) < 0.05] = 0.0
+    returns = pd.DataFrame({"entry": entry, "out5": out}, index=DAYS)
+    raw, flags = residuals(returns, m, winsorise=False)
+    assert raw["entry"].std(ddof=1) > PASSIVE_SD > flags.loc["entry", "residual_sd"]
+    assert flags["passive"].tolist() == [True, False]
+    assert residuals(returns, m)[1].equals(flags)
+
+
 # -- clustering and K (A3) -------------------------------------------------------------------------------------
 
 def _planted(seed=0):

@@ -129,7 +129,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (229 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (230 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -319,10 +319,12 @@ Rules are in `docs/contracts-v2-appendix-a.md` (approved 2026-10-15).
   (`no_returns`). The runner archives after every trial, including gate rejections; a failure to archive is logged
   and never fails the trial. `zqr memory backfill` fills in older trials.
 - **Clustering.** Residuals of each series on the coin's close-to-close return (OLS with intercept), winsorised once
-  at mean ± 3 sd. Flat series (max |r| < 1e-12) and passive series (residual sd < 1e-4) form one cluster each.
+  at mean ± 3 sd. Flat series (max |r| < 1e-12) and passive series (winsorised residual sd < 1e-4, amendment
+  A13.1, so buy and hold is passive whatever its entry day costs) form one cluster each.
   Pearson correlation, distance `sqrt((1 − ρ)/2)`, average linkage, cuts at ρ 0.3, 0.5 and 0.7; a cluster's label
   is its smallest experiment id. K = clusters + flat + passive + trials without returns; K(0.7) is the effective
-  number of trials. A clustering is recorded only when its input hash changes (`clusterings`, `cluster_members`).
+  number of trials. A clustering is recorded only when its input hash (returns, thresholds, passive rule version)
+  changes (`clusterings`, `cluster_members`).
 - **Families.** Seed runs are tagged with their library family; older trials with their session topic
   (`volatility_filter` → `vol_overlay`, `mean_reversion` → `short_term_reversal`, archive only). A ρ 0.3 cluster
   maps to the family of its seeds (lowest seed id on a tie), else to a family holding more than half its trials.

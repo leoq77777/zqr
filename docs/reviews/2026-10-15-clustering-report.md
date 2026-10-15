@@ -4,21 +4,21 @@ Rules: `docs/contracts-v2-appendix-a.md` (A1-A5, A7, A12). Residual correlations
 
 ## BTC-USD (`split-1016c7c9873a`)
 
-Trials: 896 (891 with returns, 5 without; 3 flat, 0 passive). Clustering input `72489c5b0547ac0f`.
+Trials: 896 (891 with returns, 5 without; 3 flat, 37 passive). Clustering input `87b9c0c1928eda4f`.
 
 | ρ threshold | 0.3 | 0.5 | 0.7 |
 |---|---|---|---|
-| K (winsorised, used) | 41 | 100 | **232** |
+| K (winsorised, used) | 42 | 100 | **231** |
 | K (not winsorised) | 37 | 90 | 217 |
 | 2026-10-13 feasibility run, raw (winsorised) | 34 (43) | 113 (116) | 255 (267) |
 
-K counts every cluster once, plus one for the flat cluster, one for the passive cluster and one per trial without returns (5). With K = 232 on T = 1267 days: SR0(K) = 1.51, σ0 = 0.54, so a split DSR of 0.9 needs an annualised dev Sharpe of at least 2.20 (more if fat tails widen σ_SR).
+K counts every cluster once, plus one for the flat cluster, one for the passive cluster and one per trial without returns (5). With K = 231 on T = 1267 days: SR0(K) = 1.51, σ0 = 0.54, so a split DSR of 0.9 needs an annualised dev Sharpe of at least 2.20 (more if fat tails widen σ_SR).
 
 Cluster sizes (trials with returns, excluding flat and passive):
 
-- ρ 0.3: 35 clusters; sizes 1: 9, 2-5: 12, 6-20: 6, >20: 8; largest 454
-- ρ 0.5: 94 clusters; sizes 1: 45, 2-5: 23, 6-20: 18, >20: 8; largest 295
-- ρ 0.7: 226 clusters; sizes 1: 121, 2-5: 77, 6-20: 20, >20: 8; largest 149
+- ρ 0.3: 35 clusters; sizes 1: 10, 2-5: 12, 6-20: 6, >20: 7; largest 454
+- ρ 0.5: 93 clusters; sizes 1: 45, 2-5: 23, 6-20: 18, >20: 7; largest 295
+- ρ 0.7: 224 clusters; sizes 1: 121, 2-5: 76, 6-20: 20, >20: 7; largest 149
 
 Largest clusters at ρ 0.3:
 
@@ -27,7 +27,6 @@ Largest clusters at ρ 0.3:
 | `exp-0105d095cb8e` | 454 | ewma_trend (seed) | trend 248, multi_timeframe 176, volatility_filter 11, seed 10 | plugin 444, template:ewma_trend 3, template:tsmom 3 | 1.08 |
 | `exp-032b6bd1dc99` | 139 | vol_overlay (seed) | volatility_filter 138, seed 1 | plugin 138, template:vol_target 1 | 0.63 |
 | `exp-07aaf1ad524b` | 51 | unmapped | multi_timeframe 50, trend 1 | plugin 51 | -5.16 |
-| `exp-041b087bfdc1` | 38 | vol_overlay (tags) | volatility_filter 21, multi_timeframe 12, mean_reversion 5 | plugin 38 | 0.68 |
 | `exp-1271b34fb3f3` | 28 | short_term_reversal (tags) | mean_reversion 28 | plugin 28 | 1.24 |
 | `exp-00b167b3b6a1` | 26 | short_term_reversal (tags) | mean_reversion 26 | plugin 26 | -3.04 |
 | `exp-0d5262b28e5c` | 23 | short_term_reversal (tags) | mean_reversion 23 | plugin 23 | 0.26 |
@@ -39,8 +38,9 @@ Largest clusters at ρ 0.3:
 | `exp-2d4b6bded0c0` | 8 | unmapped | trend 8 | plugin 8 | -2.39 |
 | `exp-0ea821e4a733` | 7 | short_term_reversal (tags) | mean_reversion 7 | plugin 7 | 1.30 |
 | `exp-6f66f9f8715d` | 4 | short_term_reversal (tags) | mean_reversion 4 | plugin 4 | 0.43 |
+| `exp-0383f0283ce4` | 3 | short_term_reversal (tags) | mean_reversion 3 | plugin 3 | -1.19 |
 
-Trials by family at ρ 0.3: ewma_trend 454, short_term_reversal 182, tsmom 2, unmapped 66, vol_overlay 184.
+Trials by family at ρ 0.3: ewma_trend 454, short_term_reversal 182, tsmom 2, unmapped 67, vol_overlay 146.
 
 Seed placement:
 
@@ -54,9 +54,9 @@ Seed placement:
 | btc-tsmom-12m | 1.01 | 0.175 | `exp-0105d095cb8e` (454) | `exp-95294e1fbe03` (1) |
 | btc-tsmom-1m | 0.38 | 0.017 | `exp-0105d095cb8e` (454) | `exp-6a1df7681268` (1) |
 | btc-tsmom-1w | 0.11 | 0.005 | `exp-6bf226feef2e` (2) | `exp-6bf226feef2e` (1) |
-| btc-tsmom-3m | 0.40 | 0.019 | `exp-0105d095cb8e` (454) | `exp-f820c69541fb` (1) |
+| btc-tsmom-3m | 0.40 | 0.020 | `exp-0105d095cb8e` (454) | `exp-f820c69541fb` (1) |
 | btc-turtle-s1 | 0.20 | 0.007 | `exp-0105d095cb8e` (454) | `exp-012f341d77b4` (6) |
-| btc-turtle-s2 | 0.27 | 0.010 | `exp-0105d095cb8e` (454) | `exp-01d04bc6f3f0` (34) |
+| btc-turtle-s2 | 0.27 | 0.011 | `exp-0105d095cb8e` (454) | `exp-01d04bc6f3f0` (34) |
 | btc-voltarget-1m | 0.47 | 0.026 | `exp-032b6bd1dc99` (139) | `exp-16905e71f137` (10) |
 
 New-family proposals (2; clusters of at least 5 trials that no seed or family majority claims):
@@ -66,36 +66,36 @@ New-family proposals (2; clusters of at least 5 trials that no seed or family ma
 
 Top 10 non-flat trials by dev Sharpe (daily), split DSR against the legacy DSR:
 
-| experiment | kind | source | dev Sharpe | split DSR (K = 232) | legacy DSR (hourly) |
+| experiment | kind | source | dev Sharpe | split DSR (K = 231) | legacy DSR (hourly) |
 |---|---|---|---|---|---|
 | `exp-640f008ef736` | backtest | topic:mean_reversion | 1.30 | 0.351 | 0.000 |
-| `exp-244f749601d7` | backtest | topic:mean_reversion | 1.24 | 0.304 | 0.000 |
+| `exp-244f749601d7` | backtest | topic:mean_reversion | 1.24 | 0.305 | 0.000 |
 | `exp-fa6032c36556` | backtest | topic:mean_reversion | 1.13 | 0.240 | 0.000 |
 | `exp-146cc5cdadb2` | backtest | topic:mean_reversion | 1.11 | 0.227 | 0.000 |
-| `exp-3e3757ed910c` | backtest | topic:trend | 1.08 | 0.210 | 0.000 |
+| `exp-3e3757ed910c` | backtest | topic:trend | 1.08 | 0.211 | 0.000 |
 | `exp-e31599cb05f0` | backtest | topic:mean_reversion | 1.07 | 0.204 | 0.000 |
-| `exp-12f40dd7bb6c` | backtest | topic:trend | 1.04 | 0.190 | 0.000 |
-| `exp-2696248f7fd5` | backtest | topic:trend | 1.04 | 0.190 | 0.000 |
-| `exp-f7ec47a71690` | backtest | topic:trend | 1.04 | 0.190 | 0.000 |
-| `exp-2a9816c124d6` | backtest | topic:trend | 1.03 | 0.185 | 0.000 |
+| `exp-12f40dd7bb6c` | backtest | topic:trend | 1.04 | 0.191 | 0.000 |
+| `exp-2696248f7fd5` | backtest | topic:trend | 1.04 | 0.191 | 0.000 |
+| `exp-f7ec47a71690` | backtest | topic:trend | 1.04 | 0.191 | 0.000 |
+| `exp-2a9816c124d6` | backtest | topic:trend | 1.03 | 0.186 | 0.000 |
 
 ## ETH-USD (`split-c47a0be57a24`)
 
-Trials: 913 (911 with returns, 2 without; 1 flat, 34 passive). Clustering input `12e87074f65ec881`.
+Trials: 913 (911 with returns, 2 without; 1 flat, 38 passive). Clustering input `ceb59a6bcdcad509`.
 
 | ρ threshold | 0.3 | 0.5 | 0.7 |
 |---|---|---|---|
-| K (winsorised, used) | 41 | 99 | **241** |
-| K (not winsorised) | 39 | 94 | 229 |
+| K (winsorised, used) | 40 | 98 | **240** |
+| K (not winsorised) | 38 | 93 | 228 |
 | 2026-10-13 feasibility run, raw (winsorised) | 34 (38) | 108 (110) | 265 (276) |
 
-K counts every cluster once, plus one for the flat cluster, one for the passive cluster and one per trial without returns (2). With K = 241 on T = 1267 days: SR0(K) = 1.52, σ0 = 0.54, so a split DSR of 0.9 needs an annualised dev Sharpe of at least 2.21 (more if fat tails widen σ_SR).
+K counts every cluster once, plus one for the flat cluster, one for the passive cluster and one per trial without returns (2). With K = 240 on T = 1267 days: SR0(K) = 1.52, σ0 = 0.54, so a split DSR of 0.9 needs an annualised dev Sharpe of at least 2.20 (more if fat tails widen σ_SR).
 
 Cluster sizes (trials with returns, excluding flat and passive):
 
-- ρ 0.3: 37 clusters; sizes 1: 13, 2-5: 11, 6-20: 5, >20: 8; largest 424
-- ρ 0.5: 95 clusters; sizes 1: 43, 2-5: 31, 6-20: 14, >20: 7; largest 282
-- ρ 0.7: 237 clusters; sizes 1: 139, 2-5: 77, 6-20: 14, >20: 7; largest 185
+- ρ 0.3: 36 clusters; sizes 1: 13, 2-5: 10, 6-20: 5, >20: 8; largest 424
+- ρ 0.5: 94 clusters; sizes 1: 43, 2-5: 30, 6-20: 14, >20: 7; largest 282
+- ρ 0.7: 236 clusters; sizes 1: 139, 2-5: 76, 6-20: 14, >20: 7; largest 185
 
 Largest clusters at ρ 0.3:
 
@@ -114,10 +114,10 @@ Largest clusters at ρ 0.3:
 | `exp-0c5540ace29c` | 8 | short_term_reversal (tags) | mean_reversion 8 | plugin 8 | -2.78 |
 | `exp-3acddddf847c` | 8 | short_term_reversal (tags) | mean_reversion 8 | plugin 8 | -0.38 |
 | `exp-038239082acd` | 7 | vol_overlay (tags) | volatility_filter 7 | plugin 7 | 0.15 |
-| `exp-066912eda7a7` | 4 | vol_overlay (tags) | volatility_filter 4 | plugin 4 | 0.95 |
 | `exp-0c9eef6bcf1f` | 4 | tsmom (seed) | volatility_filter 3, seed 1 | plugin 3, template:tsmom 1 | 0.63 |
+| `exp-0f09e3d2f5c5` | 4 | short_term_reversal (tags) | mean_reversion 4 | plugin 4 | -6.66 |
 
-Trials by family at ρ 0.3: channel_breakout 424, ewma_trend 55, short_term_reversal 198, tsmom 4, unmapped 36, vol_overlay 159.
+Trials by family at ρ 0.3: channel_breakout 424, ewma_trend 55, short_term_reversal 198, tsmom 4, unmapped 36, vol_overlay 155.
 
 Seed placement:
 
@@ -134,7 +134,7 @@ Seed placement:
 | eth-tsmom-3m | 0.35 | 0.015 | `exp-0c9eef6bcf1f` (4) | `exp-48b207e8494a` (1) |
 | eth-turtle-s1 | 0.77 | 0.083 | `exp-0055d5485f98` (424) | `exp-0055d5485f98` (185) |
 | eth-turtle-s2 | 0.31 | 0.013 | `exp-0055d5485f98` (424) | `exp-3037cdfe9481` (2) |
-| eth-voltarget-1m | 0.73 | 0.071 | `exp-01aa1b30d06c` (143) | `exp-01aa1b30d06c` (8) |
+| eth-voltarget-1m | 0.73 | 0.072 | `exp-01aa1b30d06c` (143) | `exp-01aa1b30d06c` (8) |
 
 New-family proposals (1; clusters of at least 5 trials that no seed or family majority claims):
 
@@ -142,16 +142,16 @@ New-family proposals (1; clusters of at least 5 trials that no seed or family ma
 
 Top 10 non-flat trials by dev Sharpe (daily), split DSR against the legacy DSR:
 
-| experiment | kind | source | dev Sharpe | split DSR (K = 241) | legacy DSR (hourly) |
+| experiment | kind | source | dev Sharpe | split DSR (K = 240) | legacy DSR (hourly) |
 |---|---|---|---|---|---|
 | `exp-f323301a878f` | backtest | topic:volatility_filter | 1.42 | 0.430 | 0.000 |
-| `exp-c198a5859083` | backtest | topic:volatility_filter | 1.36 | 0.383 | 0.000 |
+| `exp-c198a5859083` | backtest | topic:volatility_filter | 1.36 | 0.384 | 0.000 |
 | `exp-9de6760a5284` | backtest | topic:volatility_filter | 1.33 | 0.361 | 0.000 |
 | `exp-cf035ce83432` | backtest | topic:volatility_filter | 1.33 | 0.361 | 0.000 |
-| `exp-ab5f35e4874a` | backtest | topic:trend | 1.22 | 0.292 | 0.000 |
-| `exp-1eb0686adfd0` | backtest | topic:trend | 1.22 | 0.289 | 0.000 |
-| `exp-7dac4933334b` | backtest | topic:volatility_filter | 1.18 | 0.266 | 0.000 |
-| `exp-86cd7fad3373` | backtest | topic:trend | 1.08 | 0.207 | 0.000 |
+| `exp-ab5f35e4874a` | backtest | topic:trend | 1.22 | 0.293 | 0.000 |
+| `exp-1eb0686adfd0` | backtest | topic:trend | 1.22 | 0.290 | 0.000 |
+| `exp-7dac4933334b` | backtest | topic:volatility_filter | 1.18 | 0.267 | 0.000 |
+| `exp-86cd7fad3373` | backtest | topic:trend | 1.08 | 0.208 | 0.000 |
 | `exp-48c793440fb1` | backtest | topic:trend | 1.05 | 0.191 | 0.000 |
 | `exp-9757bcb81b5c` | backtest | topic:trend | 1.04 | 0.189 | 0.000 |
 

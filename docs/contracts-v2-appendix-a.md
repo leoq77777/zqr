@@ -1,7 +1,6 @@
 # Contracts v2, appendix A: statistics and admission rules for portfolio research
 
-Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12; amendment A13.1 is a draft
-for review. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
+Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12 and amendment A13.1. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
 for portfolio research, as decided in `docs/superpowers/specs/2026-10-13-research-library-portfolio-design.md`
 (sections 4.4, 5.3, 5.4, 5.5, 5.6 and 6.5). Takes effect for a mandate only when the mandate version names it
 (`statistics: appendix-a-v1`); mandates already stored are immutable and keep their rules.
@@ -46,7 +45,8 @@ Every completed trial on the dev segment is reduced to daily returns.
 - Residuals: ordinary least squares with intercept, `r_d = a + b·m_d + ε_d`.
 - Winsorising: `ε` is clipped once at `mean(ε) ± 3·sd(ε)` (sample standard deviation).
 - Flat series: `max|r_d| < 1e-12` (never trades). All flat trials form one cluster.
-- Passive series: not flat, and `sd(ε) < 1e-4` per day (about 0.2% a year): return explained by the coin alone, so
+- Passive series (as amended by A13.1): not flat, and `sd(ε_w) < 1e-4` per day (about 0.2% a year), where `ε_w`
+  is the winsorised residual, also when a report clusters raw residuals: return explained by the coin alone, so
   residual correlations are noise. All passive trials form one cluster.
 
 ## A3. Clustering and the effective number of trials
@@ -190,7 +190,7 @@ forward. The daily report shows the earliest cut date.
 
 Amendments change the rule text above only once approved; until then the approved text applies.
 
-### A13.1 Passive series measured on the winsorised residual (draft 2026-10-15, for review)
+### A13.1 Passive series measured on the winsorised residual (approved 2026-10-15)
 
 **Problem.** Under A2 a buy-and-hold series is not passive when its first day deviates from the coin enough. The
 residual of holding the coin is almost entirely one day, the entry day (fee, slippage and entry at the first bar's

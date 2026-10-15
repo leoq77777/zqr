@@ -20,7 +20,7 @@ from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import squareform
 
 from quant_research.experiments.store import ExperimentStore, new_id
-from quant_research.memory.residuals import residuals, split_market_returns
+from quant_research.memory.residuals import PASSIVE_RULE, residuals, split_market_returns
 from quant_research.memory.returns import ReturnArchive
 from quant_research.memory.schema import ensure
 from quant_research.paths import Paths
@@ -54,7 +54,7 @@ def input_hash(returns: pd.DataFrame, no_returns: list[str], winsorise: bool) ->
     h = hashlib.sha256()
     cols = sorted(returns.columns)
     h.update(json.dumps({"columns": cols, "no_returns": sorted(no_returns), "winsorise": winsorise,
-                         "thresholds": THRESHOLDS}).encode())
+                         "thresholds": THRESHOLDS, "passive_rule": PASSIVE_RULE}).encode())
     h.update(np.ascontiguousarray(returns[cols].to_numpy(float)).tobytes())
     return h.hexdigest()[:16]
 
