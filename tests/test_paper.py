@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -124,10 +125,11 @@ def test_stale_data_and_kill_switch_block_new_exposure(tmp_path):
     kill = tmp_path / "KILL"
     cfg = _cfg(risk=RiskLimits(max_order_notional=1e9, max_orders_per_hour=100, stale_after_seconds=60,
                                kill_switch_file=str(kill)))
-    # replay delay 3600s after availability -> every decision sees stale data -> no orders at all
-    trader = run_replay(cfg, bars, tmp_path / "stale", PRODUCT, delay_seconds=3600)
+    # the 60s limit is floored at two hourly bars; a 3h replay delay still makes every decision stale
+    trader = run_replay(cfg, bars, tmp_path / "stale", PRODUCT, delay_seconds=3 * 3600)
     assert not trader.orders
-    assert '"stale": true' in (tmp_path / "stale" / "health.json").read_text()
+    health = json.loads((tmp_path / "stale" / "health.json").read_text())
+    assert health["stale"] and health["stale_after_effective"] == 7200
 
     kill.write_text("stop")
     trader = run_replay(_cfg(risk=cfg.risk.model_copy(update={"stale_after_seconds": 7200})), bars,
@@ -293,3 +295,13 @@ def test_ledger_waits_for_a_busy_database(tmp_path):
     ledger = Ledger(tmp_path / "l.db")
     assert ledger._conn.execute("PRAGMA busy_timeout").fetchone()[0] == 10000
     ledger.close()
+
+
+def test_daily_data_is_not_stale_between_bars(tmp_path):
+    now = {"t": float(T0)}
+    trader = make_trader(_cfg(granularity="ONE_DAY"), tmp_path / "d", PRODUCT, clock=lambda: now["t"])
+    trader.ledger.put("last_data_time", T0)
+    now["t"] += 20 * HOUR
+    assert not trader.write_health()["stale"]
+    now["t"] += 30 * HOUR
+    assert trader.write_health()["stale"]

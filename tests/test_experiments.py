@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 
 from quant_research.data.bars import to_epoch
-from quant_research.experiments.replay import replay_experiment
+from quant_research.experiments.replay import ReplayError, replay_experiment
 from quant_research.experiments.runner import ExperimentRequest, run_experiment, run_many
 from quant_research.experiments.store import ExperimentStore
 from quant_research.report.markdown import write_experiment_report
@@ -120,7 +120,9 @@ def test_holdout_requires_freeze_and_tracks_viewings(paths, store, dataset):
     again, prior2 = run_holdout(paths, store, req, max_viewings=10)
     assert again.status == "duplicate" and prior2 == 0  # the same candidate again is not a new viewing
     assert len(store.holdout_runs(split.split_id)) == 1
-    assert replay_experiment(paths, store, res.experiment_id)["reproducible"]
+    with pytest.raises(ReplayError, match="not replayed"):  # an uncounted viewing otherwise
+        replay_experiment(paths, store, res.experiment_id)
+    assert len(store.holdout_runs(split.split_id)) == 1
     # holdout runs do not inflate research trial counts
     assert store.trial_count(split_id=split.split_id) == 0
 
@@ -259,3 +261,35 @@ def test_interrupted_experiments_become_aborted(paths, store, dataset):
                            dataset_id=manifest["dataset_id"])
     assert store.mark_interrupted() == 1
     assert store.list_experiments()[0]["status"] == "aborted"
+
+
+def test_paper_replay_stops_at_the_protected_holdout(paths, dataset, capsys):
+    import json
+
+    from quant_research.cli import main
+    from quant_research.timeutil import parse_time, to_iso
+    from quant_research.validation.splits import holdout_cutoff
+
+    manifest, split = dataset
+    assert holdout_cutoff(paths, "BTC-USD", manifest["granularity"]) == split.holdout[0]
+    assert holdout_cutoff(paths, "ETH-USD", manifest["granularity"]) is None
+    main(["--home", str(paths.root), "paper", "replay", "--dataset", manifest["dataset_id"], "--name", "r",
+          "--template", "sma_cross", "--params", '{"fast": 5, "slow": 20}', "--last-bars", "100",
+          "--warmup-bars", "50"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["holdout_cutoff"] == to_iso(split.holdout[0])
+    assert parse_time(out["last_bar_open"]) < split.holdout[0]
+
+
+def test_only_the_holdout_gate_reads_holdout_data():
+    """Holdout bars are written by `create_split` and read only by `validation/holdout.py` (`run_holdout`)."""
+    from pathlib import Path
+
+    import quant_research
+
+    root = Path(quant_research.__file__).parent
+    allowed = {"paths.py", "validation/splits.py", "validation/holdout.py"}
+    readers = sorted(str(p.relative_to(root)) for p in root.rglob("*.py")
+                     if ("paths.holdout" in p.read_text() or "full.parquet" in p.read_text())
+                     and str(p.relative_to(root)) not in allowed)
+    assert readers == []

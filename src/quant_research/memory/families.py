@@ -10,6 +10,7 @@ trials. Unmapped clusters of at least `MIN_PROPOSAL` trials become new-family pr
 from __future__ import annotations
 
 import json
+import time
 from collections import Counter
 from typing import Any
 
@@ -132,10 +133,32 @@ def propose(store: ExperimentStore, split_id: str, clustering_id: str,
     return created
 
 
-def proposals(store: ExperimentStore, split_id: str | None = None, status: str = "open") -> list[dict[str, Any]]:
+def proposals(store: ExperimentStore, split_id: str | None = None,
+              status: str | None = "open") -> list[dict[str, Any]]:
+    """Proposals with the given status (all when None); decided ones carry their decision's reason."""
     ensure(store)
-    where, args = "status=?", [status]
+    where, args = ["1=1"], []
+    if status:
+        where, args = [*where, "status=?"], [*args, status]
     if split_id:
-        where, args = where + " AND split_id=?", [*args, split_id]
-    return [r | {"body": json.loads(r["body"])}
-            for r in store.query(f"SELECT * FROM family_proposals WHERE {where} ORDER BY id", args)]
+        where, args = [*where, "split_id=?"], [*args, split_id]
+    reasons = {r["proposal_id"]: r["reason"] for r in store.query(
+        "SELECT proposal_id, reason FROM proposal_decisions ORDER BY id")}
+    return [r | {"body": json.loads(r["body"]), "reason": reasons.get(r["id"])}
+            for r in store.query(f"SELECT * FROM family_proposals WHERE {' AND '.join(where)} ORDER BY id", args)]
+
+
+def reject_proposal(store: ExperimentStore, proposal_id: str, reason: str) -> None:
+    """The human's rejection: the cluster stays unmapped and is not proposed again for the same members."""
+    ensure(store)
+    if not reason.strip():
+        raise ValueError("a rejection needs a reason")
+    rows = store.query("SELECT status FROM family_proposals WHERE id=?", (proposal_id,))
+    if not rows:
+        raise ValueError(f"unknown proposal {proposal_id}")
+    if rows[0]["status"] != "open":
+        raise ValueError(f"proposal {proposal_id} is already {rows[0]['status']}")
+    now = time.time()
+    store.execute("INSERT INTO proposal_decisions (proposal_id, status, reason, decided_at) VALUES (?,?,?,?)",
+                  (proposal_id, "rejected", reason, now))
+    store.execute("UPDATE family_proposals SET status='rejected', decided_at=? WHERE id=?", (now, proposal_id))

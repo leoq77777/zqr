@@ -1,4 +1,8 @@
-"""Offline re-execution of a recorded experiment from its stored identity."""
+"""Offline re-execution of a recorded experiment from its stored identity.
+
+Only research segments replay. Holdout data is read only through `validation.holdout.run_holdout`, which counts
+viewings; a replay of a holdout run would be an uncounted viewing.
+"""
 
 from __future__ import annotations
 
@@ -32,15 +36,16 @@ def replay_experiment(paths: Paths, store: ExperimentStore, exp_id: str,
         raise ReplayError(f"unknown experiment {exp_id}")
     if rec["status"] not in ("completed", "duplicate"):
         raise ReplayError(f"experiment {exp_id} has status {rec['status']}; nothing to reproduce")
+    if rec["kind"] == "holdout" or rec["segment"] == "holdout":
+        raise ReplayError(f"experiment {exp_id} ran on the holdout; holdout runs are not replayed (a repeat goes "
+                          "through `zqr holdout-test`, which counts viewings)")
     manifest = load_manifest(paths, rec["dataset_id"])
     if manifest["data_hash"] != rec["data_hash"]:
         raise ReplayError("dataset content changed since the experiment was recorded")
-    source = (paths.holdout / rec["split_id"] / "full.parquet" if rec["kind"] == "holdout"
-              else paths.splits / rec["split_id"] / "research.parquet")
-    bars = pd.read_parquet(source)
+    bars = pd.read_parquet(paths.splits / rec["split_id"] / "research.parquet")
     window = (rec["window_start"], rec["window_end"])
     bars = bars[to_epoch(bars["bar_open_time"]) < window[1]].reset_index(drop=True)
-    segment = rec["segment"] if rec["segment"] in ("dev", "validation") else "dev"
+    segment = rec["segment"] if rec["segment"] in ("dev", "validation") else "dev"  # walk-forward folds
     request = ExperimentRequest(strategy_ref=rec["strategy_ref"], parameters=rec["parameters"],
                                 dataset_id=rec["dataset_id"], split_id=rec["split_id"], segment=segment,
                                 engine_config=EngineConfig.model_validate(rec["engine_config"]),

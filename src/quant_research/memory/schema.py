@@ -1,4 +1,4 @@
-"""Research memory tables in `experiments.db`. `family_conclusions` is append-only: nothing updates or deletes it."""
+"""Research memory tables in `experiments.db`. `family_conclusions` and `proposal_decisions` are append-only."""
 
 from __future__ import annotations
 
@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS cluster_members (
     PRIMARY KEY (clustering_id, threshold, experiment_id));
 CREATE TABLE IF NOT EXISTS family_proposals (
     id TEXT PRIMARY KEY, clustering_id TEXT, split_id TEXT, label TEXT, body TEXT, status TEXT, decided_at REAL);
+CREATE TABLE IF NOT EXISTS proposal_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, proposal_id TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL,
+    decided_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS family_conclusions (
     id INTEGER PRIMARY KEY AUTOINCREMENT, family_id TEXT, product TEXT, source TEXT, session_id TEXT UNIQUE,
     body TEXT NOT NULL, citations_ok INTEGER, problems TEXT, created_at REAL);

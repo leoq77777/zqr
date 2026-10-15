@@ -129,7 +129,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (231 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (237 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -201,8 +201,9 @@ Desk transitions record the authorization hash in the evidence. No transition to
 - `desk/promotion.py` `promote()` runs these steps and stops at the first refusal, leaving the candidate in the
   state it reached:
   1. Check the authorization against the dataset's product.
-  2. Refuse a mandate whose engine settings paper cannot reproduce (`execution_delay_bars`, `adverse_fill`,
-     `rebalance_tolerance` other than the defaults).
+  2. Refuse a mandate whose engine settings paper cannot reproduce (`execution_delay_bars` or `adverse_fill`
+     other than the defaults, or a `rebalance_tolerance` above the policy band, which paper trades as its
+     tolerance).
   3. Check the paper-slot cap (candidate entries in the roster), so a full roster never spends a holdout viewing.
      A `paper_approved` candidate skips this check.
   4. If `validated`: freeze the candidate (actor `desk`).
@@ -235,7 +236,8 @@ Desk transitions record the authorization hash in the evidence. No transition to
 - Each product/granularity has one feed: a bar store (`paper/barstore.py`) plus a poller. A new store is seeded
   from the frozen Coinbase dataset for that product and granularity reaching furthest back, else from the latest
   17,520 venue bars (`SEED_BARS`); after that it is only appended. Each poll fetches every completed bar after
-  the last stored one, so an outage is backfilled. Gaps the venue leaves raise a `bar_gap` alert.
+  the last stored one, so an outage is backfilled. A bar counts as completed 60 s after its close
+  (`SETTLE_SECONDS`), so a candle is never read while still forming. Gaps the venue leaves raise a `bar_gap` alert.
 - Every step, each trader receives the stored bars it has not seen (`_catch_up`): all but the latest are ingested
   without deciding (state, ledger bars and marks only), the latest goes through `on_bar`. Errors are isolated per
   trader. When any trader has live orders, the fleet fetches one mid price per product.
@@ -248,7 +250,8 @@ Desk transitions record the authorization hash in the evidence. No transition to
   - daily loss 5%;
   - 6 orders per hour;
   - stale after 7200 s, measured from the latest bar's close (`last_data_time`); the time the bar was fetched is
-    kept separately (`last_seen_time`, shown as `last_seen` in health);
+    kept separately (`last_seen_time`, shown as `last_seen` in health). The limit in force is at least two bar
+    intervals (`stale_after_effective` in health), so daily strategies are not stale between bars;
   - optional kill-switch file.
 - Each decision records `history_start`, target, price and equity; every bar is stored in the ledger, and the
   trader marks equity at every bar close (ledger table `marks`). `paper/parity.py` `paper_parity` checks, for
@@ -330,7 +333,9 @@ Rules are in `docs/contracts-v2-appendix-a.md` (approved 2026-10-15).
   maps to the family with the most seeds in it; when families tie it maps to all of them as a shared cluster
   (amendment A13.2: in each archive with `is_shared` and `shared_with`; reports also give deduplicated totals).
   Without seeds it maps to a family holding more than half its trials. Unmapped clusters of at least 5 trials
-  become `family_proposals` for the human.
+  become `family_proposals` for the human: `zqr memory proposals` lists them, `zqr memory reject <ids> --reason`
+  records a rejection in the append-only `proposal_decisions`. A rejected cluster stays unmapped as a negative
+  result and is not proposed again while its members are unchanged.
 - **Seed characterisation.** `zqr memory characterise` runs each seed instance once on its product's desk mandate
   (kind `seed`, counted as trials, duplicates not reused).
 - **Conclusions.** `zqr memory import-conclusions` imports each session's `research.json` into the append-only
@@ -360,7 +365,9 @@ These must hold after any change. Tests cover most of them.
    experiments with tool events.
 6. Trials on a split are never deleted. DSR counts all of them. Holdout data is read only through `run_holdout`,
    which caps viewings per split; exceeding the cap needs a recorded override and marks the split's holdout as
-   contaminated.
+   contaminated. A test enforces that no other module reads it. Experiment replay refuses holdout runs and reads
+   the split's research segment; `zqr paper replay` stops at the earliest protected holdout start of the product
+   and granularity (`holdout_cutoff`: a holdout a later split folds into its research data is no longer protected).
 7. No trading credentials exist. Paper fills are simulated against public market data.
 
 ## 7. Runtime layout (`ZQR_HOME`)
@@ -448,6 +455,7 @@ a one-off container with the same mounts while the desk is stopped).
 | `zqr library import [--dry-run] [--file PATH]` | Import the reviewed seed catalog into the library (new entries only) |
 | `zqr library list [--product P] [--family F] [--status S] [--json]` / `zqr library show <id>` | Library entries; one entry with its events and its seed run (dev Sharpe, split DSR) |
 | `zqr memory backfill\|characterise\|cluster\|import-conclusions\|archive\|report` / `zqr memory run [--sandbox docker\|subprocess]` / `zqr memory status` | Research memory steps (section 5.8); all steps in order; archived trials and K per split |
+| `zqr memory proposals [--status open\|rejected\|all]` / `zqr memory reject <ids> --reason` | Family proposals; record a human rejection |
 | `zqr release [--target HOST\|local] [--allow-dirty] [--no-up]` | Development machine: build, ship and start a version |
 
 Lower-level commands (`fetch-data`, `backtest`, `mandate`, `candidate`, `holdout-test`, `bench`, `paper`, …)

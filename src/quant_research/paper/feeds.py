@@ -16,6 +16,7 @@ from quant_research.paper.models import D
 from quant_research.timeutil import granularity_seconds
 
 SEED_BARS = 17_520  # two years of hourly bars: history to fetch when no frozen dataset can seed it
+SETTLE_SECONDS = 60  # Coinbase can still revise a candle shortly after its nominal close
 
 
 class ReplayFeed:
@@ -29,20 +30,24 @@ class ReplayFeed:
 
 
 class CoinbaseCandlePoller:
-    """Polls recent candles and emits each newly completed bar once, in order."""
+    """Polls recent candles and emits each newly completed bar once, in order.
+
+    A bar counts as completed `settle_seconds` after its close, so a candle is never read while still forming.
+    """
 
     def __init__(self, client: CoinbasePublicClient, product_id: str, granularity: str, lookback_bars: int = 5,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time, settle_seconds: int = SETTLE_SECONDS):
         self.client = client
         self.product_id = product_id
         self.granularity = granularity
         self.step = granularity_seconds(granularity)
         self.lookback = lookback_bars
         self.clock = clock
+        self.settle = settle_seconds
         self.last_open: int | None = None
 
     def _end(self) -> int:
-        now = int(self.clock())
+        now = int(self.clock()) - self.settle
         return now - now % self.step
 
     def range(self, start: int, end: int) -> pd.DataFrame:

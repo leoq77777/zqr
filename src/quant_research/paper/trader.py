@@ -88,7 +88,7 @@ class PaperTrader:
         self.workdir.mkdir(parents=True, exist_ok=True)
         self.paths = paths
         self.clock = clock
-        self.risk = RiskManager(cfg.risk)
+        self.risk = RiskManager(self._effective(cfg.risk))
         self.spec = StrategySpec(strategy_ref=cfg.strategy_ref, parameters=cfg.parameters).normalized()
         self.history = pd.DataFrame()
         self.last_price: Decimal | None = None
@@ -116,13 +116,20 @@ class PaperTrader:
     def live_orders(self) -> list[Order]:
         return [o for o in self.orders.values() if not o.terminal]
 
+    def _effective(self, limits: RiskLimits) -> RiskLimits:
+        """Data is stale only after two bar intervals at least: a daily bar is a day old just before the next."""
+        floor = 2 * granularity_seconds(self.cfg.granularity)
+        return limits.model_copy(update={"stale_after_seconds": max(limits.stale_after_seconds, floor)})
+
     def write_health(self) -> dict[str, Any]:
         now = self.clock()
         last_avail = self.ledger.get("last_data_time")
-        stale = last_avail is None or now - last_avail > self.cfg.risk.stale_after_seconds
+        stale_after = self.risk.limits.stale_after_seconds
+        stale = last_avail is None or now - last_avail > stale_after
         health = {
             "ts": now, "name": self.cfg.name, "config_hash": self.cfg.identity_hash(),
-            "risk": self.cfg.risk.model_dump(), "last_bar_open": self.ledger.get("last_bar_open"),
+            "risk": self.cfg.risk.model_dump(), "stale_after_effective": stale_after,
+            "last_bar_open": self.ledger.get("last_bar_open"),
             "data_age_seconds": None if last_avail is None else now - last_avail,
             "last_seen": self.ledger.get("last_seen_time"), "stale": stale,
             "halted_reason": self.halted_reason, "kill_switch": self.risk.kill_switch_on(),
@@ -203,7 +210,7 @@ class PaperTrader:
 
     def update_risk(self, limits: RiskLimits) -> None:
         self.cfg = self.cfg.model_copy(update={"risk": limits})
-        self.risk = RiskManager(limits)
+        self.risk = RiskManager(self._effective(limits))
         self._log("INFO", "risk_limits_updated", limits=limits.model_dump())
 
     # -- bar processing --------------------------------------------------------------------------

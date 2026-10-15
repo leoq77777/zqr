@@ -341,3 +341,15 @@ def test_promotion_refuses_settings_paper_cannot_reproduce(paths, store, dataset
     _authorize(paths)
     out = promotion.promote(paths, store, cid)
     assert "execution_delay_bars=1" in out["stopped"] and out["state"] == "validated"
+
+
+def test_a_rebalance_tolerance_within_the_band_is_no_paper_gap():
+    from quant_research.backtest.engine import EngineConfig
+    from quant_research.portfolio.policy import PortfolioPolicy
+
+    band = PortfolioPolicy(band=0.05)
+    assert promotion.paper_gaps(EngineConfig(rebalance_tolerance=0.05), band) == []
+    assert promotion.paper_gaps(EngineConfig(rebalance_tolerance=0.02), band) == []
+    assert promotion.paper_gaps(EngineConfig(rebalance_tolerance=0.1), band) == ["rebalance_tolerance=0.1"]
+    assert promotion.paper_gaps(EngineConfig(rebalance_tolerance=0.02), PortfolioPolicy()) == [
+        "rebalance_tolerance=0.02"]

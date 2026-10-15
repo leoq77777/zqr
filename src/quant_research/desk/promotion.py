@@ -14,6 +14,7 @@ from quant_research.data.snapshot import load_manifest
 from quant_research.experiments.store import ExperimentStore
 from quant_research.paper.fleet import RosterEntry, add_entry, load_roster
 from quant_research.paths import Paths
+from quant_research.portfolio.policy import PortfolioPolicy
 from quant_research.research import authorization as auth_mod
 from quant_research.research.authorization import AuthorizationError
 from quant_research.research.mandate import Mandate
@@ -28,9 +29,12 @@ PAPER_UNSUPPORTED = ("execution_delay_bars", "adverse_fill", "rebalance_toleranc
 RESUMABLE = ("validated", "frozen", "final_evaluated", "paper_approved")
 
 
-def paper_gaps(engine: EngineConfig) -> list[str]:
-    default = EngineConfig()
-    return [f"{k}={getattr(engine, k)!r}" for k in PAPER_UNSUPPORTED if getattr(engine, k) != getattr(default, k)]
+def paper_gaps(engine: EngineConfig, policy: PortfolioPolicy) -> list[str]:
+    """Validated engine settings paper cannot reproduce; paper trades the policy band as its rebalance tolerance."""
+    default = EngineConfig(rebalance_tolerance=max(EngineConfig().rebalance_tolerance, policy.band))
+    effective = policy.engine_config(engine)
+    return [f"{k}={getattr(engine, k)!r}" for k in PAPER_UNSUPPORTED
+            if getattr(effective, k) != getattr(default, k)]
 
 
 def authorization_path(paths: Paths):
@@ -77,7 +81,7 @@ def promote(paths: Paths, store: ExperimentStore, candidate_id: str, sandbox: Sa
         auth.check(now=now, product=manifest["instrument"])
     except AuthorizationError as exc:
         return stop(str(exc))
-    gaps = paper_gaps(mandate.engine_config)
+    gaps = paper_gaps(mandate.engine_config, mandate.policy)
     if gaps:
         return stop("paper cannot run the validated configuration (" + ", ".join(gaps)
                     + "); revalidate without these settings")

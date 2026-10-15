@@ -69,3 +69,14 @@ def test_a_seed_manifest_without_a_requested_start_sorts_last(paths):
     freeze(50, T0 + 200 * HOUR, requested_start=None)
     seed = snapshot_seed(paths, "BTC-USD", "ONE_HOUR")
     assert to_epoch(seed["bar_open_time"])[0] == T0 and len(seed) == 100
+
+
+def test_poller_waits_for_a_bar_to_settle():
+    clock = {"now": float(NOW0 - NOW0 % HOUR + 30)}
+    poller = CoinbaseCandlePoller(FakeCoinbase(lambda: clock["now"]), "BTC-USD", "ONE_HOUR",
+                                  clock=lambda: clock["now"])
+    poller.history(5)
+    last = poller.last_open
+    assert last == NOW0 - NOW0 % HOUR - 2 * HOUR
+    clock["now"] += 31
+    assert [int(b["bar_open_time"].timestamp()) for b in poller.poll()] == [last + HOUR]

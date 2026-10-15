@@ -632,11 +632,16 @@ def _paper_cfg(args, paths: Paths, instrument: str, granularity: str):
 
 
 def cmd_paper_replay(args) -> None:
+    from quant_research.data.bars import to_epoch
     from quant_research.data.snapshot import load_dataset
     from quant_research.paper.runner import run_replay
+    from quant_research.validation.splits import holdout_cutoff
 
     paths = get_paths(args.home)
     bars, manifest = load_dataset(paths, args.dataset)
+    cutoff = holdout_cutoff(paths, manifest["instrument"], manifest["granularity"])
+    if cutoff is not None:
+        bars = bars[to_epoch(bars["bar_open_time"]) < cutoff].reset_index(drop=True)
     if args.last_bars:
         bars = bars.tail(args.last_bars + args.warmup_bars).reset_index(drop=True)
     cfg = _paper_cfg(args, paths, manifest["instrument"], manifest["granularity"])
@@ -644,7 +649,8 @@ def cmd_paper_replay(args) -> None:
     trader = run_replay(cfg, bars, workdir, _default_product(manifest["instrument"]),
                         warmup_bars=args.warmup_bars, paths=paths,
                         faults=args.faults.split(",") if args.faults else None)
-    _out(trader.write_health() | {"orders": len(trader.orders), "workdir": str(workdir)})
+    _out(trader.write_health() | {"orders": len(trader.orders), "workdir": str(workdir),
+                                  "holdout_cutoff": None if cutoff is None else to_iso(cutoff)})
 
 
 def cmd_paper_run(args) -> None:
@@ -946,7 +952,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--max-orders-per-hour", type=int, default=6)
         p.add_argument("--stale-after", type=float, default=7200)
 
-    p = paper.add_parser("replay", help="replay a snapshot through the full paper stack")
+    p = paper.add_parser("replay", help="replay a snapshot through the full paper stack (stops at the earliest "
+                         "protected holdout of the product)")
     p.add_argument("--dataset", required=True)
     p.add_argument("--warmup-bars", type=int, default=200)
     p.add_argument("--last-bars", type=int, help="only replay the most recent N bars")

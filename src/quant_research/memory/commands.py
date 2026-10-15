@@ -104,6 +104,34 @@ def cmd_status(args) -> None:
         store.close()
 
 
+def cmd_proposals(args) -> None:
+    from quant_research.memory.families import proposals
+
+    paths, store = _open(args)
+    try:
+        rows = proposals(store, status=None if args.status == "all" else args.status)
+        _out([{"id": p["id"], "split_id": p["split_id"], "status": p["status"], "size": p["body"]["size"],
+               "topics": p["body"]["topics"], "median_sharpe": p["body"]["median_sharpe"], "reason": p["reason"]}
+              for p in rows])
+    finally:
+        store.close()
+
+
+def cmd_reject(args) -> None:
+    from quant_research.memory.families import reject_proposal
+
+    paths, store = _open(args)
+    try:
+        for pid in args.ids:
+            try:
+                reject_proposal(store, pid, args.reason)
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from None
+        _out({"rejected": args.ids, "reason": args.reason})
+    finally:
+        store.close()
+
+
 def register(sub) -> None:
     mem = sub.add_parser("memory", help="research memory: return archive, clusters and K, family archives")
     mem = mem.add_subparsers(dest="mcmd", required=True)
@@ -123,3 +151,10 @@ def register(sub) -> None:
     p.add_argument("--sandbox", choices=("docker", "subprocess"), default="docker")
     p.set_defaults(fn=cmd_run)
     mem.add_parser("status", help="archived trials and the latest K per split").set_defaults(fn=cmd_status)
+    p = mem.add_parser("proposals", help="new-family proposals")
+    p.add_argument("--status", choices=("open", "rejected", "all"), default="open")
+    p.set_defaults(fn=cmd_proposals)
+    p = mem.add_parser("reject", help="reject new-family proposals (the human's decision; recorded append-only)")
+    p.add_argument("ids", nargs="+")
+    p.add_argument("--reason", required=True)
+    p.set_defaults(fn=cmd_reject)

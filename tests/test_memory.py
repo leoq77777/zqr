@@ -304,6 +304,26 @@ def test_an_unmapped_cluster_becomes_one_proposal(paths, store, dataset):
     assert body["representative"]["strategy_ref"] == "template:sma_cross" and body["size"] >= 5
 
 
+def test_a_rejected_proposal_is_recorded_and_not_proposed_again(paths, store, dataset):
+    from quant_research.memory import clusters
+    from quant_research.memory.families import map_clusters, proposals, propose, reject_proposal
+
+    for f in range(3, 9):
+        run_experiment(paths, store, _req(dataset, parameters={"fast": f, "slow": 60}))
+    split = dataset[1].split_id
+    cid = clusters.record(store, clusters.compute(paths, store, split))
+    pid = propose(store, split, cid, map_clusters(store, cid))[0]
+    with pytest.raises(ValueError, match="needs a reason"):
+        reject_proposal(store, pid, " ")
+    reject_proposal(store, pid, "deterministic loss under costs")
+    assert proposals(store, split) == [] and propose(store, split, cid, map_clusters(store, cid)) == []
+    done = proposals(store, split, status="rejected")
+    assert [(p["id"], p["reason"]) for p in done] == [(pid, "deterministic loss under costs")]
+    with pytest.raises(ValueError, match="already rejected"):
+        reject_proposal(store, pid, "again")
+    assert len(store.query("SELECT * FROM proposal_decisions")) == 1
+
+
 # -- seed characterisation (A7) --------------------------------------------------------------------------------
 
 def _desk(paths, store, dataset):

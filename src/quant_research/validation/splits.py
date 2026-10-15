@@ -17,7 +17,7 @@ import pandas as pd
 from pydantic import BaseModel
 
 from quant_research.data.bars import to_epoch
-from quant_research.data.snapshot import load_dataset
+from quant_research.data.snapshot import load_dataset, load_manifest
 from quant_research.hashing import hash_obj
 from quant_research.paths import Paths
 from quant_research.timeutil import granularity_seconds, to_iso
@@ -101,6 +101,19 @@ def load_split(paths: Paths, split_id: str) -> SplitConfig:
 def list_splits(paths: Paths) -> list[SplitConfig]:
     return [SplitConfig.model_validate(json.loads(p.read_text()))
             for p in sorted(paths.splits.glob("*/split.json"))]
+
+
+def holdout_cutoff(paths: Paths, instrument: str, granularity: str) -> int | None:
+    """Earliest protected holdout start for a product and granularity: tools outside `run_holdout` stop there.
+
+    A holdout that a later split folds into its research data (appendix A11) is no longer protected.
+    """
+    splits = [s for s in list_splits(paths)
+              if s.granularity == granularity and load_manifest(paths, s.dataset_id)["instrument"] == instrument]
+    research = [(s.dev[0], s.validation[1]) for s in splits]
+    starts = [s.holdout[0] for s in splits
+              if not any(a <= s.holdout[0] and s.holdout[1] <= b for a, b in research)]
+    return min(starts, default=None)
 
 
 def load_research_segment(paths: Paths, split_id: str, segment: ResearchSegment) -> SegmentData:
