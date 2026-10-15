@@ -673,8 +673,10 @@ Files: `gateway/service.py` (`ToolGateway`), `gateway/mcp_server.py`, tests.
       campaign's own split: now the product's sections, own split first; (4) a CLI cost estimate without a price
       was booked as priced; now it is `unpriced` and stops the loop; (5) report tables ran into the next list line;
       (6) unknown price presets in `campaign_models` are refused when the config loads.
-- [ ] Ask before merging and releasing. After release: `zqr campaign generate` for both products; the human
-      reviews and approves the queue, then sets `research_enabled = true`.
+- [x] Ask before merging and releasing. After release: `zqr campaign generate` for both products; the human
+      reviews and approves the queue, then sets `research_enabled = true`. Released `0.1.0-89f03f10`
+      (2026-10-15); 6 proposals per product generated on production the same day (the rehearsal's batch).
+      Waiting for the human's review of the queue.
 
 ### Interpretations taken while building 4d (for the human's review)
 
