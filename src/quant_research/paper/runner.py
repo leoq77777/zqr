@@ -28,6 +28,10 @@ def make_trader(cfg: PaperConfig, workdir: Path, product: ProductSpec, paths=Non
     if broker is None:
         balances = _restore_sim_balances(ledger, cfg, product)
         broker = SimulatedBroker(product, balances, cfg.fee_rate, cfg.slippage_bps, faults)
+    if cfg.portfolio is not None:
+        from quant_research.paper.portfolio_trader import PortfolioTrader
+
+        return PortfolioTrader(cfg, ledger, broker, product, workdir, paths=paths, clock=clock)
     return PaperTrader(cfg, ledger, broker, product, workdir, paths=paths, clock=clock)
 
 

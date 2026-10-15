@@ -45,8 +45,9 @@ class RosterEntry(BaseModel):
     fee_rate: float | None = None  # None = the roster's default
     slippage_bps: float | None = None
     min_trade_notional: float | None = None
-    source: Literal["preset", "candidate"] = "preset"
+    source: Literal["preset", "candidate", "portfolio"] = "preset"
     candidate_id: str | None = None
+    portfolio_version: str | None = None  # source "portfolio": the version traded, `strategy_ref` portfolio:<id>
     enabled: bool = True
     added_at: float | None = None
 
@@ -153,6 +154,7 @@ class PaperFleet:
         self.roster = Roster()
         self.workdir = paths.paper
         self.workdir.mkdir(parents=True, exist_ok=True)
+        self._versions: dict[str, dict[str, Any]] = {}
 
     # -- logging ---------------------------------------------------------------------------------
     def _log(self, level: str, event: str, **data: Any) -> None:
@@ -166,16 +168,36 @@ class PaperFleet:
             self.products[product_id] = ProductSpec.from_coinbase(self.client.product(product_id).body)
         return self.products[product_id]
 
+    def _version_body(self, vid: str) -> dict[str, Any]:
+        """A portfolio version's body (immutable, so read once)."""
+        if vid not in self._versions:
+            from quant_research.experiments.store import ExperimentStore
+            from quant_research.portfolio.version import VersionStore
+
+            store = ExperimentStore(self.paths.db)
+            try:
+                self._versions[vid] = VersionStore(store).version(vid).model_dump(mode="json")
+            finally:
+                store.close()
+        return self._versions[vid]
+
     def _config(self, e: RosterEntry) -> PaperConfig:
         r = self.roster
         fee, slip, min_notional = entry_costs(e, r)
         sandbox = SandboxConfig(isolation="docker" if e.strategy_ref.startswith("plugin:") else "subprocess")
+        risk = {"kill_switch_file": str(self.workdir / e.name / "KILL")}
+        portfolio = None
+        if e.source == "portfolio":
+            if not e.portfolio_version or e.strategy_ref != f"portfolio:{e.portfolio_version}":
+                raise ValueError(f"{e.name}: a portfolio entry needs portfolio_version and strategy_ref "
+                                 "portfolio:<version>")
+            portfolio = self._version_body(e.portfolio_version)
+            risk["max_order_notional"] = e.initial_cash  # investment policy D1: the order cap is the capital
         return PaperConfig(name=e.name, instrument=e.product, granularity=e.granularity, strategy_ref=e.strategy_ref,
                            parameters=e.parameters, policy=e.policy, initial_quote=Decimal(str(e.initial_cash)),
                            fee_rate=Decimal(str(fee)), slippage_bps=Decimal(str(slip)),
-                           min_trade_notional=min_notional,
-                           risk=r.risk.model_copy(update={"kill_switch_file": str(self.workdir / e.name / "KILL")}),
-                           sandbox=sandbox)
+                           min_trade_notional=min_notional, risk=r.risk.model_copy(update=risk), sandbox=sandbox,
+                           portfolio=portfolio)
 
     def sync_roster(self) -> None:
         self._reload_roster()

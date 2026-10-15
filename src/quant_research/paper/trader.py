@@ -71,10 +71,14 @@ class PaperConfig(BaseModel):
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     fee_rate: Decimal = Decimal("0.006")  # simulator only
     slippage_bps: Decimal = Decimal("5")  # simulator only
+    portfolio: dict[str, Any] | None = None  # a portfolio version's body; traded by `PortfolioTrader`
 
     def identity_hash(self) -> str:
         """What is traded and how it is costed; a change needs a new strategy name. Risk limits are excluded."""
-        return hash_obj(self.model_dump(mode="json", exclude={"risk", "sandbox"}))[:12]
+        body = self.model_dump(mode="json", exclude={"risk", "sandbox"})
+        if body["portfolio"] is None:  # hashes of ledgers written before portfolios existed stay valid
+            del body["portfolio"]
+        return hash_obj(body)[:12]
 
 
 class PaperTrader:
@@ -89,7 +93,7 @@ class PaperTrader:
         self.paths = paths
         self.clock = clock
         self.risk = RiskManager(self._effective(cfg.risk))
-        self.spec = StrategySpec(strategy_ref=cfg.strategy_ref, parameters=cfg.parameters).normalized()
+        self.spec = self._strategy_spec()
         self.history = pd.DataFrame()
         self.last_price: Decimal | None = None
         self.halted_reason: str | None = self.ledger.get("halted_reason")
@@ -98,6 +102,9 @@ class PaperTrader:
             self.ledger.put("initial_balances", {product.base_currency: str(cfg.initial_base),
                                                  product.quote_currency: str(cfg.initial_quote)})
         self.orders = self.ledger.load_orders()
+
+    def _strategy_spec(self) -> StrategySpec | None:
+        return StrategySpec(strategy_ref=self.cfg.strategy_ref, parameters=self.cfg.parameters).normalized()
 
     # -- logging / health ------------------------------------------------------------------------
     def _log(self, level: str, event: str, **data: Any) -> None:
@@ -273,12 +280,9 @@ class PaperTrader:
         self.reconcile()
         self._mark(bar, close)
 
-        fraction = target_fraction(self.spec, self.cfg.policy, self.history, self.cfg.granularity, self.paths,
-                                   self.cfg.sandbox)
-        if fraction is None:  # unscheduled rebalance bar: no new instruction
-            return None
-        target = TargetPortfolio(instrument=self.cfg.instrument, target_fraction=fraction,
-                                 decided_at=float(avail), candidate_hash=self.spec.candidate_hash())
+        target = self._target(bar, float(avail))
+        if target is None:
+            return self._no_order(bar, close)
         bal = self.balances()
         equity = self.equity(close)
         current_frac = float(bal[self.product.base_currency] * close / equity) if equity > 0 else 0.0
@@ -295,7 +299,8 @@ class PaperTrader:
         record = {"bar_open": str(bar["bar_open_time"]), "history_start": str(self.history["bar_open_time"].iloc[0]),
                   "price": str(close), "equity": str(equity),
                   "max_order_notional": self.cfg.risk.max_order_notional, "target": target.model_dump(),
-                  "decision": decision.model_dump(), "intent": intent.model_dump() if intent else None}
+                  "decision": decision.model_dump(), "intent": intent.model_dump() if intent else None,
+                  **self._record_extra()}
         self.ledger.record_decision(now, record)
         if decision.reasons:
             self._log("WARN" if not decision.approved else "INFO", "risk_decision", **decision.model_dump())
@@ -304,12 +309,30 @@ class PaperTrader:
         self.write_health()
         return record
 
+    def _target(self, bar: dict[str, Any], avail: float) -> TargetPortfolio | None:
+        """The target at this bar's close; None for no new instruction (an unscheduled rebalance bar)."""
+        fraction = target_fraction(self.spec, self.cfg.policy, self.history, self.cfg.granularity, self.paths,
+                                   self.cfg.sandbox)
+        if fraction is None:
+            return None
+        return TargetPortfolio(instrument=self.cfg.instrument, target_fraction=fraction, decided_at=avail,
+                               candidate_hash=self.spec.candidate_hash())
+
+    def _no_order(self, bar: dict[str, Any], close: Decimal) -> dict[str, Any] | None:
+        return None
+
+    def _record_extra(self) -> dict[str, Any]:
+        return {}
+
+    def _order_gate(self, target: float, current_value: float, equity: float) -> bool:
+        return needs_trade(target, current_value, equity, tolerance=self.cfg.policy.band,
+                           min_notional=self.cfg.min_trade_notional)
+
     def _size(self, decision: RiskDecision, price: Decimal, equity: Decimal, bal: dict[str, Decimal],
               now: float) -> OrderIntent | None:
         p = self.product
         current_value = bal[p.base_currency] * price
-        if not needs_trade(decision.target_fraction, float(current_value), float(equity),
-                           tolerance=self.cfg.policy.band, min_notional=self.cfg.min_trade_notional):
+        if not self._order_gate(decision.target_fraction, float(current_value), float(equity)):
             return None
         delta = D(decision.target_fraction) * equity - current_value
         if decision.reduce_only and delta > 0:

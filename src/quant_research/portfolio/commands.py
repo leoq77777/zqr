@@ -84,6 +84,18 @@ def cmd_holdout(args) -> None:
     _run(args, lambda paths, store: run_portfolio_holdout(paths, store, args.version_id, args.override_reason))
 
 
+def cmd_approve(args) -> None:
+    from quant_research.portfolio.paper import approve
+
+    _run(args, lambda paths, store: approve(paths, store, args.version_id, args.note))
+
+
+def cmd_resume(args) -> None:
+    from quant_research.portfolio.paper import request_resume
+
+    _run(args, lambda paths, store: request_resume(paths, args.name, args.note))
+
+
 def register(sub) -> None:
     pf = sub.add_parser("portfolio", help="portfolio versions: seed, validate, freeze, holdout, approve, resume")
     pf = pf.add_subparsers(dest="pcmd", required=True)
@@ -108,3 +120,11 @@ def register(sub) -> None:
     p.add_argument("version_id")
     p.add_argument("--override-reason", help="lift the viewing cap or the 7-day rule; contaminates the holdout")
     p.set_defaults(fn=cmd_holdout)
+    p = pf.add_parser("approve", help="final_evaluated -> paper: add the roster entry (the human's decision)")
+    p.add_argument("version_id")
+    p.add_argument("--note", required=True)
+    p.set_defaults(fn=cmd_approve)
+    p = pf.add_parser("resume", help="resume a liquidated paper portfolio at its next bar (resets the peak)")
+    p.add_argument("name", help="roster name, e.g. portfolio-btc-usd")
+    p.add_argument("--note", required=True)
+    p.set_defaults(fn=cmd_resume)

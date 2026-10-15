@@ -8,6 +8,8 @@ and position value, and report back when an order was executed.
   alone never trades. The account starts in cash, so the last executed target starts at 0.
 - Ladder on the drawdown from the peak bar-close equity: halved at `halve`, back to full at `recover`, liquidated
   and halted at `liquidate` until a human resumes; resume resets the peak to the current equity.
+- Paper catch-up bars after an outage update the ladder without trading; a level change seen there is traded at the
+  next decision.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ class DeciderState:
     level: Level = "full"
     yellow: bool = False
     drawdown: float = 0.0
+    pending: bool = False  # a level change seen on a catch-up bar, not traded yet
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -67,9 +70,14 @@ class Decider:
         s.yellow = bool(s.drawdown <= lad.yellow)
         return s.level != before
 
+    def catch_up(self, equity: float) -> None:
+        if self.observe(equity):
+            self.state.pending = True
+
     def decide(self, blend_target: float, equity: float, position: float) -> float:
         """The order target for this bar, or NaN for no order."""
-        changed = self.observe(equity)
+        changed = self.observe(equity) or self.state.pending
+        self.state.pending = False
         t = min(max(blend_target * self.scale(), 0.0), 1.0)
         full_exit = t == 0.0 and position >= self.min_notional
         if changed or full_exit or abs(t - self.state.last_target) >= self.band - 1e-12:
