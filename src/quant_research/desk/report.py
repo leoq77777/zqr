@@ -1,8 +1,9 @@
 """Daily desk report: `desk/reports/YYYY-MM-DD.md` (UTC day).
 
 Paper: per strategy equity, return vs buy-and-hold over the same bars, trades, fees, alerts, and decision parity
-(targets recomputed from the bar store, orders re-derived with the backtest rule, fills compared with the next bar's
-open).
+(targets recomputed from the bar store; order side and size re-derived with the backtest rule, with the order cap,
+cash buffer and risk limits counted as allowed differences; fills compared with the next bar's open; a backtest run
+from the paper state at the first decision, with the equity gap split into execution and sizing/timing).
 Research: sessions, cost, trials, candidates by state, holdout viewings left, violations, audit failures.
 """
 
@@ -25,6 +26,8 @@ from quant_research.paper.ledger import Ledger
 from quant_research.paper.parity import paper_parity
 from quant_research.paths import Paths
 from quant_research.research.mandate import Mandate
+
+ALLOWED_LABELS = {"order_cap": "order cap", "cash_buffer": "cash buffer", "risk_adjusted": "risk limits"}
 
 
 def _window(day: str) -> tuple[float, float]:
@@ -58,7 +61,8 @@ def paper_section(paths: Paths, day: str) -> tuple[list[str], dict[str, Any]]:
             try:
                 par = paper_parity(entry, roster, ledger, stores[key], paths, since=t0, until=t1)
             except Exception as exc:  # noqa: BLE001 - one strategy's parity must not sink the report
-                par = {"checked": 0, "skipped": 0, "fills": 0, "order_mismatches": [],
+                par = {"checked": 0, "skipped": 0, "fills": 0, "order_mismatches": [], "size_mismatches": [],
+                       "allowed": {}, "path": None,
                        "target_mismatches": [f"parity failed ({type(exc).__name__}: {exc})"]}
         finally:
             ledger.close()
@@ -85,7 +89,7 @@ def paper_section(paths: Paths, day: str) -> tuple[list[str], dict[str, Any]]:
             p0 = float(all_dec[0]["price"]) if all_dec else marks.iloc[0]["price"]
             bh_total = end["price"] / (p0 * (1 + slip / 10_000) * (1 + fee)) - 1
         fees = sum(float(f.fee) for f in fills)
-        mismatches = par["target_mismatches"] + par["order_mismatches"]
+        mismatches = par["target_mismatches"] + par["order_mismatches"] + par["size_mismatches"]
         summary["strategies"] += 1
         summary["parity_mismatches"] += len(mismatches)
         summary["alerts"] += sum(alerts.values())
@@ -104,6 +108,13 @@ def paper_section(paths: Paths, day: str) -> tuple[list[str], dict[str, Any]]:
             details.append(f"- {name} execution: {par['fills']} fills, {par['fill_vs_next_open_bps']:+.1f} bps vs "
                            f"the next bar's open, fee rate error {par['fee_rate_error']:.2e}"
                            + (f"; {par['skipped']} decisions predate the bar store" if par["skipped"] else ""))
+        path = par.get("path")
+        if path and (par["fills"] or par["allowed"] or abs(path["equity_gap_bps"]) >= 0.5):
+            allowed = ", ".join(f"{ALLOWED_LABELS.get(k, k)} ×{v}" for k, v in sorted(par["allowed"].items()))
+            details.append(f"- {name} vs backtest over {path['bars']} bars: equity {path['equity_gap_bps']:+.1f} bps "
+                           f"(execution {path['execution_bps']:+.1f}, sizing and timing "
+                           f"{path['sizing_timing_bps']:+.1f}), exposure {path['exposure_gap_pp']:+.2f} pp"
+                           + (f"; allowed differences: {allowed}" if allowed else ""))
     lines = ["## Paper fleet", "",
              "Simulated fills at the mid price plus slippage and fees on live Coinbase public data. Returns use "
              "the equity marked at every bar close; total buy & hold includes the entry fee and slippage.", "",

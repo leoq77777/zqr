@@ -37,6 +37,7 @@ def test_daily_report_from_fixed_data(tmp_path, dataset):
     assert f"# Desk report {day}" in text
     assert "| btc-sma | sma_cross | BTC-USD |" in text and "| btc-bh | buy_and_hold |" in text
     assert "0 parity mismatches" in text and "6/6 |" in text
+    assert "btc-bh vs backtest over 5 bars: equity" in text and "execution" in text
     assert "Sessions: 2 (none 1, environment.docker 1)" in text and "0.21 USD" in text
     assert "| BTC-USD |" in text and "holdout viewings left" in text
     assert "desk-b: environment.docker" in text

@@ -343,7 +343,9 @@ class PaperFleet:
         return health
 
     def run(self, poll_seconds: float = 30.0, max_iterations: int | None = None,
-            sleep: Callable[[float], None] = time.sleep) -> None:
+            sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+        """Loop until SIGTERM/SIGINT or `max_iterations`; returns the final health, written before the ledgers
+        close."""
         stop = {"flag": False}
 
         def _stop(*_):
@@ -363,7 +365,9 @@ class PaperFleet:
             while (max_iterations is None or i < max_iterations) and not stop["flag"] and waited < poll_seconds:
                 sleep(min(1.0, poll_seconds - waited))
                 waited += 1.0
+        health = self.write_health()
         for trader in self.traders.values():
             trader._log("INFO", "stopped")
             trader.ledger.close()
         self._log("INFO", "fleet_stopped")
+        return health

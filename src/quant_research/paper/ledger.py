@@ -37,6 +37,7 @@ class Ledger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.path, isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=10000")  # the report reads ledgers the fleet is writing
         self._conn.executescript(SCHEMA)
 
     def close(self) -> None:

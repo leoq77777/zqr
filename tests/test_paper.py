@@ -220,5 +220,75 @@ def test_parity_is_clean_for_a_replay_with_partial_positions_and_a_band(tmp_path
                         policy=policy, fee_rate=0.001, slippage_bps=2.0)
     out = paper_parity(entry, Roster(), trader.ledger, bars, None)
     assert out["checked"] > 100 and out["skipped"] == 0
-    assert out["target_mismatches"] == [] and out["order_mismatches"] == []
+    assert out["target_mismatches"] == [] and out["order_mismatches"] == [] and out["size_mismatches"] == []
     assert out["fills"] > 4 and abs(out["fill_vs_next_open_bps"]) < 1e-6 and out["fee_rate_error"] < 1e-9
+    assert out["allowed"] == {}
+    path = out["path"]
+    assert path["bars"] > 100
+    assert abs(path["equity_gap_bps"]) < 0.01 and abs(path["execution_bps"]) < 0.01
+    assert abs(path["exposure_gap_pp"]) < 0.001
+
+
+def _parity_run(tmp_path, roster_risk=None, **cfg_kw):
+    from quant_research.paper.fleet import Roster, RosterEntry
+    from quant_research.paper.parity import paper_parity
+
+    bars = _bars(400)
+    cfg = _cfg(**cfg_kw)
+    trader = run_replay(cfg, bars, tmp_path / "p", PRODUCT)
+    entry = RosterEntry(name="t", product="BTC-USD", strategy_ref=cfg.strategy_ref, parameters=cfg.parameters,
+                        policy=cfg.policy, fee_rate=0.001, slippage_bps=2.0)
+    roster = Roster(risk=roster_risk) if roster_risk else Roster()
+    return trader, entry, roster, bars, paper_parity(entry, roster, trader.ledger, bars, None)
+
+
+def test_parity_counts_the_order_cap_as_an_allowed_difference(tmp_path):
+    risk = RiskLimits(max_order_notional=3000, max_orders_per_hour=100, max_daily_loss_fraction=0.99)
+    *_, out = _parity_run(tmp_path, roster_risk=risk, risk=risk, buy_cash_buffer=0.0)
+    assert out["order_mismatches"] == [] and out["size_mismatches"] == []
+    assert out["allowed"]["order_cap"] > 2
+    assert abs(out["path"]["exposure_gap_pp"]) < 100 and out["path"]["sizing_timing_bps"] != 0
+
+
+def test_parity_counts_the_cash_buffer_as_an_allowed_difference(tmp_path):
+    *_, out = _parity_run(tmp_path)  # default 1% buffer: full-exposure buys stop short of the backtest's size
+    assert out["size_mismatches"] == [] and out["allowed"].get("cash_buffer", 0) > 2
+
+
+def test_parity_catches_a_wrong_order_size(tmp_path):
+    import json
+
+    from quant_research.paper.parity import paper_parity
+
+    trader, entry, roster, bars, _ = _parity_run(tmp_path, buy_cash_buffer=0.0)
+    row = trader.ledger._conn.execute(
+        "SELECT id, data FROM decisions WHERE json_extract(data, '$.intent') IS NOT NULL ORDER BY id LIMIT 1"
+    ).fetchone()
+    data = json.loads(row[1])
+    data["intent"]["base_size"] = str(Decimal(data["intent"]["base_size"]) * Decimal("1.0005"))
+    trader.ledger._conn.execute("UPDATE decisions SET data=? WHERE id=?", (json.dumps(data), row[0]))
+    out = paper_parity(entry, roster, trader.ledger, bars, None)
+    assert len(out["size_mismatches"]) == 1 and data["bar_open"] in out["size_mismatches"][0]
+
+
+def test_paper_buy_size_follows_the_backtest_rule(tmp_path):
+    from quant_research.paper.parity import rule_quantity
+
+    # Partial targets, so the target (not the cash) limits the buys and the slippage term matters.
+    policy = PortfolioPolicy(vol_target=0.5, vol_lookback=24, band=0.05)
+    trader, *_ = _parity_run(tmp_path, buy_cash_buffer=0.0, policy=policy)
+    marks = {r["bar_open"]: r for r in trader.ledger.marks().to_dict("records")}
+    buys = [d for d in trader.ledger.decisions() if d.get("intent") and d["intent"]["side"] == "buy"]
+    assert sum(0 < d["decision"]["target_fraction"] < 0.95 for d in buys) > 2
+    for d in buys:
+        m = marks[d["bar_open"]]
+        rule = rule_quantity("buy", d["decision"]["target_fraction"], m["base"], m["quote"], m["price"], 0.001, 2.0)
+        assert float(d["intent"]["base_size"]) == pytest.approx(rule, abs=2e-8)
+
+
+def test_ledger_waits_for_a_busy_database(tmp_path):
+    from quant_research.paper.ledger import Ledger
+
+    ledger = Ledger(tmp_path / "l.db")
+    assert ledger._conn.execute("PRAGMA busy_timeout").fetchone()[0] == 10000
+    ledger.close()

@@ -101,6 +101,16 @@ def test_fleet_runs_many_strategies_on_shared_feeds(tmp_path):
     assert bh.balances()["BTC"] > 0  # buy and hold is invested
 
 
+def test_fleet_shutdown_reports_health_before_closing_ledgers(tmp_path):
+    t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma"), _entry("btc-bh", ref="template:buy_and_hold")])
+    fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)
+    health = fleet.run(max_iterations=2, sleep=lambda s: None)
+    assert set(health["strategies"]) == {"btc-sma", "btc-bh"}
+    assert not any("error" in h for h in health["strategies"].values())
+    written = json.loads((fleet.workdir / "fleet_health.json").read_text())
+    assert not any("error" in h for h in written["strategies"].values())
+
+
 def test_recorded_window_reproduces_each_decision(tmp_path):
     t, paths, roster, client = _setup(tmp_path, [_entry("btc-sma")])
     fleet = PaperFleet(paths, roster, client, clock=lambda: t["now"], seed_bars=1000)

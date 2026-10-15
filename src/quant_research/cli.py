@@ -670,8 +670,7 @@ def cmd_paper_fleet(args) -> None:
     if not roster.exists():
         save_roster(roster, preset_roster())
     fleet = PaperFleet(paths, roster, _client(args), on_activate=activate_hook(paths))
-    fleet.run(poll_seconds=args.poll_seconds, max_iterations=args.max_iterations)
-    _out(fleet.write_health())
+    _out(fleet.run(poll_seconds=args.poll_seconds, max_iterations=args.max_iterations))
 
 
 def cmd_paper_status(args) -> None:

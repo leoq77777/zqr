@@ -308,9 +308,10 @@ class PaperTrader:
             return None
         max_notional = D(self.cfg.risk.max_order_notional)
         if delta > 0:
-            fee_room = ((1 + self.cfg.fee_rate) * (1 + self.cfg.slippage_bps / 10_000)
-                        * (1 + D(self.cfg.buy_cash_buffer)))
-            notional = min(delta, bal[p.quote_currency] / fee_room, max_notional)
+            slip = 1 + self.cfg.slippage_bps / 10_000
+            fee_room = (1 + self.cfg.fee_rate) * slip * (1 + D(self.cfg.buy_cash_buffer))
+            # The backtest buys delta's worth at the slipped fill price: quantity delta / (price * (1 + slippage)).
+            notional = min(delta / slip, bal[p.quote_currency] / fee_room, max_notional)
             side = Side.BUY
         else:
             notional = min(-delta, max_notional)

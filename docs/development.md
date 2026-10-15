@@ -64,7 +64,9 @@ stateful positions. The poller backfills from the last stored bar after an outag
 only the latest bar can trade. Staleness is the age of the latest bar close. Risk limits edited in the roster apply
 to running traders; edits to strategy, parameters, policy, capital or costs are refused (add the changed strategy
 under a new name). Failed attaches retry with backoff. Every trader marks equity at each bar close; the daily
-report computes returns from the marks and checks parity on targets, orders and fills.
+report computes returns from the marks and checks parity on targets, orders and fills. Paper buys are sized like
+the backtest (the target delta at the slipped fill price), capped by cash after fees and the cash buffer and by
+`max_order_notional`.
 
 Promotion copies the validated capital and costs into the roster entry, refuses engine settings paper cannot
 reproduce (`execution_delay_bars`, `adverse_fill`, `rebalance_tolerance`), does not freeze a candidate on a split
@@ -126,7 +128,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (194 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (200 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -252,7 +254,12 @@ Desk transitions record the authorization hash in the evidence. No transition to
   - targets: `target_fraction` recomputed from the bar store with the research code must match exactly;
   - orders: `needs_trade` applied to the marked position and equity at that bar must give the same side (or no
     order);
-  - fills: average price against the next bar's open ± slippage, and the fee against the configured fee rate.
+  - sizes: the order quantity must match the backtest rule (`rule_quantity`) within a cent; an order limited by
+    `max_order_notional` or the cash buffer, or resized by the risk limits, is an allowed difference, counted
+    separately;
+  - fills: average price against the next bar's open ± slippage, and the fee against the configured fee rate;
+  - path: `run_backtest` from the paper cash and position at the first checked decision; the equity gap at the last
+    one is split into execution (model cost minus actual cost of the fills) and sizing and timing (the rest).
 - Outputs: `paper/bars/`, `paper/fleet_health.json`, `paper/fleet.jsonl`, and `paper/<strategy>/` (`paper.db`,
   `events.jsonl`, `health.json`).
 
@@ -275,6 +282,10 @@ Desk transitions record the authorization hash in the evidence. No transition to
 
 - per-strategy equity, day and total return from the bar-close marks against buy & hold (total buy & hold pays
   the entry fee and slippage), fills, fees, alerts, and parity on targets, orders and fills;
+- parity per decision: the target, the order side and the order size re-derived with the backtest rule; orders
+  limited by the order cap, the cash buffer or the risk limits are counted as allowed differences, not mismatches;
+- a shadow backtest from the paper cash and position at the day's first decision: the equity gap in bps, split into
+  execution (fill price and fees against the cost model) and sizing and timing, and the final exposure gap;
 - process restarts and fleet alerts;
 - research sessions by failure class, cost against the cap, violations and audit failures;
 - trials per split, candidates by state and holdout viewings left, flagged "(contaminated by override)" when the
@@ -496,6 +507,9 @@ exactly the production layout (volumes, control network, sibling containers) on 
   `test_desk.py`, `test_experiments.py`, `test_report.py`).
 - **Paper history before the bar store:** decisions recorded before a strategy's ledger started from the bar
   store have a different `history_start` and are counted as skipped by the parity check, not verified.
+- **Paper buy sizing change:** up to release `0.1.0-b28b1a2c`, paper buys were sized at `delta / close`, about one
+  slippage (5 bps) larger than the backtest. A report day that includes decisions from before that release can show
+  them as size mismatches.
 - **Not built:** M6 multi-asset portfolio, a second agent adapter (Codex), live trading (out of scope by design),
   reconciliation against a real account.
 - **Operations:**

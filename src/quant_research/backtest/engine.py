@@ -76,7 +76,10 @@ def run_backtest(
     config: EngineConfig,
     window: tuple[int, int] | None = None,
     step_seconds: int | None = None,
+    initial: tuple[float, float] | None = None,
 ) -> BacktestResult:
+    """`initial` = (cash, quantity) at the window start instead of `config.initial_cash` and no position; paper
+    parity replays a window from a paper trader's state."""
     bars = bars.reset_index(drop=True)
     if len(targets) != len(bars):
         raise ValueError("targets and bars must align")
@@ -99,7 +102,7 @@ def run_backtest(
     def _round(q: float) -> float:
         return q if inc is None else math.floor(q / inc + 1e-9) * inc
 
-    cash, qty = float(config.initial_cash), 0.0
+    cash, qty = (float(config.initial_cash), 0.0) if initial is None else (float(initial[0]), float(initial[1]))
     fills, trips = [], []
     trip_entry: tuple | None = None  # (time, bar_index, cash_before_entry_as_value)
     eq_rows = []
