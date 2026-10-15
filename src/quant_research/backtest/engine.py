@@ -8,12 +8,15 @@ Execution contract (docs/contracts-v2.md section 4):
 - buys are capped so cash never goes negative; no leverage, no shorting.
 - with `base_increment`, traded quantities are rounded down to the increment.
 - a NaN target means no order at that bar; the position is left to drift.
+- with a `decider` (portfolio path), the target for bar t is asked from it with the cash and position at bar t's
+  close, the drift tolerance is 0 (the decider applies the signal deadband), and it is told when an order filled.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Protocol
 
 import numpy as np
 import pandas as pd
@@ -65,6 +68,12 @@ class BacktestResult:
     meta: dict = field(default_factory=dict)
 
 
+class Decider(Protocol):
+    def decide(self, i: int, equity: float, position: float) -> float: ...
+
+    def executed(self, i: int, target: float) -> None: ...
+
+
 FILL_COLUMNS = ["time", "bar_index", "side", "qty", "price", "mark_price", "notional", "fee", "slippage_cost",
                 "target"]
 TRIP_COLUMNS = ["entry_time", "exit_time", "bars_held", "pnl", "return"]
@@ -77,9 +86,12 @@ def run_backtest(
     window: tuple[int, int] | None = None,
     step_seconds: int | None = None,
     initial: tuple[float, float] | None = None,
+    decider: Decider | None = None,
 ) -> BacktestResult:
     """`initial` = (cash, quantity) at the window start instead of `config.initial_cash` and no position; paper
     parity replays a window from a paper trader's state."""
+    if decider is not None and config.execution_delay_bars:
+        raise ValueError("a decider needs execution_delay_bars = 0 (it sees the state at the decision close)")
     bars = bars.reset_index(drop=True)
     if len(targets) != len(bars):
         raise ValueError("targets and bars must align")
@@ -98,6 +110,7 @@ def run_backtest(
     slip = config.costs.slippage_bps / 10_000.0
     delay = config.execution_delay_bars
     inc = config.base_increment
+    tolerance = 0.0 if decider is not None else config.rebalance_tolerance
 
     def _round(q: float) -> float:
         return q if inc is None else math.floor(q / inc + 1e-9) * inc
@@ -112,12 +125,16 @@ def run_backtest(
         decided = i - 1 - delay
         if i > 0 and step_seconds and opens_ts[i] - opens_ts[i - 1] != step_seconds:
             gap_crossings += 1
-        target = float(targets[decided]) if decided >= 0 else math.nan
+        if decider is not None:
+            target = decider.decide(decided, cash + qty * c[decided], qty * c[decided]) if decided >= 0 else math.nan
+        else:
+            target = float(targets[decided]) if decided >= 0 else math.nan
+        filled = False
         if not math.isnan(target):  # NaN = no instruction at this bar (warmup or unscheduled rebalance)
             equity_open = cash + qty * o[i]
             delta = target * equity_open - qty * o[i]
             full_exit = target == 0.0 and qty > 0
-            if needs_trade(target, qty * o[i], equity_open, tolerance=config.rebalance_tolerance,
+            if needs_trade(target, qty * o[i], equity_open, tolerance=tolerance,
                            min_notional=config.min_trade_notional):
                 value_before = equity_open
                 if delta > 0:
@@ -131,6 +148,7 @@ def run_backtest(
                         was_flat = qty == 0
                         qty += q
                         fills.append((times[i], i, "buy", q, px, o[i], notional, fee, q * (px - o[i]), target))
+                        filled = True
                         if was_flat:
                             trip_entry = (times[i], i, value_before)
                 elif delta < 0 or full_exit:
@@ -145,10 +163,13 @@ def run_backtest(
                         if qty <= 1e-15:
                             qty = 0.0
                         fills.append((times[i], i, "sell", q, px, o[i], notional, fee, q * (o[i] - px), target))
+                        filled = True
                         if qty == 0.0 and trip_entry is not None:
                             pnl = cash - trip_entry[2]
                             trips.append((trip_entry[0], times[i], i - trip_entry[1], pnl, pnl / trip_entry[2]))
                             trip_entry = None
+        if filled and decider is not None:
+            decider.executed(decided, target)
         equity = cash + qty * c[i]
         eq_rows.append((times[i], cash, qty, c[i], equity, qty * c[i] / equity if equity > 0 else 0.0))
 
