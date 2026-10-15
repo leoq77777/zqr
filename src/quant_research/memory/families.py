@@ -70,7 +70,11 @@ def tag_trials(paths: Paths, store: ExperimentStore, catalog: Catalog | None = N
 
 def map_clusters(store: ExperimentStore, clustering_id: str,
                  threshold: float = MAPPING_THRESHOLD) -> dict[str, dict[str, Any]]:
-    """label -> {family, basis, size, members}; special labels (flat, passive, no returns) are not mapped."""
+    """label -> {families, shared, basis, size, members}; special labels (flat, passive, no returns) are not mapped.
+
+    Seeds decide; when several families tie for the most seeds, the cluster maps to all of them (shared, A13.2).
+    Without seeds, a family needs a strict majority of the cluster's tagged trials.
+    """
     lab = members(store, clustering_id, threshold)
     info = {r["experiment_id"]: r for r in store.query(
         "SELECT experiment_id, kind, family_tag, tag_source, no_returns FROM return_index WHERE experiment_id IN "
@@ -83,20 +87,20 @@ def map_clusters(store: ExperimentStore, clustering_id: str,
         groups.setdefault(label, []).append(exp_id)
     out: dict[str, dict[str, Any]] = {}
     for label, ids in sorted(groups.items()):
-        seeds = sorted(i for i in ids if info[i]["kind"] == "seed" and info[i]["family_tag"])
-        family, basis = None, None
+        seeds = [i for i in ids if info[i]["kind"] == "seed" and info[i]["family_tag"]]
+        fams: list[str] = []
+        basis = None
         if seeds:
             votes = Counter(info[i]["family_tag"] for i in seeds)
             top = max(votes.values())
-            family = next(info[i]["family_tag"] for i in seeds if votes[info[i]["family_tag"]] == top)
-            basis = "seed"
+            fams, basis = sorted(f for f, n in votes.items() if n == top), "seed"
         else:
             votes = Counter(info[i]["family_tag"] for i in ids if info[i]["family_tag"])
             if votes:
                 fam, n = votes.most_common(1)[0]
                 if n * 2 > len(ids):
-                    family, basis = fam, "tags"
-        out[label] = {"family": family, "basis": basis, "size": len(ids), "members": ids}
+                    fams, basis = [fam], "tags"
+        out[label] = {"families": fams, "shared": len(fams) > 1, "basis": basis, "size": len(ids), "members": ids}
     return out
 
 
@@ -105,7 +109,7 @@ def propose(store: ExperimentStore, split_id: str, clustering_id: str,
     """New-family proposals for unmapped clusters; a proposal for the same members is not repeated."""
     created = []
     for label, m in mapping.items():
-        if m["family"] or m["size"] < MIN_PROPOSAL:
+        if m["families"] or m["size"] < MIN_PROPOSAL:
             continue
         ids = m["members"]
         marks = ",".join("?" * len(ids))

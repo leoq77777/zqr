@@ -78,12 +78,17 @@ def split_section(paths: Paths, store: ExperimentStore, split_id: str) -> list[s
                        for r in store.query(f"SELECT strategy_ref FROM experiments WHERE id IN "
                                             f"({','.join('?' * len(m['members']))})", m["members"]))
         best = max((index[e]["sharpe"] for e in m["members"] if index[e]["sharpe"] is not None), default=None)
-        fam = f"{m['family']} ({m['basis']})" if m["family"] else "unmapped"
+        fam = (" + ".join(m["families"]) + f" ({m['basis']}{', shared' if m['shared'] else ''})"
+               if m["families"] else "unmapped")
         lines.append(f"| `{label}` | {m['size']} | {fam} | "
                      + ", ".join(f"{t} {n}" for t, n in topics.most_common(4)) + " | "
                      + ", ".join(f"{r} {n}" for r, n in refs.most_common(3)) + f" | {_f(best)} |")
-    mapped = Counter(m["family"] or "unmapped" for m in mapping.values() for _ in m["members"])
-    lines += ["", "Trials by family at ρ 0.3: " + ", ".join(f"{f} {n}" for f, n in sorted(mapped.items())) + ".", ""]
+    mapped = Counter(f for m in mapping.values() for f in (m["families"] or ["unmapped"]) for _ in m["members"])
+    dedup = sum(m["size"] for m in mapping.values() if m["families"])
+    shared = sum(m["size"] for m in mapping.values() if m["shared"])
+    lines += ["", "Trials by family at ρ 0.3: " + ", ".join(f"{f} {n}" for f, n in sorted(mapped.items()))
+              + f". A shared cluster counts under each of its families ({shared} trials in shared clusters); "
+              f"deduplicated, {dedup} trials are mapped to a family.", ""]
     seeds = seed_runs(store, split_id)
     if seeds:
         lines += ["Seed placement:", "",

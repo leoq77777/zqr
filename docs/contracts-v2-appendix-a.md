@@ -1,7 +1,6 @@
 # Contracts v2, appendix A: statistics and admission rules for portfolio research
 
-Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12 and amendment A13.1; amendment A13.2 is a draft
-for review. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
+Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12 and amendments A13.1 and A13.2. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
 for portfolio research, as decided in `docs/superpowers/specs/2026-10-13-research-library-portfolio-design.md`
 (sections 4.4, 5.3, 5.4, 5.5, 5.6 and 6.5). Takes effect for a mandate only when the mandate version names it
 (`statistics: appendix-a-v1`); mandates already stored are immutable and keep their rules.
@@ -241,7 +240,7 @@ though the returns did not change (earlier clusterings stay on record); the retu
 clustering. Tests: a buy-and-hold series with a large first-day residual is passive; a series out of the coin for
 5% of days is not; the raw-residual K uses the same passive set.
 
-### A13.2 Shared clusters when seed families tie (draft 2026-10-15, for review)
+### A13.2 Shared clusters when seed families tie (approved 2026-10-15)
 
 **Problem.** A12.4 maps a cluster with seeds to the seeds' family but does not say what happens when seeds of
 several families are equally many. The implementation broke the tie by the lowest experiment id among the seeds;

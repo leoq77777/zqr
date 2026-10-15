@@ -262,16 +262,19 @@ def _fake_clustering(store, groups: dict[str, list[tuple[str, str, str | None]]]
             store.execute("INSERT INTO cluster_members VALUES (?,?,?,?)", ("clu-x", 0.3, exp_id, label))
 
 
-def test_seeds_decide_a_cluster_and_ties_go_to_the_lowest_id_seed(store):
+def test_seeds_decide_a_cluster_and_a_tie_shares_it(store):
     from quant_research.memory.families import map_clusters
 
     _fake_clustering(store, {
         "a": [("a1", "seed", "tsmom"), ("a2", "seed", "ewma_trend"), ("a3", "backtest", "vol_overlay"),
               ("a4", "backtest", "vol_overlay"), ("a5", "backtest", "vol_overlay")],
-        "b": [("b1", "seed", "ewma_trend"), ("b2", "seed", "tsmom"), ("b3", "seed", "tsmom")]})
+        "b": [("b1", "seed", "ewma_trend"), ("b2", "seed", "tsmom"), ("b3", "seed", "tsmom")],
+        "z": [("z9", "seed", "tsmom"), ("z1", "seed", "ewma_trend"), ("z2", "seed", "trend_filter"),
+              ("z3", "seed", "ewma_trend"), ("z4", "seed", "tsmom")]})
     m = map_clusters(store, "clu-x")
-    assert (m["a"]["family"], m["a"]["basis"]) == ("tsmom", "seed")  # seeds outrank tags; tie -> lowest id
-    assert m["b"]["family"] == "tsmom"  # majority of seeds
+    assert (m["a"]["families"], m["a"]["basis"], m["a"]["shared"]) == (["ewma_trend", "tsmom"], "seed", True)
+    assert (m["b"]["families"], m["b"]["shared"]) == (["tsmom"], False)
+    assert m["z"]["families"] == ["ewma_trend", "tsmom"]  # whichever seed id is lowest
 
 
 def test_without_seeds_a_family_needs_more_than_half_of_the_cluster(store):
@@ -281,7 +284,7 @@ def test_without_seeds_a_family_needs_more_than_half_of_the_cluster(store):
         "c": [("c1", "backtest", "vol_overlay")] + [(f"c{i}", "backtest", None) for i in range(2, 10)],
         "d": [(f"d{i}", "backtest", "vol_overlay") for i in range(3)] + [("d9", "backtest", None)]})
     m = map_clusters(store, "clu-x")
-    assert m["c"]["family"] is None and m["d"]["family"] == "vol_overlay"
+    assert m["c"]["families"] == [] and m["d"]["families"] == ["vol_overlay"] and not m["d"]["shared"]
 
 
 def test_an_unmapped_cluster_becomes_one_proposal(paths, store, dataset):
@@ -294,7 +297,7 @@ def test_an_unmapped_cluster_becomes_one_proposal(paths, store, dataset):
     cid = clusters.record(store, clusters.compute(paths, store, split))
     mapping = map_clusters(store, cid)
     big = [m for m in mapping.values() if m["size"] >= 5]
-    assert big and all(m["family"] is None for m in big)
+    assert big and all(not m["families"] for m in big)
     created = propose(store, split, cid, mapping)
     assert len(created) == len(big) and propose(store, split, cid, mapping) == []
     body = proposals(store, split)[0]["body"]
@@ -409,6 +412,37 @@ def test_archive_lists_members_representative_costs_and_regimes(paths, store, da
     assert set(v["regimes"]) == {"trend_up", "trend_down", "high_vol", "low_vol"}
     assert set(v["correlation"]) == {"channel_breakout"}
     assert v["k"]["0.7"] >= 1 and v["members"][0]["split_dsr"] is not None
+
+
+def test_a_shared_cluster_is_in_both_archives_with_its_conclusions(paths, store, dataset):
+    from quant_research.memory import clusters
+    from quant_research.memory.archive import build_archives, render_md
+    from quant_research.memory.characterise import characterise
+    from quant_research.memory.conclusions import import_conclusions
+    from quant_research.memory.families import tag_trials
+    from quant_research.memory.report import split_section
+
+    _desk(paths, store, dataset)
+    split = dataset[1].split_id
+    characterise(paths, store, entries={"tsmom-1m", "turtle-s1"})
+    sid, _ = _session_with_report(paths, store, dataset)
+    _ledger(paths, {sid: ("BTC-USD", "trend")})
+    tag_trials(paths, store)
+    cid = clusters.record(store, clusters.compute(paths, store, split))
+    store.execute("UPDATE cluster_members SET label='exp-shared' WHERE clustering_id=? AND threshold=0.3 "
+                  "AND label NOT IN ('flat', 'passive')", (cid,))
+    size = len([e for e, lb in clusters.members(store, cid, 0.3).items() if lb == "exp-shared"])
+    import_conclusions(paths, store)
+    a = build_archives(paths, store)
+    for fam, other in (("tsmom", "channel_breakout"), ("channel_breakout", "tsmom")):
+        v = a[fam]["splits"][split]
+        assert v["clusters_0.3"] == [{"label": "exp-shared", "size": size, "is_shared": True, "shared_with": [other]}]
+        assert v["trials_in_shared_clusters"] == v["trials"] == size == 3
+        assert [c["shared_with"] for c in a[fam]["conclusions"]] == [[other]]
+    assert "Shared clusters" in render_md(a["tsmom"])
+    text = "\n".join(split_section(paths, store, split))
+    assert "channel_breakout + tsmom (seed, shared)" in text
+    assert "channel_breakout 3, tsmom 3." in text and "deduplicated, 3 trials are mapped" in text
 
 
 # -- commands and report ---------------------------------------------------------------------------------------

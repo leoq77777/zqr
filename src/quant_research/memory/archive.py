@@ -137,7 +137,8 @@ def _split_view(paths: Paths, store: ExperimentStore, split_id: str, catalog: Ca
 
     views: dict[str, dict[str, Any]] = {}
     for fam in families:
-        trials = sorted(e for m in mapping.values() if m["family"] == fam for e in m["members"])
+        mine = {lb: m for lb, m in mapping.items() if fam in m["families"]}
+        trials = sorted(e for m in mine.values() for e in m["members"])
         seeds = sorted(i for i, n in seed_of.items() if entry_family.get(n.get("library_entry")) == fam
                        and i in returns.columns)
         pool = seeds or [t for t in trials if t in returns.columns]
@@ -149,7 +150,9 @@ def _split_view(paths: Paths, store: ExperimentStore, split_id: str, catalog: Ca
             "k": last["k"], "clustering_input": last["input_hash"],
             "members": [stats(s) | {"instance": seed_of[s]["instance"]} for s in seeds],
             "representative": stats(rep) if rep else None,
-            "trials": len(trials), "clusters_0.3": sorted(lb for lb, m in mapping.items() if m["family"] == fam),
+            "trials": len(trials), "trials_in_shared_clusters": sum(m["size"] for m in mine.values() if m["shared"]),
+            "clusters_0.3": [{"label": lb, "size": m["size"], "is_shared": m["shared"],
+                              "shared_with": [f for f in m["families"] if f != fam]} for lb, m in sorted(mine.items())],
             "clusters_0.7": len({lab07[t] for t in trials if t in lab07}),
             "parameters_tried": _param_ranges(exps),
             "cost": ({"sharpe_1x": _r(sharpe_daily(returns[rep].to_numpy()))}
@@ -168,11 +171,13 @@ def _split_view(paths: Paths, store: ExperimentStore, split_id: str, catalog: Ca
     return views
 
 
-def _family_of_conclusion(c: dict[str, Any], trial_family: dict[str, str]) -> str | None:
+def _families_of_conclusion(c: dict[str, Any], trial_families: dict[str, list[str]]) -> list[str]:
+    """Its own family, else the families with the most cited experiments (all of them on a tie, A13.2)."""
     if c["family_id"]:
-        return c["family_id"]
-    votes = Counter(trial_family[e] for e in (c["body"].get("experiment_ids") or []) if e in trial_family)
-    return votes.most_common(1)[0][0] if votes else None
+        return [c["family_id"]]
+    votes = Counter(f for e in (c["body"].get("experiment_ids") or []) for f in trial_families.get(e, []))
+    top = max(votes.values(), default=0)
+    return sorted(f for f, n in votes.items() if n == top) if top else []
 
 
 def build_archives(paths: Paths, store: ExperimentStore, catalog: Catalog | None = None,
@@ -185,21 +190,21 @@ def build_archives(paths: Paths, store: ExperimentStore, catalog: Catalog | None
     families = sorted(fams)
     by_split = {s: _split_view(paths, store, s, catalog, sandbox, families)
                 for s in ReturnArchive(paths, store).splits()}
-    trial_family: dict[str, str] = {}
+    trial_families: dict[str, list[str]] = {}
     for s in by_split:
         last = clusters.latest(store, s)
         if last:
             for m in map_clusters(store, last["id"]).values():
                 for e in m["members"]:
-                    if m["family"]:
-                        trial_family[e] = m["family"]
+                    trial_families[e] = m["families"]
     concl: dict[str, list[dict[str, Any]]] = {f: [] for f in families}
     for c in conclusions(store):
-        fam = _family_of_conclusion(c, trial_family)
-        if fam in concl:
+        fams_c = [f for f in _families_of_conclusion(c, trial_families) if f in concl]
+        for fam in fams_c:
             concl[fam].append({"session_id": c["session_id"], "product": c["product"], "topic": c["body"]["topic"],
                                "decision": c["body"]["decision"], "hypothesis": c["body"]["hypothesis"],
-                               "unresolved": c["body"]["unresolved"], "citations_ok": bool(c["citations_ok"])})
+                               "unresolved": c["body"]["unresolved"], "citations_ok": bool(c["citations_ok"]),
+                               "shared_with": [f for f in fams_c if f != fam]})
     out = {}
     for f in families:
         out[f] = {"family": f, **fams[f],
@@ -218,6 +223,12 @@ def render_md(a: dict[str, Any]) -> str:
                   f"Split K (ρ 0.3 / 0.5 / 0.7): {k['0.3']} / {k['0.5']} / {k['0.7']}. Trials mapped to the family: "
                   f"{v['trials']} in {len(v['clusters_0.3'])} clusters at 0.3 ({v['clusters_0.7']} at 0.7). "
                   f"Holdout viewings used: {v['holdout_viewings']}.", ""]
+        shared = [c for c in v["clusters_0.3"] if c["is_shared"]]
+        if shared:
+            lines += ["Shared clusters (seed families tie, appendix A13.2; also in the archives of "
+                      + ", ".join(sorted({f for c in shared for f in c["shared_with"]})) + "): "
+                      + ", ".join(f"`{c['label']}` ({c['size']} trials)" for c in shared)
+                      + f"; {v['trials_in_shared_clusters']} of the {v['trials']} trials.", ""]
         if v["members"]:
             lines += ["| member | dev Sharpe | max DD | turnover | split DSR |", "|---|---|---|---|---|"]
             lines += [f"| {m['instance']} | {m['sharpe']} | {m['max_drawdown']} | {m['turnover']} | {m['split_dsr']} |"

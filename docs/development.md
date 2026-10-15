@@ -129,7 +129,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (230 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (231 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -327,8 +327,10 @@ Rules are in `docs/contracts-v2-appendix-a.md` (approved 2026-10-15).
   changes (`clusterings`, `cluster_members`).
 - **Families.** Seed runs are tagged with their library family; older trials with their session topic
   (`volatility_filter` → `vol_overlay`, `mean_reversion` → `short_term_reversal`, archive only). A ρ 0.3 cluster
-  maps to the family of its seeds (lowest seed id on a tie), else to a family holding more than half its trials.
-  Unmapped clusters of at least 5 trials become `family_proposals` for the human.
+  maps to the family with the most seeds in it; when families tie it maps to all of them as a shared cluster
+  (amendment A13.2: in each archive with `is_shared` and `shared_with`; reports also give deduplicated totals).
+  Without seeds it maps to a family holding more than half its trials. Unmapped clusters of at least 5 trials
+  become `family_proposals` for the human.
 - **Seed characterisation.** `zqr memory characterise` runs each seed instance once on its product's desk mandate
   (kind `seed`, counted as trials, duplicates not reused).
 - **Conclusions.** `zqr memory import-conclusions` imports each session's `research.json` into the append-only
