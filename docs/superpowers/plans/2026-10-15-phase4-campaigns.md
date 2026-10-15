@@ -676,7 +676,9 @@ Files: `gateway/service.py` (`ToolGateway`), `gateway/mcp_server.py`, tests.
 - [x] Ask before merging and releasing. After release: `zqr campaign generate` for both products; the human
       reviews and approves the queue, then sets `research_enabled = true`. Released `0.1.0-89f03f10`
       (2026-10-15); 6 proposals per product generated on production the same day (the rehearsal's batch).
-      Waiting for the human's review of the queue.
+      The human delegated approval of all 12 to the agent; queued by score with the products interleaved, and
+      `research_enabled` set to true the same day. First production session (ETH `ewma_trend`): 12 experiments,
+      a registration, gate 1 failed, 0.064 USD, audit clean.
 
 ### Interpretations taken while building 4d (for the human's review)
 
