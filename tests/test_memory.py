@@ -187,3 +187,109 @@ def test_clustering_is_recorded_once_per_input(paths, store, dataset, tmp_path):
     assert clusters.record(store, clusters.compute(paths, store, split)) == cid
     assert clusters.effective_k(store, split) == c.k["0.7"] >= 2
     assert set(clusters.members(store, cid, 0.7)) == {*ok, rejected}
+
+
+# -- family tags and cluster mapping (A12 point 4) -------------------------------------------------------------
+
+def _ledger(paths, sessions: dict[str, tuple[str, str]]):
+    import json
+
+    paths.desk.mkdir(parents=True, exist_ok=True)
+    (paths.desk / "research_ledger.jsonl").write_text("".join(
+        json.dumps({"session_id": sid, "product": p, "topic": t, "run_id": f"run-{sid}"}) + "\n"
+        for sid, (p, t) in sessions.items()))
+
+
+def test_legacy_topics_map_to_family_tags(paths, store, dataset):
+    from quant_research.memory.families import tag_trials
+
+    _ledger(paths, {"sess-v": ("BTC-USD", "volatility_filter"), "sess-t": ("BTC-USD", "trend"),
+                    "sess-m": ("BTC-USD", "mean_reversion")})
+    ids = {sid: run_experiment(paths, store, _req(dataset, parameters={"fast": f, "slow": 60}),
+                               session_id=sid).experiment_id
+           for sid, f in (("sess-v", 5), ("sess-t", 10), ("sess-m", 20))}
+    tag_trials(paths, store)
+    rows = {r["experiment_id"]: r for r in store.query("SELECT * FROM return_index")}
+    assert (rows[ids["sess-v"]]["family_tag"], rows[ids["sess-v"]]["tag_source"]) == \
+        ("vol_overlay", "topic:volatility_filter")
+    assert (rows[ids["sess-t"]]["family_tag"], rows[ids["sess-t"]]["tag_source"]) == (None, "topic:trend")
+    assert rows[ids["sess-m"]]["family_tag"] == "short_term_reversal"
+
+
+def _fake_clustering(store, groups: dict[str, list[tuple[str, str, str | None]]]):
+    """groups: label -> [(experiment id, kind, family tag)]; writes return_index and cluster_members rows."""
+    from quant_research.memory.schema import ensure
+
+    ensure(store)
+    for label, members in groups.items():
+        for exp_id, kind, tag in members:
+            store.execute("INSERT INTO return_index (experiment_id, split_id, kind, family_tag, no_returns, sharpe) "
+                          "VALUES (?,?,?,?,0,0.1)", (exp_id, "s", kind, tag))
+            store.execute("INSERT INTO cluster_members VALUES (?,?,?,?)", ("clu-x", 0.3, exp_id, label))
+
+
+def test_seeds_decide_a_cluster_and_ties_go_to_the_lowest_id_seed(store):
+    from quant_research.memory.families import map_clusters
+
+    _fake_clustering(store, {
+        "a": [("a1", "seed", "tsmom"), ("a2", "seed", "ewma_trend"), ("a3", "backtest", "vol_overlay"),
+              ("a4", "backtest", "vol_overlay"), ("a5", "backtest", "vol_overlay")],
+        "b": [("b1", "seed", "ewma_trend"), ("b2", "seed", "tsmom"), ("b3", "seed", "tsmom")]})
+    m = map_clusters(store, "clu-x")
+    assert (m["a"]["family"], m["a"]["basis"]) == ("tsmom", "seed")  # seeds outrank tags; tie -> lowest id
+    assert m["b"]["family"] == "tsmom"  # majority of seeds
+
+
+def test_without_seeds_a_family_needs_more_than_half_of_the_cluster(store):
+    from quant_research.memory.families import map_clusters
+
+    _fake_clustering(store, {
+        "c": [("c1", "backtest", "vol_overlay")] + [(f"c{i}", "backtest", None) for i in range(2, 10)],
+        "d": [(f"d{i}", "backtest", "vol_overlay") for i in range(3)] + [("d9", "backtest", None)]})
+    m = map_clusters(store, "clu-x")
+    assert m["c"]["family"] is None and m["d"]["family"] == "vol_overlay"
+
+
+def test_an_unmapped_cluster_becomes_one_proposal(paths, store, dataset):
+    from quant_research.memory import clusters
+    from quant_research.memory.families import map_clusters, propose, proposals
+
+    for f in range(3, 9):
+        run_experiment(paths, store, _req(dataset, parameters={"fast": f, "slow": 60}))
+    split = dataset[1].split_id
+    cid = clusters.record(store, clusters.compute(paths, store, split))
+    mapping = map_clusters(store, cid)
+    big = [m for m in mapping.values() if m["size"] >= 5]
+    assert big and all(m["family"] is None for m in big)
+    created = propose(store, split, cid, mapping)
+    assert len(created) == len(big) and propose(store, split, cid, mapping) == []
+    body = proposals(store, split)[0]["body"]
+    assert body["representative"]["strategy_ref"] == "template:sma_cross" and body["size"] >= 5
+
+
+# -- seed characterisation (A7) --------------------------------------------------------------------------------
+
+def _desk(paths, store, dataset):
+    from quant_research.desk.config import DeskConfig, save_config
+    from tests.conftest import make_mandate
+
+    m = make_mandate(dataset)
+    store.put_mandate(m.mandate_id(), m.model_dump(mode="json"))
+    save_config(paths, DeskConfig(mandates={"BTC-USD": m.mandate_id()}))
+
+
+def test_characterise_runs_each_seed_instance_once_on_dev(paths, store, dataset):
+    from quant_research.memory.characterise import characterise, seed_runs
+    from quant_research.memory.families import tag_trials
+
+    _desk(paths, store, dataset)
+    split = dataset[1].split_id
+    out = characterise(paths, store, entries={"tsmom-1w", "turtle-s1"})
+    assert [o["instance"] for o in out] == ["btc-tsmom-1w", "btc-turtle-s1"]
+    assert all(o["status"] == "completed" for o in out)
+    assert characterise(paths, store, entries={"tsmom-1w", "turtle-s1"}) == []
+    assert set(seed_runs(store, split)) == {"btc-tsmom-1w", "btc-turtle-s1"}
+    assert store.trial_count(split_id=split) == 2
+    tag_trials(paths, store)
+    tags = {r["tag_source"]: r["family_tag"] for r in store.query("SELECT * FROM return_index")}
+    assert tags == {"seed:tsmom-1w": "tsmom", "seed:turtle-s1": "channel_breakout"}
