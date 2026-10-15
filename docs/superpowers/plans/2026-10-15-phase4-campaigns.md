@@ -357,11 +357,13 @@ labelled with its parent).
   (neighbours near 1,180); seeds that entered at that open show returns of 20,000x and more. ETH 2017-06-21 19:00
   has low 0.10 (the GDAX flash crash; Turtle's exit channel reads it). A rule "open or low below half of
   min(previous close, close), or open or high above twice the max" flags exactly these two bars in nine years and
-  none in the 2021+ data. Needs a decision (amendment) before the extension is frozen in production.
+  none in the 2021+ data. A third (ETH 2017-04-15 23:00, open 74.98 against closes near 48.5) escapes that rule;
+  the isolated-print rule of A13.5 (drafted, awaiting approval) catches all three and nothing else.
 - [ ] Rehearsal finding, open: the ladder liquidates and never resumes in a backtest. BTC seed portfolio liquidated
   2020-03-12 (48% of dev in cash), ETH 2017-09-15 (84%). As gate 1's reference this is mostly zero. Without the
   ladder: BTC Sharpe 1.89 (2015-2020) and 0.83 (2021-2024), drawdown -39%; ETH 1.54 and 1.11, drawdown -39% (still
-  with the bad prints). Needs a decision on the reference before gate 1 runs on the long dev.
+  with the bad prints). The human chose the run without the ladder (2026-10-15); A13.6 drafted, awaiting approval.
+- [ ] After approval: implement A13.5 and A13.6, rerun the rehearsal from the fetched candles on clean data.
 - [ ] Ask before merging and releasing.
 
 **Host steps after release 4b** (who runs each in brackets):

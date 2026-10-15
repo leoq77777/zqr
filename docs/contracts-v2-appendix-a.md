@@ -1,6 +1,6 @@
 # Contracts v2, appendix A: statistics and admission rules for portfolio research
 
-Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12, amendments A13.1 to A13.4, and the phase 3 decisions in A14. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
+Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12, amendments A13.1 to A13.4, and the phase 3 decisions in A14. A13.5 and A13.6 are proposed, awaiting approval. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
 for portfolio research, as decided in `docs/superpowers/specs/2026-10-13-research-library-portfolio-design.md`
 (sections 4.4, 5.3, 5.4, 5.5, 5.6 and 6.5). Takes effect for a mandate only when the mandate version names it
 (`statistics: appendix-a-v1`); mandates already stored are immutable and keep their rules.
@@ -340,6 +340,70 @@ a search that did not happen.
 `extend_dataset`. Tests: an extended dataset keeps the base rows' hash and refuses gaps, overlaps and mismatches;
 lineage refused on different windows or data; K and trial counts add the ancestors', recursively; a child of a
 closed split refuses a holdout without loading holdout data.
+
+### A13.5 Isolated bad prints in candle data (proposed 2026-10-15, awaiting approval)
+
+**Problem.** The E1 rehearsal on a copy of production data found three bars in Coinbase's pre-2021 hourly candles
+at prices no order of any size could have traded at:
+
+- BTC-USD 2017-04-15 23:00 UTC: open and low 0.06, close 1,178.85, previous close 1,182.99 (the first bar after an
+  exchange outage).
+- ETH-USD 2017-04-15 23:00 UTC: open and high 74.98, close 48.94, previous close 48.53 (the same outage).
+- ETH-USD 2017-06-21 19:00 UTC: low 0.10, open 315.97, close 298.00 (the GDAX flash crash, a few seconds long).
+
+The engine fills at the next bar's open, so seeds that entered at the BTC open show returns of 20,000x and more;
+Turtle's channels read highs and lows. `validate_bars` checks that prices are positive and OHLC-consistent; these
+bars pass.
+
+**Amended rule (adds to the data validation of contracts v2).**
+
+- `validate_bars` drops isolated prints as invalid reason `isolated_print`:
+  - an isolated open: the open is more than 20% away from both the previous close and the bar's own close;
+  - an isolated wick: the low is below half of the smallest of open, close and previous close, or the high is above
+    twice the largest.
+  The previous close is that of the previous valid bar, whatever the gap. The first bar of a request has no previous
+  close: the open check is skipped and the wick check uses its open and close.
+- A dropped bar becomes a one-bar gap, and the dataset's fill policy treats it like any other gap (`ffill_flat`: a
+  flat bar at the previous close, volume 0). The validation report lists each dropped bar with its time and prices.
+- Thresholds: in 24/7 trading a bar opens at the previous close. Over nine years of both products the largest
+  isolated-open deviation of any other bar is 5.6% (ETH, June 2016, the listing weeks; BTC 1.2%), and the largest
+  other wick ratio is 1.41 (ETH 2017-03-17). Both thresholds are three times or more beyond any genuine bar, and
+  flag only the three bars above.
+- Applies to every dataset frozen or extended after release 4b. Frozen datasets are immutable and unchanged; the
+  rule flags no bar in their range (2021-01-01 to 2026-10-13 06:00 UTC, both products). The paper bar store is not
+  affected.
+
+**Implementation.** `data/validate.py` `validate_bars`. Tests: each kind dropped and reported; a genuine large move
+(a 25% hourly fall from an open at the previous close) kept; the fill policy fills the dropped bar.
+
+### A13.6 The ladder in research measures (proposed 2026-10-15, awaiting approval)
+
+**Problem.** A14.1 runs the drawdown ladder in every backtest. After a liquidation (−30%) the ladder waits for a
+human resume, which no backtest has, so the run stays in cash to the end of the segment. On the long dev (A13.4)
+the rehearsal's seed portfolios liquidated on 2020-03-12 (BTC; 48% of dev in cash) and 2017-09-15 (ETH; 84%). As
+gate 1's `R_p` that series is zero for most of dev, and every variant would be regressed on cash. A14.1's argument
+that the ladder does not change the seed verdict holds for a validation segment, not for a nine-year dev.
+
+**Amended rule (amends A6 and A14.1).**
+
+- Measures of a portfolio's construction use the version run without the ladder (same members, weights, overlays
+  and costs; the ladder levels disabled):
+  - gate 1's `R_p` (A6);
+  - the portfolio dev run's series in the return archive (A1), and so in clustering (A3);
+  - campaign diagnostics and period statistics, which show both runs side by side.
+- Gate 2 (validation) runs both portfolios, with and without the variant, without the ladder: the ladder caps both
+  drawdowns near −30% and freezes both runs after a liquidation, so the drawdown and Sharpe comparisons would
+  compare ladder timing rather than the variant. (A separate point; approve or reject on its own.)
+- The ladder stays wherever the version is judged as it would trade: the seed validation standard (A6), gate 3
+  (holdout), paper and live. Reports keep both drawdowns.
+- No resume rule is simulated: a rule for when a human would resume is a new parameter, chosen on the dev it would
+  then be judged on.
+- Applies to portfolio runs recorded after release 4b; earlier runs stay as recorded. On the 2021-2024 splits the
+  ladder never liquidated (the ETH seed portfolio spent 7% of one run halved).
+
+**Implementation.** `portfolio/evaluate.py`: the dev run writes the run without the ladder next to the run with it
+(`equity_no_ladder.parquet`); the archive and `period_stats` read it; gate 1 and gate 2 read it when they are built
+(phase 4 Tasks 3-16). Tests: a dev run that liquidates archives the series without the ladder; periods show both.
 
 ## A14. Portfolio layer decisions (approved 2026-10-15)
 
