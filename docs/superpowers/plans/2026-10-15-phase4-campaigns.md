@@ -106,6 +106,10 @@ investment policy sections 2 and 5; seed review `docs/reviews/2026-10-15-seed-po
    `zqr close-holdout --split split-1016c7c9873a --note ...`, `zqr close-holdout --split split-c47a0be57a24
    --note ...`, `zqr portfolio shadow pv-4864fc813a30 --note ...`, `zqr portfolio shadow pv-6b52caaf11b5
    --note ...`; the shadows start at the next fleet roster reload (cash, from the release day).
+
+Tasks 3-16 below are the outline as approved; they are detailed (2026-10-15, on the long dev) in the sections
+"Release 4c" and "Release 4d" further down, which replace them where they differ.
+
 3. **Hypothesis registration.** Immutable `hypotheses` table: prior text, citations (published or experiment
    ids), 1-3 variants (code hash, parameters), campaign id. More than three variants or a second registration per
    campaign refused. Human CLI `zqr hypothesis register` and a gateway tool for campaigns.
@@ -392,6 +396,280 @@ labelled with its parent).
 
 ## Open points to settle while detailing the tasks
 
-- Family quotas per split (the design names them, no values yet).
-- Campaign model choice and per-session wall clock.
+- Family quotas per split (the design names them, no values yet). Proposal P1 below.
+- Campaign model choice and per-session wall clock. Proposal P2 below.
 - Shadow traders start from the release day's bar, cash, like any new paper trader (decided with release 4a).
+
+## Release 4c: registered hypotheses and the two gates (human CLI, no agent)
+
+Draft for review, 2026-10-15. No code before approval.
+
+**Goal.** A human registers a hypothesis on a product's current mandate split; one controller command runs gate 1
+and, if a variant passes, gate 2; a passing version becomes `admitted` and waits for the next split. No agent and
+no campaign: research stays disabled. Release 4d's agent calls the same functions.
+
+**Facts this plan rests on** (read in the code on 2026-10-15):
+
+- Gate 1's test is `evaluation/split_stats.appraisal_test(candidate, portfolio, k)` (A6), implemented and unused.
+- Gate 1's reference is `portfolio/evaluate.gate1_reference(store, product, split_id)`, recorded by
+  `zqr portfolio dev <vid> --reference` (BTC `pv-bef1798ef4d9`, ETH `pv-77bad34a29c6` on the long-dev splits).
+- Research measures use the run without the ladder (A13.6): `research_equity_file`, `sharpe_daily_no_ladder`,
+  `max_drawdown_no_ladder`; `turnover` is in the run summary.
+- `portfolio/blend._targets` refuses `plugin:` members ("phase 3b"); `strategy/compute.compute_targets` already
+  runs plugins through `run_plugin` with a `SandboxConfig`.
+- Version states have no `admitted`; transitions out of `draft` are `validated` / `failed_validation`
+  (controller).
+- Library entries come only from the seed catalog (`LibraryStore.import_catalog`); statuses `candidate`,
+  `probation`, `member`, `retired`. Families carry `sleeve: bool`; members share capital equally across sleeves
+  and equally within a family, capped at `member_cap` 0.15.
+
+**Scope limits (4c and 4d).**
+
+- A hypothesis is on one product and its variants are sleeve members (template or plugin) in one family.
+- Overlay hypotheses are refused: a different overlay changes the reference itself; it would be proposed to the
+  human as a reference change, not run through the gates.
+- Plugin members run in backtests through the docker sandbox; paper refuses plugin members until a later phase
+  (no version reaches paper before the next split, earliest 2027-10-12).
+
+### C1. Hypothesis store and registration
+
+Files: new `src/quant_research/hypothesis/__init__.py`, `model.py`, `store.py`, `commands.py`; `cli.py`;
+`tests/test_hypothesis.py`.
+
+- [ ] `model.Hypothesis` (pydantic, frozen, `extra="forbid"`): `product`, `family`, `prior` (1-2,000
+      characters), `citations` (at least one; each `{kind: "published", ref}` or `{kind: "experiment", id}`),
+      `variants` (1-3 of `{strategy_ref, parameters}`), `campaign_id` (optional). Id `hy-` + hash of the body plus
+      the split and reference (below).
+- [ ] `store.HypothesisStore` on the experiments database (like `VersionStore`): tables `hypotheses` (id, product,
+      split_id, reference_id, family, body, campaign_id, registered_by, note, at) and `hypothesis_events`
+      (append only: gate results, admission). No update or delete path.
+- [ ] Registration fixes the split (the product's desk mandate split) and the reference (`gate1_reference`) and
+      records them, so a later mandate change does not move a registered hypothesis.
+- [ ] Refusals, each with its own message: no mandate or no reference for the product; 0 or more than 3 variants;
+      two variants with the same normalised spec; unknown family or a family without a sleeve; unknown template or
+      invalid parameters; a plugin hash not registered; an experiment citation that does not exist or is not a dev
+      experiment on the hypothesis split; a second registration with the same `campaign_id`; an identical body
+      already registered.
+- [ ] State derived from events: `registered` → `gate1_failed` | `gate2_failed` | `admitted`.
+- [ ] CLI (human): `zqr hypothesis register --file h.yaml --note ...` (plugin variants as `plugin_file: path`,
+      frozen with `strategy/plugin.register_plugin` to `plugin:<sha256>`); `zqr hypothesis list [--product]
+      [--state]`; `zqr hypothesis show <hid>` (body, events, gate evidence).
+- [ ] Tests: every refusal; the stored body is the registered body; a plugin file edited after registration does
+      not change the variant.
+
+### C2. Plugin members in portfolio backtests
+
+Files: `portfolio/blend.py`, `portfolio/evaluate.py`, `tests/test_portfolio.py`.
+
+- [ ] `blend(version, bars, paths, sandbox=None)`: `_targets` passes `plugin:` refs to `compute_targets` with the
+      sandbox; without a sandbox a plugin member is refused as today ("plugin members need the sandbox").
+- [ ] `run_segment` / `record_run` / `validate` take the sandbox setting from the caller; `zqr portfolio dev` and
+      the gate commands take `--sandbox docker` (the setting the memory commands use).
+- [ ] Paper (roster load in `paper/fleet.py`) refuses a version with a plugin member, with the reason.
+- [ ] Tests: a fake sandbox runner; a template-only version runs unchanged (same equity hash as before).
+
+### C3. Candidate library entries and families
+
+Files: `library/store.py`, `library/commands.py`, `tests/test_library.py`.
+
+- [ ] `LibraryStore.add_candidate(product, family, strategy_ref, parameters, source, actor)`: entry id
+      `<family>-h<hash8>-<product base>`, status `candidate`, `meta.source = "hypothesis:<hid>"`; idempotent on
+      identical identity. Templates keep `template_version`; plugins record the hash.
+- [ ] `LibraryStore.add_family(id, name, thesis, sleeve, actor="human", note)` and `zqr library family add`
+      (human). A new family is how a hypothesis outside the four trend sleeves becomes registrable.
+- [ ] Tests: idempotence; a candidate never appears in `seed` imports; the catalog hash is unchanged.
+
+### C4. Gate 1: marginal value on dev
+
+Files: new `src/quant_research/hypothesis/gates.py`; `tests/test_gates.py`.
+
+- [ ] `variant_run(paths, store, hypothesis, variant, sandbox)`: one dev experiment of the variant alone, with the
+      reference version's engine config (costs, cash, long only), on the hypothesis split; kind `registered` (not
+      in `NON_TRIAL_KINDS`), so it counts as a trial on the split. Reruns of a recorded variant reuse the experiment.
+- [ ] `gate1(paths, store, hid, sandbox)`: for each variant, daily returns on the A1 grid of the variant run
+      (`R_c`) and of the reference's dev run without the ladder (`R_p`), aligned on common days;
+      `appraisal_test(R_c, R_p, k=len(variants))`. Event `gate1` with per-variant `beta`, `alpha_daily`,
+      `appraisal_ratio`, `statistic`, `passed`, experiment ids. The best passing variant (highest statistic) goes
+      on; none passing ends the hypothesis (`gate1_failed`, A6: recorded, not adjusted and retried).
+- [ ] Diagnostic (proposal P4): the hedged series' Sharpe per period, the review's cuts (BTC 2015-2020 /
+      2021-2024, ETH 2016-2020 / 2021-2024), stored with the event; it does not decide.
+- [ ] `marginal(paths, store, experiment_id)`: the same regression for any completed dev experiment on the split
+      against the reference, without a verdict and without registration (4d's gateway tool; humans via
+      `zqr hypothesis marginal <experiment>`). It reads only dev data.
+- [ ] Tests: synthetic `R_c = 0.5 R_p + noise` fails, `R_c` with independent positive drift passes at the bar for
+      its K; K follows the variant count; the reference's no-ladder file is the one read.
+
+### C5. Gate 2: do no harm on validation
+
+Files: `hypothesis/gates.py`, `portfolio/version.py`, `tests/test_gates.py`.
+
+- [ ] `gate2(paths, store, hid, sandbox)`: the passing variant becomes a candidate library entry (C3) and a new
+      version = the reference's members plus this member at full weight (status `member`), parent = reference,
+      blended by the normal rules (a new family becomes a new sleeve). Both versions run on validation; measures
+      without the ladder (A13.6).
+- [ ] Rule (outline Task 5): candidate Sharpe ≥ reference Sharpe, candidate max drawdown at most 2 points worse,
+      candidate turnover at most 25% higher. Each validation run is recorded in `validation_uses` (the
+      reference's once per split, the candidate's every time).
+- [ ] Event `gate2` on the hypothesis with both sets of measures and the verdict; the agent-facing result (4d)
+      carries the verdict only.
+- [ ] Tests: each of the three conditions failing alone; validation uses counted; repeated `gate2` on the same
+      hypothesis refused.
+
+### C6. Admitted versions
+
+Files: `portfolio/version.py`, `portfolio/commands.py`, `hypothesis/commands.py`, `desk/report.py`, tests.
+
+- [ ] State `admitted` (not terminal): `("draft", "admitted")` and `("draft", "failed_validation")` by the
+      controller with the gate evidence. `admitted` leads nowhere in phase 4; at the next split the version is
+      re-run there (design D5), outside this phase.
+- [ ] `zqr hypothesis test <hid> [--sandbox docker]` (controller; anyone may trigger it): gate 1 then, if a
+      variant passes, gate 2; prints the hypothesis state and, for the human, the measures.
+- [ ] `zqr portfolio list --state admitted`; the daily report lists admitted versions with the hypothesis, the
+      family, gate 1's appraisal ratio and the next split date.
+- [ ] Tests: the state machine; `admitted` cannot be frozen, approved or shadowed.
+
+### C7. Docs, suite, rehearsal, release 4c
+
+- [ ] `docs/development.md`: hypotheses, gates, admitted, new commands; the plan's checkboxes.
+- [ ] Appendix A amendment A13.7 (needs approval): gate 2's numbers as above and the reference's validation run
+      as a counted use; the per-period diagnostic of P4.
+- [ ] Full suite, ruff; rehearsal on a copy of production: register one hypothesis per product written by the
+      human (or drafted by the agent and approved by the human), run `zqr hypothesis test`, check trials, K,
+      validation uses and the report.
+- [ ] Ask before merging and releasing. After release, hypotheses on production are registered by the human.
+
+Caveat for 4c: the human has seen the seed portfolios' validation results (seed review), so gate 2 on
+human-registered hypotheses is a harm check, not independent evidence. The next split's holdout remains the
+independent test.
+
+## Release 4d: campaigns, budget and the research loop
+
+**Goal.** Research sessions run campaigns from a reviewed queue, register at most one hypothesis per campaign,
+and the gates of 4c judge it. Budget is reserved before every session; the loop no longer promotes single
+candidates (D8).
+
+### D1. Campaign record and store
+
+Files: new `src/quant_research/campaign/__init__.py`, `store.py`, `commands.py`; `cli.py`; tests.
+
+- [ ] Fields of design 6.1: id, product, split, family (or `exploration`), goal, prior with citations, source
+      (`generator` with its diagnostic, or `human`), model, caps (P3), state, created/updated.
+- [ ] States: `proposed` → `queued` (human approval, P5) → `running` → `concluded` | `cancelled`; `exhausted` when
+      a cap is reached without a conclusion. One campaign `running` at a time.
+- [ ] CLI: `zqr campaign list/show`, `add --file` (human; a prior with citations is required, D6), `approve`
+      (human), `cancel --note` (human).
+
+### D2. Generator and family quotas
+
+Files: new `campaign/generate.py`; tests.
+
+- [ ] Inputs, dev data only (D6): the reference version's dev run without the ladder (period statistics,
+      `family_contribution`), the family archives (`memory/archive.build_archives`), conclusions, trials per
+      family on the split.
+- [ ] Proposals: regime gaps (periods where the reference's hedged contribution is weakest), concentration (all
+      four sleeves are trend; the reference's return is mostly one family), cost (archive `sharpe_2x` falling
+      against `sharpe`), open questions in conclusions; exploration about 20% of each batch.
+- [ ] Ranking: gap size × room left in the family quota; deterministic for the same inputs (tested).
+- [ ] Quotas (P1): trials per family per product split counted from the split's own trials (inherited trials not
+      counted); a family at quota gets no campaign; registration is refused once a campaign's family is at quota.
+- [ ] `zqr campaign generate --product [--n 6]` writes `proposed` campaigns and prints them.
+
+### D3. Budget reservation (D7)
+
+Files: `desk/research.py` (session loop and research ledger), `desk/config.py`, tests.
+
+- [ ] Before a session: reserve `session_reserve_usd` (P2) against the campaign, the day ($5) and the month
+      ($83.33); refuse if any does not fit; release the difference after the session from the booked cost.
+- [ ] A model call without a configured price stops the loop with the model name in the report (`_cost` no longer
+      books "unpriced" as $0).
+- [ ] Campaign top-ups: +$2 after a gate 1 pass, +$2 after a gate 2 pass, at most $5; caps in sessions and trials
+      grow with them (P3).
+- [ ] `daily_cost_cap_usd` default 5. Tests: refusal at each cap; an overrun beyond the reservation stops the
+      loop; unpriced stops.
+
+### D4. Loop change
+
+Files: `desk/research.py`, tests.
+
+- [ ] `step` takes the running campaign, or starts the next `queued`; idle with no model calls when none.
+- [ ] Session brief: campaign goal and prior, family archive (agent view), one-line summaries of other families,
+      earlier session notes of the campaign, remaining budget in dollars, sessions and trials.
+- [ ] Progress notes: each session writes `notes` into `research.json`; the controller appends them to the
+      campaign.
+- [ ] Remove topic rotation (`TOPICS`, `pick_topic`) and single-candidate promotion (`_evaluate`) from the loop
+      (D8); the single-candidate code stays for controls and benchmarks.
+- [ ] After a session that registered a hypothesis, the controller runs `zqr hypothesis test` logic (with the
+      docker sandbox) before the next session.
+
+### D5. Gateway tools
+
+Files: `gateway/service.py` (`ToolGateway`), `gateway/mcp_server.py`, tests.
+
+- [ ] `family_archive(family)`: the agent view (dev only, holdout-viewing counts).
+- [ ] `portfolio_members()`: the reference's members with dev statistics.
+- [ ] `marginal_eval(experiment_id)`: C4's `marginal`, counted as a trial.
+- [ ] `register_hypothesis(...)`: C1 with the campaign id; plugin variants from workspace artifacts frozen as the
+      gateway already freezes final artifacts. The result of the later gates reaches the agent as verdicts only.
+- [ ] Tests: no validation or holdout number in any tool output (scan of the payloads).
+
+### D6. Conclusions and archive write-back
+
+- [ ] The campaign's last session (concluded, exhausted or after the gates) writes a conclusion through
+      `memory/conclusions.py`; citations checked (experiment ids exist on the split and are dev).
+- [ ] The conclusion record is appended to the family archive (dev data and gate verdicts only).
+
+### D7. Report
+
+- [ ] Research section: campaigns by state, registrations and gate verdicts, admitted versions, budget used against
+      the day and month caps, sessions and trials used against quotas, cost per conclusion.
+
+### D8. Debts
+
+- [ ] Topic tagging refuses to run without `desk/research_ledger.jsonl` (it cleared tags in the phase 3
+      rehearsal).
+- [ ] The rejected-proposals section of the clustering report lists the clusters' sizes, members and the reason.
+
+### D9. Tests, docs, rehearsal, release 4d and checkpoint
+
+- [ ] FakeAgent end to end: several sessions of one campaign, registration, both gates, conclusion, citation check,
+      archive record; quota exhaustion; cap refusals; closed-holdout refusal; shadow trader replay.
+- [ ] Docs: `docs/development.md`, the design's campaign sections cross-referenced, appendix amendment if any rule
+      changes.
+- [ ] Full suite, ruff, rehearsal on a copy of production with the fake agent and one real session on the
+      configured model (cost booked).
+- [ ] Ask before merging and releasing. After release: `zqr campaign generate` for both products; the human
+      reviews and approves the queue, then sets `research_enabled = true`.
+
+## Proposals for decision (2026-10-15)
+
+**P1. Family quotas per product split.** 100 trials per family per product split (four trend sleeves: 400 per
+product); exploration (new or non-sleeve families) at most 25% of a split's campaign trials. A family at quota gets
+no campaign and no registration until the next split. Reasoning: the split already inherits K 231 (BTC) and 240
+(ETH) from about 900 earlier trials; gate 1 does not depend on K, but more searching inside one family on one dev
+mostly overfits that dev. 100 is about ten sessions at the ledger's median of 10 experiments per session.
+
+**P2. Model and session settings.** Default model: the configured `ANTHROPIC_MODEL` (deepseek-flash today: 183
+sessions, median $0.027 per completed session, p90 $0.054, max $0.075). A campaign may name another model from
+`campaign_models` in the desk config, each with a price; no price, no session. `session_reserve_usd` 0.25 for
+deepseek-flash (three times the largest observed session). Wall clock stays 1,800 s per session; the 4d rehearsal
+reports how many sessions reach it. `max_sessions_per_day` lowered from 200 to 12.
+
+**P3. Campaign caps in sessions and trials as well as dollars.** At deepseek-flash prices $1 buys about 35
+sessions, so dollars alone do not limit anything. A campaign starts with $1, 4 sessions and 40 dev experiments;
+each top-up (D7) adds $2, 2 sessions and 20 experiments; at most $5, 8 sessions, 80 experiments. Whichever cap is
+reached first ends the campaign (`exhausted`) and the last session writes the conclusion.
+
+**P4. Gate 1 per-period diagnostic.** Yes: the hedged series' Sharpe per period is recorded and reported with
+gate 1 (dev data, so the agent may see it in 4d). It does not change the verdict; a variant whose whole
+appraisal comes from the early years is flagged in the report for the human.
+
+**P5. Queue approval.** Every generated batch enters `proposed` and needs `zqr campaign approve` by the human,
+not only the first queue. At 12 sessions a day and 4 sessions per campaign a batch of 6 lasts about two days.
+Revisit after the first month.
+
+**P6. Resume after liquidation (investment policy section 3; needs approval, no code in 4c or 4d).** Today
+`zqr portfolio resume` has no conditions. Proposed: not earlier than 30 days after the liquidation; a written
+review in `docs/reviews/` before resuming (what caused the drawdown, whether the version's thesis still holds,
+whether the market regime is one the version's dev covered); otherwise the version stays halted or is retired.
+On the long dev both seed portfolios were liquidated by the ladder (BTC 2020-03-12, ETH 2023-09-11); without it
+their worst drawdowns were −39% and −33%, so this rule is not hypothetical.
