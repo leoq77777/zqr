@@ -47,15 +47,24 @@ def daily_returns(equity: pd.DataFrame, initial_cash: float) -> pd.Series:
     return pd.Series(values / prev - 1, index=pd.DatetimeIndex(e.index, name="day"))
 
 
-def equity_file(paths: Paths, row: dict[str, Any]) -> Path | None:
+EQUITY = "equity.parquet"
+EQUITY_NO_LADDER = "equity_no_ladder.parquet"
+
+
+def equity_file(paths: Paths, row: dict[str, Any], name: str = EQUITY) -> Path | None:
     """The trial's equity file under this ZQR_HOME (a recorded `result_dir` may come from another mount point)."""
     if not row.get("result_dir"):
         return None
     recorded = Path(row["result_dir"])
     for d in (paths.results / recorded.name, recorded):
-        if (d / "equity.parquet").is_file():
-            return d / "equity.parquet"
+        if (d / name).is_file():
+            return d / name
     return None
+
+
+def research_equity_file(paths: Paths, row: dict[str, Any]) -> Path | None:
+    """The series research measures read (A13.6): a portfolio run's equity without the ladder where recorded."""
+    return equity_file(paths, row, EQUITY_NO_LADDER) or equity_file(paths, row)
 
 
 def _decoded(row: dict[str, Any]) -> dict[str, Any]:
@@ -108,7 +117,7 @@ class ReturnArchive:
             for r in new:
                 series = None
                 if r["status"] in WITH_RETURNS:
-                    f = equity_file(self.paths, r)
+                    f = research_equity_file(self.paths, r)
                     if f is None:
                         c["missing_equity"] += 1
                         log.warning("%s: completed without an equity file; not archived", r["id"])

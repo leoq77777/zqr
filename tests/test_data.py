@@ -132,6 +132,26 @@ def test_leading_missing_is_not_an_internal_gap():
     assert rep.leading_missing_bars == 10 and rep.internal_gap_bars == 0
 
 
+def test_isolated_prints_are_dropped_only_when_asked():
+    raw = make_raw(60)
+    prev = raw.loc[9, "close"]
+    raw.loc[10, ["open", "high"]] = 1.5 * prev  # isolated open: the close stays near the previous close
+    raw.loc[20, "low"] = 0.1  # isolated wick
+    fall = raw.loc[30, "open"]
+    raw.loc[30, ["high", "close", "low"]] = [fall, 0.75 * fall, 0.74 * fall]  # a genuine 25% fall
+
+    bars, rep = validate_bars(raw, "coinbase", "BTC-USD", "1h", T0, T0 + 60 * HOUR, fill_policy="ffill_flat")
+    assert rep.invalid_dropped == {} and not bars["filled"].any()
+
+    bars, rep = validate_bars(raw, "coinbase", "BTC-USD", "1h", T0, T0 + 60 * HOUR, fill_policy="ffill_flat",
+                              drop_isolated_prints=True)
+    assert rep.invalid_dropped == {"isolated_print": 2}
+    assert [p["start"] for p in rep.isolated_prints] == [T0 + 10 * HOUR, T0 + 20 * HOUR]
+    assert rep.isolated_prints[1]["low"] == 0.1
+    assert len(bars) == 60 and bars.loc[[10, 20], "filled"].all() and not bars.loc[30, "filled"]
+    assert bars.loc[10, "open"] == prev and bars.loc[30, "close"] == 0.75 * fall
+
+
 def test_snapshot_is_immutable_and_verified(paths):
     raw = make_raw(100)
     bars, rep = validate_bars(raw, "coinbase", "BTC-USD", "1h", T0, T0 + 100 * HOUR)

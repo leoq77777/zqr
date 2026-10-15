@@ -98,7 +98,7 @@ def _validated(args, paths: Paths):
     end = parse_time(args.end) if args.end else int(time.time())
     raw = load_raw_candles(raw_dir)
     bars, rep = validate_bars(raw, VENUE, args.product, args.granularity, parse_time(args.start), end,
-                              fill_policy=args.fill_policy)
+                              fill_policy=args.fill_policy, drop_isolated_prints=True)
     return bars, rep, raw_dir
 
 
@@ -134,7 +134,8 @@ def cmd_extend_dataset(args) -> None:
         base = load_manifest(paths, args.dataset)
         raw_dir = raw_dir_for(paths.raw, base["instrument"], base["granularity"])
         bars, rep = validate_bars(load_raw_candles(raw_dir), VENUE, base["instrument"], base["granularity"],
-                                  parse_time(args.start), base["actual_first_open"], fill_policy=args.fill_policy)
+                                  parse_time(args.start), base["actual_first_open"], fill_policy=args.fill_policy,
+                                  drop_isolated_prints=True)
         m = extend_dataset(paths, args.dataset, bars, rep, raw_dir)
     except SnapshotError as exc:
         raise SystemExit(str(exc)) from None
@@ -142,7 +143,8 @@ def cmd_extend_dataset(args) -> None:
                             "fill_policy", "junction")}
          | {"actual_first": to_iso(m["actual_first_open"]), "actual_last": to_iso(m["actual_last_open"]),
             "prefix_rows": rep.rows, "prefix_coverage": rep.coverage,
-            "prefix_gaps": [{"start": to_iso(g.start), "bars": g.bars} for g in rep.gaps]})
+            "prefix_gaps": [{"start": to_iso(g.start), "bars": g.bars} for g in rep.gaps],
+            "isolated_prints": [p | {"start": to_iso(p["start"])} for p in rep.isolated_prints]})
 
 
 def cmd_make_synthetic(args) -> None:

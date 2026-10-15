@@ -35,6 +35,7 @@ class ValidationReport(BaseModel):
     incomplete_dropped: int = 0
     misaligned_dropped: int = 0
     invalid_dropped: dict[str, int] = Field(default_factory=dict)
+    isolated_prints: list[dict] = Field(default_factory=list)
     rows: int = 0
     expected_rows: int = 0
     coverage: float = 0.0
@@ -86,10 +87,12 @@ def validate_bars(
     start: int,
     end: int,
     fill_policy: FillPolicy = "none",
+    drop_isolated_prints: bool = False,
 ) -> tuple[pd.DataFrame, ValidationReport]:
     """Clip to [start, end), dedupe, drop incomplete/invalid bars and report gaps.
 
     `raw` needs columns start (epoch s), open, high, low, close, volume, fetched_at, source_version.
+    `drop_isolated_prints` applies appendix A13.5 (datasets frozen or extended for research).
     """
     granularity = parse_granularity(granularity)
     step = granularity_seconds(granularity)
@@ -137,6 +140,13 @@ def validate_bars(
             rep.invalid_dropped[reason] = int(mask.sum())
         bad |= mask
     df = df[~bad]
+    if drop_isolated_prints and len(df):
+        iso = isolated_prints(df)
+        if iso.any():
+            rep.invalid_dropped["isolated_print"] = int(iso.sum())
+            rep.isolated_prints = [{"start": int(r.start), "open": float(r.open), "high": float(r.high),
+                                    "low": float(r.low), "close": float(r.close)} for r in df[iso].itertuples()]
+        df = df[~iso]
 
     grid_start = ceil_to(start, step)
     last_fetch = float(raw["fetched_at"].max()) if len(raw) else start
@@ -182,6 +192,24 @@ def validate_bars(
     rep.rows = len(bars)
     rep.coverage = round(len(present) / rep.expected_rows, 6) if rep.expected_rows else 0.0
     return bars, rep
+
+
+ISOLATED_OPEN = 0.2
+ISOLATED_WICK = 2.0
+
+
+def isolated_prints(df: pd.DataFrame) -> pd.Series:
+    """Bars no order could have traded at (A13.5): an open more than 20% from both the previous close and its own
+    close, or a low below half (a high above twice) the extreme of open, close and previous close.
+
+    `df` is sorted by start; the previous close is the previous row's, whatever the gap.
+    """
+    prev = df["close"].shift(1)
+    far_prev = (df["open"] / prev - 1).abs() > ISOLATED_OPEN
+    far_close = (df["open"] / df["close"] - 1).abs() > ISOLATED_OPEN
+    refs = pd.concat([df["open"], df["close"], prev], axis=1)
+    wick = (df["low"] < refs.min(axis=1) / ISOLATED_WICK) | (df["high"] > refs.max(axis=1) * ISOLATED_WICK)
+    return (far_prev & far_close) | wick
 
 
 def _group_gaps(missing: np.ndarray, step: int) -> list[Gap]:

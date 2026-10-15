@@ -132,7 +132,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (301 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (303 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -383,11 +383,13 @@ Rules: `docs/investment-policy.md` (D1-D3) and appendix A14 (D4-D7). Plan:
 - **Runs** (`evaluate.py`). A dev run is an experiment of kind `portfolio` (a trial, archived in the return
   archive); a validation run is kind `portfolio_validation` (not a trial; counted in `validation_uses`). Both
   record daily Sharpe (A4), drawdown with and without the ladder, ladder time, family contribution and buy and
-  hold. `zqr portfolio validate` applies the seed standard: validation daily Sharpe ≥ 0.5 and max drawdown ≥ −25%.
+  hold. Each run also writes `equity_no_ladder.parquet` with its Sharpe and return: the series research measures
+  read (A13.6: the return archive, gate 1's `R_p`, gate 2), since a backtest never resumes after a liquidation.
+  `zqr portfolio validate` applies the seed standard: validation daily Sharpe ≥ 0.5 and max drawdown ≥ −25%.
   A failed version is recorded, not adjusted and retried (A6). `zqr portfolio dev <vid> [--reference]` runs dev
   alone (no validation use, state unchanged); `--reference` records the version as gate 1's reference for its
   product and split (D4, one per product and split). `zqr portfolio periods <vid> --cut D` splits the dev run's
-  statistics by period, with buy and hold and ladder time.
+  statistics by period, with buy and hold and ladder time, and again without the ladder.
 - **Seed portfolio** (`seed.py`). Every non-retired library member of the product's sleeve families plus the
   `vol_overlay` entry, with the desk mandate's engine config (rebalance tolerance 0), dataset and split.
 - **Holdout.** `run_portfolio_holdout` (`validation/holdout.py`) needs a frozen version, shares the split's viewing
@@ -541,7 +543,7 @@ a one-off container with the same mounts while the desk is stopped).
 | `zqr portfolio approve <vid> --note` / `resume <name> --note` | Human: paper roster entry / resume a liquidated paper portfolio |
 | `zqr portfolio shadow <vid> --note` | Human: run a version not approved for paper as `shadow-<product>` (forward evidence only) |
 | `zqr close-holdout --split S --note` | Human: close a split's holdout to new viewings, permanently (A13.3) |
-| `zqr extend-dataset --dataset D --start T [--fill-policy ffill_flat]` | Freeze earlier candles (fetched first with `zqr fetch-data`) followed by D's bars, copied verbatim |
+| `zqr extend-dataset --dataset D --start T [--fill-policy ffill_flat]` | Freeze earlier candles (fetched first with `zqr fetch-data`) followed by D's bars, copied verbatim; isolated bad prints are dropped and listed (A13.5, as in every research freeze) |
 | `zqr create-split --dataset D --like S` / `zqr split-lineage --split C --parent S --note` | A split with S's validation and holdout windows / human: name its parent (A13.4: K and trials inherited, closure inherited) |
 | `zqr desk use-mandate --product P --mandate M --note` | Human: point a desk product at another stored mandate (research disabled; history in `desk/mandate_history.jsonl`) |
 | `zqr portfolio dev <vid> [--reference]` / `periods <vid> --cut D` / `zqr library periods --product P --cut D` | Dev run alone, optionally gate 1's reference / per-period statistics of recorded dev runs |

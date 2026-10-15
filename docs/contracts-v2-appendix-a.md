@@ -1,6 +1,6 @@
 # Contracts v2, appendix A: statistics and admission rules for portfolio research
 
-Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12, amendments A13.1 to A13.4, and the phase 3 decisions in A14. A13.5 and A13.6 are proposed, awaiting approval. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
+Date: 2026-10-15. Status: approved 2026-10-15, including all eight points of A12, amendments A13.1 to A13.6, and the phase 3 decisions in A14. Amends `docs/contracts-v2.md` (approved 2026-10-12, not edited)
 for portfolio research, as decided in `docs/superpowers/specs/2026-10-13-research-library-portfolio-design.md`
 (sections 4.4, 5.3, 5.4, 5.5, 5.6 and 6.5). Takes effect for a mandate only when the mandate version names it
 (`statistics: appendix-a-v1`); mandates already stored are immutable and keep their rules.
@@ -341,7 +341,7 @@ a search that did not happen.
 lineage refused on different windows or data; K and trial counts add the ancestors', recursively; a child of a
 closed split refuses a holdout without loading holdout data.
 
-### A13.5 Isolated bad prints in candle data (proposed 2026-10-15, awaiting approval)
+### A13.5 Isolated bad prints in candle data (approved 2026-10-15)
 
 **Problem.** The E1 rehearsal on a copy of production data found three bars in Coinbase's pre-2021 hourly candles
 at prices no order of any size could have traded at:
@@ -376,7 +376,7 @@ bars pass.
 **Implementation.** `data/validate.py` `validate_bars`. Tests: each kind dropped and reported; a genuine large move
 (a 25% hourly fall from an open at the previous close) kept; the fill policy fills the dropped bar.
 
-### A13.6 The ladder in research measures (proposed 2026-10-15, awaiting approval)
+### A13.6 The ladder in research measures (approved 2026-10-15, including gate 2)
 
 **Problem.** A14.1 runs the drawdown ladder in every backtest. After a liquidation (−30%) the ladder waits for a
 human resume, which no backtest has, so the run stays in cash to the end of the segment. On the long dev (A13.4)
@@ -393,7 +393,7 @@ that the ladder does not change the seed verdict holds for a validation segment,
   - campaign diagnostics and period statistics, which show both runs side by side.
 - Gate 2 (validation) runs both portfolios, with and without the variant, without the ladder: the ladder caps both
   drawdowns near −30% and freezes both runs after a liquidation, so the drawdown and Sharpe comparisons would
-  compare ladder timing rather than the variant. (A separate point; approve or reject on its own.)
+  compare ladder timing rather than the variant.
 - The ladder stays wherever the version is judged as it would trade: the seed validation standard (A6), gate 3
   (holdout), paper and live. Reports keep both drawdowns.
 - No resume rule is simulated: a rule for when a human would resume is a new parameter, chosen on the dev it would

@@ -278,6 +278,8 @@ def test_dev_run_is_an_archived_trial_and_validation_is_counted(paths, store, da
     assert "buy_and_hold" in dev["benchmarks"]
     archived = ReturnArchive(paths, store).index(dataset[1].split_id)
     assert [r["experiment_id"] for r in archived] == [dev["id"]] and archived[0]["n_days"] > 0
+    assert {"sharpe_daily_no_ladder", "total_return_no_ladder"} <= set(dev["metrics"])
+    assert (paths.results / dev["id"] / "equity_no_ladder.parquet").exists()
     val = run_segment(paths, store, vid, "validation")
     assert val["kind"] == "portfolio_validation" and val["segment"] == "validation"
     assert store.trial_count(split_id) == trials + 1
@@ -287,6 +289,30 @@ def test_dev_run_is_an_archived_trial_and_validation_is_counted(paths, store, da
     again = run_segment(paths, store, vid, "validation")
     assert again["id"] == val["id"] and vs.validation_uses(dataset[1].split_id) == 1
     assert run_segment(paths, store, vid, "dev")["id"] == dev["id"]
+
+
+def test_the_archive_reads_a_portfolio_run_without_the_ladder(paths, store):
+    from quant_research.memory.returns import ReturnArchive, daily_returns, research_equity_file
+
+    times = pd.date_range("2024-01-01", periods=24 * 40, freq="h", tz="UTC")
+    falling = pd.DataFrame({"time": times, "equity": 100 * np.exp(np.linspace(0, -0.5, len(times)))})
+    rising = pd.DataFrame({"time": times, "equity": 100 * np.exp(np.linspace(0, 0.3, len(times)))})
+    eid = store.start_experiment(kind="portfolio", strategy_ref="portfolio:pv-x", parameters={}, candidate_hash="pv-x",
+                                 dataset_id="d", data_hash="h", split_id="split-x", segment="dev",
+                                 window_start=0, window_end=1, engine_config_id="e",
+                                 engine_config={"initial_cash": 100.0}, engine_version="t")
+    res = paths.results / eid
+    res.mkdir(parents=True)
+    falling.to_parquet(res / "equity.parquet", index=False)
+    store.finish_experiment(eid, "completed", metrics={}, result_dir=str(res))
+    row = store.get_experiment(eid)
+    assert research_equity_file(paths, row).name == "equity.parquet"  # runs recorded before A13.6
+    rising.to_parquet(res / "equity_no_ladder.parquet", index=False)
+    assert research_equity_file(paths, row).name == "equity_no_ladder.parquet"
+    archive = ReturnArchive(paths, store)
+    archive.add([row])
+    stored = archive.load("split-x")[eid].dropna()
+    assert stored.to_numpy() == pytest.approx(daily_returns(rising, 100.0).to_numpy())
 
 
 def test_validate_applies_the_seed_standard(paths, store, dataset, monkeypatch):
@@ -500,3 +526,5 @@ def test_portfolio_periods_command_reads_the_dev_run(paths, store, dataset, caps
     out = json.loads(capsys.readouterr().out)
     assert [p["period"] for p in out["periods"]] == ["part", "part", "whole"]
     assert out["periods"][1]["from"].startswith("2024-02-11") and "ladder_time" in out["periods"][0]
+    assert [p["period"] for p in out["periods_no_ladder"]] == ["part", "part", "whole"]
+    assert "ladder_time" not in out["periods_no_ladder"][0]

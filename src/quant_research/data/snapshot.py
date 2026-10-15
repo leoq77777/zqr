@@ -146,7 +146,8 @@ def extend_dataset(
         **{k: getattr(rep, k) + getattr(base_rep, k) for k in (
             "raw_rows", "out_of_range", "duplicates", "duplicate_conflicts", "incomplete_dropped",
             "misaligned_dropped", "expected_rows", "internal_gap_bars", "filled_rows")},
-        invalid_dropped=invalid, rows=len(bars), coverage=round(present / expected, 6) if expected else 0.0,
+        invalid_dropped=invalid, isolated_prints=rep.isolated_prints + base_rep.isolated_prints,
+        rows=len(bars), coverage=round(present / expected, 6) if expected else 0.0,
         actual_first=rep.actual_first, actual_last=base_rep.actual_last,
         leading_missing_bars=rep.leading_missing_bars, trailing_missing_bars=base_rep.trailing_missing_bars,
         gaps=rep.gaps + base_rep.gaps, fill_policy=rep.fill_policy)

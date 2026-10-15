@@ -21,7 +21,7 @@ from quant_research.data.snapshot import load_manifest
 from quant_research.evaluation.metrics import compute_metrics
 from quant_research.evaluation.split_stats import sharpe_daily
 from quant_research.experiments.store import ExperimentStore
-from quant_research.memory.returns import archive_new, daily_returns
+from quant_research.memory.returns import EQUITY, EQUITY_NO_LADDER, archive_new, daily_returns, equity_file
 from quant_research.paths import Paths
 from quant_research.portfolio.backtest import PortfolioRun, run_portfolio
 from quant_research.portfolio.version import NO_LADDER, PortfolioVersion, VersionError, VersionStore
@@ -55,20 +55,23 @@ def family_contribution(run: PortfolioRun, first: int, initial_cash: float) -> d
 
 
 def _run(version: PortfolioVersion, bars: pd.DataFrame, window: tuple[int, int],
-         paths) -> tuple[PortfolioRun, dict[str, Any]]:
+         paths) -> tuple[PortfolioRun, PortfolioRun, dict[str, Any]]:
     run = run_portfolio(version, bars, window, paths)
     first = int(np.searchsorted(to_epoch(bars["bar_open_time"]), window[0]))
     cash = version.engine_config.initial_cash
     ppy = periods_per_year(version.granularity)
     metrics = compute_metrics(run.result, cash, ppy)
     no_ladder = run_portfolio(version, bars, window, paths, bl=run.blend, ladder=NO_LADDER)
+    nl_metrics = compute_metrics(no_ladder.result, cash, ppy)
     bh = run_backtest(bars, np.ones(len(bars)), version.engine_config, window=window,
                       step_seconds=granularity_seconds(version.granularity))
     bh_metrics = compute_metrics(bh, cash, ppy)
     levels = Counter(run.log["level"])
     metrics |= {
         "sharpe_daily": daily_sharpe(run.result.equity, cash),
-        "max_drawdown_no_ladder": compute_metrics(no_ladder.result, cash, ppy)["max_drawdown"],
+        "max_drawdown_no_ladder": nl_metrics["max_drawdown"],
+        "sharpe_daily_no_ladder": daily_sharpe(no_ladder.result.equity, cash),
+        "total_return_no_ladder": nl_metrics["total_return"],
         "ladder_time": {k: round(v / len(run.log), 6) for k, v in sorted(levels.items())} if len(run.log) else {},
         "yellow_time": round(float(run.log["yellow"].mean()), 6) if len(run.log) else 0.0,
         "mean_target": round(float(np.mean(run.blend.target[first:])), 6),
@@ -77,7 +80,7 @@ def _run(version: PortfolioVersion, bars: pd.DataFrame, window: tuple[int, int],
     bench = {"buy_and_hold": {"sharpe_daily": daily_sharpe(bh.equity, cash),
                               "total_return": bh_metrics["total_return"],
                               "max_drawdown": bh_metrics["max_drawdown"]}}
-    return run, {"metrics": metrics, "benchmarks": bench}
+    return run, no_ladder, {"metrics": metrics, "benchmarks": bench}
 
 
 def _existing(store: ExperimentStore, vid: str, kind: str, split_id: str, window: tuple[int, int]) -> dict | None:
@@ -101,13 +104,14 @@ def record_run(paths: Paths, store: ExperimentStore, version: PortfolioVersion, 
         window_start=window[0], window_end=window[1], engine_config_id=version.engine_config.config_id(),
         engine_config=version.engine_config.model_dump(), engine_version=ENGINE_VERSION)
     try:
-        run, out = _run(version, bars, window, paths)
+        run, no_ladder, out = _run(version, bars, window, paths)
     except Exception as exc:
         store.finish_experiment(exp_id, "failed", failure_reason=f"{type(exc).__name__}: {exc}")
         raise
     res_dir = paths.results / exp_id
     res_dir.mkdir(parents=True, exist_ok=True)
-    run.result.equity.to_parquet(res_dir / "equity.parquet", index=False)
+    run.result.equity.to_parquet(res_dir / EQUITY, index=False)
+    no_ladder.result.equity.to_parquet(res_dir / EQUITY_NO_LADDER, index=False)
     run.result.fills.to_parquet(res_dir / "fills.parquet", index=False)
     run.result.trips.to_parquet(res_dir / "trips.parquet", index=False)
     log = run.log.assign(pre_state=run.log["pre_state"].map(json.dumps))
@@ -136,7 +140,8 @@ def run_segment(paths: Paths, store: ExperimentStore, vid: str, segment: Segment
 
 def _summary(row: dict[str, Any]) -> dict[str, Any]:
     m = row["metrics"]
-    keys = ("sharpe_daily", "total_return", "max_drawdown", "max_drawdown_no_ladder", "turnover", "total_fees",
+    keys = ("sharpe_daily", "total_return", "max_drawdown", "sharpe_daily_no_ladder", "total_return_no_ladder",
+            "max_drawdown_no_ladder", "turnover", "total_fees",
             "n_fills", "exposure", "mean_target", "ladder_time", "yellow_time", "family_contribution")
     return {"experiment_id": row["id"], **{k: m.get(k) for k in keys}, **(row["benchmarks"] or {})}
 
@@ -171,9 +176,9 @@ def run_dev(paths: Paths, store: ExperimentStore, vid: str, reference: bool = Fa
 
 
 def version_periods(paths: Paths, store: ExperimentStore, vid: str, cuts: list[int]) -> dict[str, Any]:
-    """Period statistics of the version's recorded dev run (dev data only: usable in diagnostics, D6)."""
+    """Period statistics of the version's recorded dev run (dev data only: usable in diagnostics, D6), with the
+    ladder and without it (A13.6; runs recorded before release 4b have only the first)."""
     from quant_research.evaluation.periods import period_stats
-    from quant_research.memory.returns import equity_file
 
     version = VersionStore(store).version(vid)
     rows = store.query("SELECT id FROM experiments WHERE candidate_hash=? AND kind='portfolio' AND split_id=? AND "
@@ -186,8 +191,11 @@ def version_periods(paths: Paths, store: ExperimentStore, vid: str, cuts: list[i
         raise VersionError(f"equity of {row['id']} not found")
     log_path = path.parent / "decisions.parquet"
     log = pd.read_parquet(log_path, columns=["bar_open", "level", "yellow"]) if log_path.exists() else None
+    cash = version.engine_config.initial_cash
+    nl_path = equity_file(paths, row, EQUITY_NO_LADDER)
     return {"version_id": vid, "split_id": version.split_id, "experiment_id": row["id"],
-            "periods": period_stats(pd.read_parquet(path), version.engine_config.initial_cash, cuts, log)}
+            "periods": period_stats(pd.read_parquet(path), cash, cuts, log),
+            "periods_no_ladder": period_stats(pd.read_parquet(nl_path), cash, cuts) if nl_path else None}
 
 
 def validate(paths: Paths, store: ExperimentStore, vid: str) -> dict[str, Any]:
