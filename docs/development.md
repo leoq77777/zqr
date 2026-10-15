@@ -112,7 +112,8 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `portfolio/policy.py` | Portfolio policy v1: vol target, asset/gross caps, rebalance cadence, no-trade band |
 | `backtest/engine.py` | Accounting engine (fills, fees, slippage, delay) |
 | `backtest/rebalance.py` | `needs_trade`: when a target becomes an order; shared by the engine and the paper trader |
-| `evaluation/` | Metrics, statistics (bootstrap, deflated Sharpe), diagnosis |
+| `evaluation/` | Metrics, statistics (bootstrap, deflated Sharpe), diagnosis; `split_stats.py`: daily-return Sharpe, split DSR at K, registered appraisal test (appendix A4-A5) |
+| `memory/` | Research memory (appendix A): daily return archive, market residuals, clustering and effective K, family tags and proposals, seed characterisation, session conclusions, family archives, clustering report, `zqr memory` commands |
 | `validation/` | Splits, holdout control (viewing limit), robustness, walk-forward |
 | `experiments/` | Experiment gate (`gatekeeper.py`), runner, SQLite store, replay |
 | `research/` | Mandates, preregistered plans, candidate registry and transitions, evaluation, standing authorization |
@@ -128,7 +129,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `Dockerfile.agent` | Agent image `zqr-agent:<hash>`: `node:22-slim` + `@anthropic-ai/claude-code`, runs as `node` |
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
-| `tests/` | pytest suite (200 tests); Docker-dependent tests skip when Docker or the images are unavailable |
+| `tests/` | pytest suite (228 tests); Docker-dependent tests skip when Docker or the images are unavailable |
 | `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
 
 ## 5. Core flows
@@ -289,8 +290,8 @@ Desk transitions record the authorization hash in the evidence. No transition to
   execution (fill price and fees against the cost model) and sizing and timing, and the final exposure gap;
 - process restarts and fleet alerts;
 - research sessions by failure class, cost against the cap, violations and audit failures;
-- trials per split, candidates by state and holdout viewings left, flagged "(contaminated by override)" when the
-  split has a recorded override;
+- trials per split, effective K (ρ 0.7, latest clustering), candidates by state and holdout viewings left, flagged
+  "(contaminated by override)" when the split has a recorded override, and the earliest date of the next split;
 - a table of sessions.
 
 ### 5.7 Strategy library (`library/`)
@@ -307,6 +308,36 @@ Desk transitions record the authorization hash in the evidence. No transition to
   are left alone, and a changed identity refuses the whole import (entries are immutable; a change is a new id).
   Status changes go through `LibraryStore.set_status` (candidate → probation/member/retired, probation →
   member/retired, member → retired), each recorded in `library_events`.
+
+### 5.8 Research memory (`memory/`)
+
+Rules are in `docs/contracts-v2-appendix-a.md` (approved 2026-10-15).
+
+- **Return archive.** Every completed or duplicate dev trial's daily returns go to
+  `library/returns/<split_id>.parquet` (one column per experiment, UTC days of the bar open time, last mark of the
+  day, first day against initial cash). `return_index` records each trial, including failed and rejected ones
+  (`no_returns`). The runner archives after every trial, including gate rejections; a failure to archive is logged
+  and never fails the trial. `zqr memory backfill` fills in older trials.
+- **Clustering.** Residuals of each series on the coin's close-to-close return (OLS with intercept), winsorised once
+  at mean ± 3 sd. Flat series (max |r| < 1e-12) and passive series (residual sd < 1e-4) form one cluster each.
+  Pearson correlation, distance `sqrt((1 − ρ)/2)`, average linkage, cuts at ρ 0.3, 0.5 and 0.7; a cluster's label
+  is its smallest experiment id. K = clusters + flat + passive + trials without returns; K(0.7) is the effective
+  number of trials. A clustering is recorded only when its input hash changes (`clusterings`, `cluster_members`).
+- **Families.** Seed runs are tagged with their library family; older trials with their session topic
+  (`volatility_filter` → `vol_overlay`, `mean_reversion` → `short_term_reversal`, archive only). A ρ 0.3 cluster
+  maps to the family of its seeds (lowest seed id on a tie), else to a family holding more than half its trials.
+  Unmapped clusters of at least 5 trials become `family_proposals` for the human.
+- **Seed characterisation.** `zqr memory characterise` runs each seed instance once on its product's desk mandate
+  (kind `seed`, counted as trials, duplicates not reused).
+- **Conclusions.** `zqr memory import-conclusions` imports each session's `research.json` into the append-only
+  `family_conclusions` after re-running the gateway's citation check.
+- **Archives.** `library/archives/<family>.json` and `.md`: trials, clusters, parameter ranges, the best trials
+  with split DSR, cost ×2 reruns, regime splits and conclusions. Agent plugins are rerun only under Docker
+  isolation (`--sandbox subprocess` skips them).
+- **Report.** `library/reports/clustering-<day>.md`: K per split at the three thresholds (winsorised and raw), the
+  cluster size distribution, the largest clusters, seed placement, proposals, the top trials with split DSR beside
+  the legacy DSR, and conclusions by topic and decision.
+- `zqr memory run` performs all steps in order; each step is idempotent.
 
 ## 6. Security model and invariants
 
@@ -344,6 +375,7 @@ These must hold after any change. Tests cover most of them.
 | `desk/research_state.json`, `desk/research_ledger.jsonl` | Loop state, one line per session |
 | `desk/sessions/<run_id>/` | `run.json`, `result.json`, submission, egress log, agent transcript |
 | `desk/state.json`, `desk/logs/`, `desk/reports/` | Supervisor state, logs, daily reports |
+| `library/returns/`, `library/archives/`, `library/reports/` | Daily return archive per split, family archives, clustering reports |
 | `tmp/` | Release container only: scratch dirs mounted into sibling containers |
 
 The credentials file sits outside `ZQR_HOME` (a separate volume in the release layout) and holds the model
@@ -410,7 +442,8 @@ a one-off container with the same mounts while the desk is stopped).
 | `zqr desk recover` | Close out sessions of a dead desk process |
 | `zqr desk promote <candidate_id> [--isolation docker\|subprocess]` | Resume a candidate's promotion (freeze, holdout, paper approval, roster) under the standing authorization |
 | `zqr library import [--dry-run] [--file PATH]` | Import the reviewed seed catalog into the library (new entries only) |
-| `zqr library list [--product P] [--family F] [--status S] [--json]` / `zqr library show <id>` | Library entries; one entry with its events |
+| `zqr library list [--product P] [--family F] [--status S] [--json]` / `zqr library show <id>` | Library entries; one entry with its events and its seed run (dev Sharpe, split DSR) |
+| `zqr memory backfill\|characterise\|cluster\|import-conclusions\|archive\|report` / `zqr memory run [--sandbox docker\|subprocess]` / `zqr memory status` | Research memory steps (section 5.8); all steps in order; archived trials and K per split |
 | `zqr release [--target HOST\|local] [--allow-dirty] [--no-up]` | Development machine: build, ship and start a version |
 
 Lower-level commands (`fetch-data`, `backtest`, `mandate`, `candidate`, `holdout-test`, `bench`, `paper`, …)
