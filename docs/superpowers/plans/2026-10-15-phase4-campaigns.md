@@ -543,9 +543,20 @@ Files: `portfolio/version.py`, `portfolio/commands.py`, `hypothesis/commands.py`
 - [x] `docs/development.md`: hypotheses, gates, admitted, new commands (section 5.10); the plan's checkboxes.
 - [x] Appendix A amendment A13.7 (approved with the plan): gate 2's numbers as above and the reference's
       validation run as a counted use; the per-period diagnostic of P4.
-- [ ] Full suite, ruff; rehearsal on a copy of production: register one hypothesis per product written by the
-      human (or drafted by the agent and approved by the human), run `zqr hypothesis test`, check trials, K,
-      validation uses and the report.
+- [x] Full suite (329 passed), ruff; rehearsal on a copy of production (2026-10-15, read-only backup of the
+      database plus snapshots, splits, library and the two reference dev runs; hypotheses drafted by the agent,
+      copy only):
+      - BTC `tsmom` daily lookbacks 24 h and 72 h (K = 2): T = 3,258 days, β 1.17 / 1.24, AR −3.43 / −1.10,
+        `gate1_failed` (costs of daily trading).
+      - ETH `breakout` 168/48 (K = 1): T = 2,942, β 1.29, AR 0.22 against the bar 0.451, `gate1_failed`; hedged
+        Sharpe 0.94 before 2021 and −1.14 from 2021, the pattern P4 is meant to show.
+      - BTC `breakout` 480/240 with gate 1 forced to pass in a script (to exercise gate 2 on real validation
+        data): reference and candidate validation runs without the ladder (Sharpe 1.094 → 1.117, drawdown
+        −19.2% → −19.3%, turnover 6.04 → 6.03), validation uses 0 → 2, library entry
+        `btc-channel_breakout-hf35f614f`, version `admitted`, verdict without measures, report table correct.
+      - Observation: a fourth member in a family of three changes the blend little (its share is a quarter of
+        one sleeve), so gate 2 is a weak filter for variants joining an existing family; gate 1 carries the
+        evidence there, as A6 intends.
 - [ ] Ask before merging and releasing. After release, hypotheses on production are registered by the human.
 
 Caveat for 4c: the human has seen the seed portfolios' validation results (seed review), so gate 2 on

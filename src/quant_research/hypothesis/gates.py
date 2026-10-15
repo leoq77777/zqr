@@ -235,9 +235,9 @@ def report_lines(store: ExperimentStore, next_split: str) -> list[str]:
     for r in rows:
         g1 = (hs.event(r["id"], "gate1") or {}).get("evidence") or {}
         g2 = (hs.event(r["id"], "gate2") or {}).get("evidence") or {}
-        best = next((v for v in g1.get("variants", []) if v["variant"] == g1.get("best_variant")), None)
+        ars = [v["appraisal_ratio"] for v in g1.get("variants", []) if "appraisal_ratio" in v]
         out.append(f"| {r['id']} | {r['product']} | {r['family']} | {len(r['body']['variants'])} | {r['state']} | "
-                   f"{'-' if best is None else f'{best['appraisal_ratio']:.3f}'} | {g2.get('version_id', '-')} |")
+                   f"{f'{max(ars):.3f}' if ars else '-'} | {g2.get('version_id', '-')} |")
     admitted = [r for r in rows if r["state"] == "admitted"]
     if admitted:
         out.append(f"- Admitted versions ({len(admitted)}) wait for the next split, earliest {next_split} "
