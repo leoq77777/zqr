@@ -88,16 +88,22 @@ def prepare_dataset(paths: Paths, product: str, start: int, rps: float = 5.0) ->
 
 
 def desk_mandate(product: str, dataset_id: str, split_id: str, cfg: DeskConfig) -> Mandate:
+    from quant_research.backtest.costs import AUTHORITATIVE_PROFILE, cost_config
+    from quant_research.backtest.engine import EngineConfig
+
     return Mandate.model_validate({
         "question": f"Desk standing question: is there a long-or-cash rule on {product} hourly bars that survives "
                     "costs, a one-bar delay and the multiple-testing penalty of every trial on this split?",
-        "dataset_id": dataset_id, "split_id": split_id, "engine_config": {}, "policy": {},
+        "dataset_id": dataset_id, "split_id": split_id,
+        "engine_config": EngineConfig(costs=cost_config(AUTHORITATIVE_PROFILE)).model_dump(mode="json"),
+        "policy": {},
         "evaluation_design": {"kind": "single_validation"}, "primary_metric": "sharpe",
         "acceptance": DEFAULT_ACCEPTANCE,
         "budget": Budget(max_rounds=1, max_candidates=1, max_experiments=12,
                          max_wall_seconds=cfg.session_wall_seconds, max_trials_per_strategy=None),
         "holdout": DEFAULT_HOLDOUT, "agent_segments": ["dev"],
-        "notes": "written by `zqr desk setup`; thresholds confirmed by the human at setup"})
+        "cost_profile": AUTHORITATIVE_PROFILE,
+        "notes": "written by `zqr desk setup`; cost_profile=coinbase-lf-allin-v1; thresholds confirmed at setup"})
 
 
 def _confirm(prompt: str, assume_yes: bool) -> bool:

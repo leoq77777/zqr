@@ -125,8 +125,17 @@ def constraints_md(paths: Paths, store: ExperimentStore, cfg: DeskConfig) -> str
         c = m.engine_config.costs
         lines.append(f"| {product} | {to_iso(s.dev[0])[:10]} to {to_iso(s.holdout[1])[:10]} | {c.fee_rate:.2%} | "
                      f"{c.slippage_bps:g} bps |")
-    lines += ["", "- Costs make high turnover infeasible: a strategy trading in and out daily pays more than 1% per "
-              "round trip. Short-term reversal and scalping are recorded as infeasible on this desk."]
+    # Round-trip from the first mandate's costs (deployable baseline after 2026-10-19 is ~0.44%).
+    sample = next(iter(cfg.mandates.values()), None)
+    if sample and store.get_mandate(sample):
+        c0 = Mandate.model_validate(store.get_mandate(sample)["body"]).engine_config.costs
+        rt = 2 * (c0.fee_rate + c0.slippage_bps / 10_000)
+        lines += ["", f"- Costs are a fixed all-in baseline per mandate (~{rt:.2%} round trip above). "
+                  "High turnover is still punished (costs_x2). Short-term reversal and scalping are recorded as "
+                  "infeasible on this desk."]
+    else:
+        lines += ["", "- Costs make high turnover infeasible under the mandate baseline and costs_x2. "
+                  "Short-term reversal and scalping are recorded as infeasible on this desk."]
     return "\n".join(lines) + "\n"
 
 

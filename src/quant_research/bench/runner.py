@@ -212,7 +212,8 @@ def finalize(paths: Paths, store: ExperimentStore, run_dir: Path, task: BenchTas
     no_model_traffic = egress is not None and egress["model_tunnels"] == 0
     no_tokens = u is None or (u.input_tokens + u.output_tokens + u.cache_read_tokens) == 0
     if u and pricing:
-        cost = pricing.cost(u.input_tokens, u.output_tokens, u.cache_read_tokens, ts=time.time())
+        now = time.time()
+        cost = pricing.cost(u.input_tokens, u.output_tokens, u.cache_read_tokens, ts=now - wall, until=now)
     else:
         cost = 0.0 if no_tokens and no_model_traffic else None
     unavailable = list(UNAVAILABLE) + ([] if cost is not None else

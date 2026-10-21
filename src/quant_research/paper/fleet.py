@@ -66,8 +66,8 @@ class RosterEntry(BaseModel):
 
 
 class Roster(BaseModel):
-    fee_rate: float = 0.006
-    slippage_bps: float = 5.0
+    fee_rate: float = 0.002  # coinbase-lf-allin-v1 (investment-policy §6)
+    slippage_bps: float = 2.0
     risk: RiskLimits = Field(default_factory=RiskLimits)
     entries: list[RosterEntry] = Field(default_factory=list)
 

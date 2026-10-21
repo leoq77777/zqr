@@ -121,7 +121,7 @@ def test_a_draft_becomes_proposed_campaigns_with_provenance(paths, store, datase
     ws = loop.drafter.workspaces[0]
     assert set(ws) == {"TASK.md", "CONSTRAINTS.md", "LIBRARY.md", "draft.schema.json"}
     assert TEXT in ws["TASK.md"] and "untrusted external material" in ws["TASK.md"]
-    assert "from a thread" in ws["TASK.md"] and "0.60%" in ws["CONSTRAINTS.md"]
+    assert "from a thread" in ws["TASK.md"] and "0.20%" in ws["CONSTRAINTS.md"]
     assert "`channel_breakout`" in ws["LIBRARY.md"]
     ledger = rl.read_ledger(paths)[-1]
     assert ledger["topic"] == "inbox" and ledger["inbox_id"] == iid and ledger["campaigns_written"] == row[

@@ -553,6 +553,59 @@ def test_generator_leaves_out_families_at_quota(paths, store, dataset, monkeypat
     assert "cost:tsmom" not in {c["key"] for c in generate.candidates(paths, store, "BTC-USD")}
 
 
+def test_open_question_filters_drop_a6_blind_and_gate2_retries():
+    from quant_research.campaign.generate import (
+        gate2_retry_open_question,
+        open_question_allowed,
+        unanswerable_open_question,
+    )
+
+    assert unanswerable_open_question(
+        "Which gate-2 component failed (Sharpe, drawdown or turnover) - needed before any redesign")
+    assert unanswerable_open_question("What was the validation Sharpe of the registered variant?")
+    assert unanswerable_open_question(
+        "Can the deep drawdown be reduced without giving up 2017, the binding gate-2 constraint?")
+    assert not unanswerable_open_question(
+        "Is the BTC hourly trend premium already fully spanned by the reference's tsmom members?")
+    assert gate2_retry_open_question(
+        "Would the cadence-720 hysteresis variant (exp-746025337a2a) survive gate 2, given its halved turnover?")
+    assert gate2_retry_open_question(
+        "Would a wider-band variant cut turnover enough to pass a gate-2-style no-harm test?")
+    assert not gate2_retry_open_question(
+        "Is the trend premium already fully captured by the reference's existing members?")
+    assert not open_question_allowed(
+        "Which gate-2 component failed (Sharpe, drawdown or turnover)?", "tsmom", set())
+    assert not open_question_allowed(
+        "Would the cadence-720 variant survive gate 2?", "tsmom", {"tsmom"})
+    assert open_question_allowed(
+        "Would the cadence-720 variant survive gate 2?", "tsmom", set())  # no prior Gate 2 failure
+    assert open_question_allowed(
+        "Is the trend premium already fully spanned by the reference?", "tsmom", {"tsmom"})
+
+
+def test_generator_skips_unanswerable_and_gate2_retry_open_questions(paths, store, dataset, monkeypatch):
+    from quant_research.campaign import generate
+    from quant_research.memory.conclusions import add_campaign_conclusion
+
+    d = _diag(paths, store, dataset)
+    monkeypatch.setattr(generate, "diagnostics", lambda *a: d)
+    monkeypatch.setattr(generate, "gate2_failed_families", lambda *a: {"tsmom"})
+    questions = [
+        "Which gate-2 component failed (Sharpe, drawdown or turnover)?",
+        "Would a wider-band variant cut turnover enough to pass a gate-2-style no-harm test?",
+        "Is the BTC hourly trend premium already fully spanned by the reference's tsmom members?",
+        "Was 2023's relative shortfall a tsmom-specific regime effect?",
+    ]
+    add_campaign_conclusion(store, "cmp-filter-test", "tsmom", "BTC-USD", dataset[1].split_id, {
+        "hypothesis": "h", "preregistered_plan": "p", "decision": "inconclusive", "limitations": [],
+        "unresolved": questions, "experiment_ids": [], "results": {}})
+    keys = {c["key"]: c for c in generate.candidates(paths, store, "BTC-USD")}
+    open_keys = sorted(k for k in keys if k.startswith("open:"))
+    assert open_keys == ["open:campaign:cmp-filter-test:2", "open:campaign:cmp-filter-test:3"]
+    assert "fully spanned" in keys[open_keys[0]]["spec"]["goal"]
+    assert "2023" in keys[open_keys[1]]["spec"]["goal"]
+
+
 def test_generator_runs_on_the_real_reference(paths, store, dataset):
     from quant_research.campaign import generate
 

@@ -180,8 +180,8 @@ def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[li
                "failures": dict(failures)}
     mandate_ids = set(cfg.mandates.values())
     if mandate_ids:
-        lines += ["", "| product | trials on split (all time) | effective K (ρ 0.7) | candidates by state | "
-                  "holdout viewings left |", "|---|---|---|---|---|"]
+        lines += ["", "| product | cost profile | trials on split (all time) | effective K (ρ 0.7) | "
+                  "candidates by state | holdout viewings left |", "|---|---|---|---|---|---|"]
         for product, mid in cfg.mandates.items():
             rec = store.get_mandate(mid)
             if rec is None:
@@ -195,7 +195,8 @@ def research_section(paths: Paths, store: ExperimentStore, day: str) -> tuple[li
                          if parent else "")
             split_trials = (f"{trials['total']} ({trials['own']} + {trials['inherited']} inherited)" if parent
                             else str(trials["total"]))
-            lines.append(f"| {product} | {split_trials} | {k_label(store, m.split_id)} | "
+            profile = m.cost_profile or "(legacy)"
+            lines.append(f"| {product} | `{profile}` | {split_trials} | {k_label(store, m.split_id)} | "
                          f"{', '.join(f'{k} {v}' for k, v in sorted(states.items())) or '-'} | "
                          f"{left}{inherited}{' **(exhausted: no more automatic promotion)**' if left <= 0 else ''}"
                          f"{' **(closed)**' if closed_refusal(store, m.split_id) else ''}"

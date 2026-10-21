@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, PositiveInt, model_validator
 
+from quant_research.backtest.costs import CostProfile, costs_match_profile
 from quant_research.backtest.engine import EngineConfig
 from quant_research.controller.budget import Budget
 from quant_research.hashing import hash_obj
@@ -77,9 +78,25 @@ class Mandate(BaseModel):
     holdout: HoldoutPolicy
     agent_segments: tuple[Literal["dev", "validation"], ...] = ("dev",)  # segments agent tools may run on
     notes: str = ""
+    # Optional so legacy mandate bodies keep a stable content hash when the field is absent/None.
+    cost_profile: CostProfile | None = None
+
+    @model_validator(mode="after")
+    def _cost_profile_matches_engine(self):
+        if self.cost_profile is not None and not costs_match_profile(self.engine_config.costs, self.cost_profile):
+            raise ValueError(
+                f"cost_profile {self.cost_profile!r} does not match engine_config.costs "
+                f"(fee_rate={self.engine_config.costs.fee_rate}, "
+                f"slippage_bps={self.engine_config.costs.slippage_bps}, "
+                f"source prefix must be cost_profile:{self.cost_profile}:)"
+            )
+        return self
 
     def mandate_id(self) -> str:
-        return "mandate-" + hash_obj(self.model_dump(mode="json"))[:12]
+        data = self.model_dump(mode="json")
+        if data.get("cost_profile") is None:
+            data.pop("cost_profile", None)
+        return "mandate-" + hash_obj(data)[:12]
 
 
 def metric_value(metrics: dict, name: str) -> float:

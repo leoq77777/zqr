@@ -40,8 +40,17 @@ def _client(args):
 
 
 def _engine(args) -> EngineConfig:
-    costs = CostConfig(fee_rate=args.fee_rate, slippage_bps=args.slippage_bps,
-                       source=args.cost_source or CostConfig().source)
+    from quant_research.backtest.costs import AUTHORITATIVE_PROFILE, cost_config
+
+    profile = getattr(args, "cost_profile", None) or AUTHORITATIVE_PROFILE
+    base = cost_config(profile)
+    fee, slip = getattr(args, "fee_rate", None), getattr(args, "slippage_bps", None)
+    if fee is None and slip is None and not getattr(args, "cost_source", None):
+        costs = base
+    else:
+        costs = CostConfig(fee_rate=base.fee_rate if fee is None else fee,
+                           slippage_bps=base.slippage_bps if slip is None else slip,
+                           source=args.cost_source or base.source)
     return EngineConfig(initial_cash=args.initial_cash, costs=costs,
                         base_increment=getattr(args, "base_increment", None))
 
@@ -371,9 +380,11 @@ def _load_mandate(store: ExperimentStore, ref: str):
 
 
 def cmd_mandate_template(args) -> None:
+    from quant_research.backtest.costs import AUTHORITATIVE_PROFILE
     from quant_research.controller.budget import Budget
     from quant_research.research.mandate import AcceptanceCriteria, HoldoutPolicy, Mandate, SingleValidation
 
+    profile = args.cost_profile or AUTHORITATIVE_PROFILE
     tmpl = Mandate(
         question=args.question, dataset_id=args.dataset, split_id=args.split, engine_config=_engine(args),
         policy=_policy(args), evaluation_design=SingleValidation(), primary_metric="sharpe",
@@ -382,7 +393,8 @@ def cmd_mandate_template(args) -> None:
         budget=Budget(max_rounds=5, max_candidates=20, max_experiments=300, max_wall_seconds=4 * 3600,
                       max_trials_per_strategy=50),
         holdout=HoldoutPolicy(max_viewings=1, min_primary=0.0, min_total_return=0.0),
-        notes="TEMPLATE: review every threshold before `zqr mandate create`",
+        cost_profile=profile,
+        notes=f"TEMPLATE: cost_profile={profile}; review every threshold before `zqr mandate create`",
     )
     _out(tmpl.model_dump(mode="json"))
 
@@ -683,10 +695,11 @@ def _paper_cfg(args, paths: Paths, instrument: str, granularity: str):
     from quant_research.paper.trader import PaperConfig
 
     spec = _spec(args, paths)
+    costs = _engine(args).costs
     return PaperConfig(
         name=args.name, instrument=instrument, granularity=granularity, strategy_ref=spec.strategy_ref,
         parameters=spec.parameters, policy=_policy(args), initial_quote=Decimal(str(args.initial_cash)),
-        fee_rate=Decimal(str(args.fee_rate)), slippage_bps=Decimal(str(args.slippage_bps)),
+        fee_rate=Decimal(str(costs.fee_rate)), slippage_bps=Decimal(str(costs.slippage_bps)),
         risk=RiskLimits(max_order_notional=args.max_order_notional, max_daily_loss_fraction=args.max_daily_loss,
                         max_orders_per_hour=args.max_orders_per_hour, stale_after_seconds=args.stale_after,
                         kill_switch_file=str(paths.paper / args.name / "KILL")),
@@ -796,10 +809,15 @@ def _add_strategy(p) -> None:
 
 
 def _add_engine(p) -> None:
+    from quant_research.backtest.costs import AUTHORITATIVE_PROFILE, COST_PROFILES
+
     p.add_argument("--initial-cash", type=float, default=10_000.0)
-    p.add_argument("--fee-rate", type=float, default=0.006, help="taker fee fraction (use your account tier)")
-    p.add_argument("--slippage-bps", type=float, default=5.0)
-    p.add_argument("--cost-source", help="where the cost numbers come from")
+    p.add_argument("--cost-profile", choices=sorted(COST_PROFILES), default=AUTHORITATIVE_PROFILE,
+                   help="named cost world (investment-policy §6); default coinbase-lf-allin-v1")
+    p.add_argument("--fee-rate", type=float, default=None,
+                   help="override profile fee_rate (prefer --cost-profile)")
+    p.add_argument("--slippage-bps", type=float, default=None, help="override profile slippage_bps")
+    p.add_argument("--cost-source", help="override costs.source label")
     p.add_argument("--base-increment", type=float, help="product quantity step (default: continuous)")
     p.add_argument("--policy", help='portfolio policy JSON or file, e.g. \'{"vol_target": 0.4}\' (default: no vol '
                                     "target, asset cap 1, gross cap 1)")

@@ -34,18 +34,25 @@ from quant_research.hashing import hash_obj
 
 
 class CostConfig(BaseModel):
-    fee_rate: NonNegativeFloat = 0.006  # taker fee fraction; replace with the account's real tier
-    slippage_bps: NonNegativeFloat = 5.0
-    source: str = "assumed: Coinbase lowest public taker tier, unverified for this account"
+    # Defaults match coinbase-lf-allin-v1 (investment-policy §6). Prefer cost_config(profile).
+    fee_rate: NonNegativeFloat = 0.002
+    slippage_bps: NonNegativeFloat = 2.0
+    source: str = "cost_profile:coinbase-lf-allin-v1: use quant_research.backtest.costs.cost_config for full source"
 
     def scaled(self, factor: float) -> CostConfig:
         return CostConfig(fee_rate=self.fee_rate * factor, slippage_bps=self.slippage_bps * factor,
                           source=f"{self.source} x{factor:g}")
 
 
+def _default_costs() -> CostConfig:
+    """Authoritative deployable baseline (`coinbase-lf-allin-v1`); see backtest.costs."""
+    from quant_research.backtest.costs import AUTHORITATIVE_PROFILE, cost_config
+    return cost_config(AUTHORITATIVE_PROFILE)
+
+
 class EngineConfig(BaseModel):
     initial_cash: PositiveFloat = 10_000.0
-    costs: CostConfig = Field(default_factory=CostConfig)
+    costs: CostConfig = Field(default_factory=_default_costs)
     min_trade_notional: NonNegativeFloat = 1.0
     rebalance_tolerance: NonNegativeFloat = 0.0  # skip trades smaller than this fraction of equity
     execution_delay_bars: NonNegativeInt = 0

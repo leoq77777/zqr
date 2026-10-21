@@ -69,8 +69,8 @@ class PaperConfig(BaseModel):
     unknown_query_limit: int = 3  # queries returning "not found" before an UNKNOWN order is closed
     risk: RiskLimits = Field(default_factory=RiskLimits)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
-    fee_rate: Decimal = Decimal("0.006")  # simulator only
-    slippage_bps: Decimal = Decimal("5")  # simulator only
+    fee_rate: Decimal = Decimal("0.002")  # coinbase-lf-allin-v1; simulator only
+    slippage_bps: Decimal = Decimal("2")  # coinbase-lf-allin-v1; simulator only
     portfolio: dict[str, Any] | None = None  # a portfolio version's body; traded by `PortfolioTrader`
 
     def identity_hash(self) -> str:

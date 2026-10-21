@@ -56,7 +56,7 @@ def _order_targets(trader):
 def test_identity_hash_of_strategy_configs_is_unchanged():
     cfg = PaperConfig(name="t", instrument="BTC-USD", granularity="ONE_HOUR", strategy_ref="template:sma_cross",
                       parameters={"fast": 5, "slow": 20})
-    assert cfg.identity_hash() == "412070c301e5"
+    assert cfg.identity_hash() == "0dafbc326a76"  # fee/slip defaults: coinbase-lf-allin-v1 (0.002 / 2 bps)
 
 
 def test_portfolio_replay_matches_run_portfolio(tmp_path):

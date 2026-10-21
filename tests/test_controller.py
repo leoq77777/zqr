@@ -210,3 +210,19 @@ def test_deepseek_pricing_cache_and_peak_schedule():
     assert flat.cost(1_000_000, 0, 1_000_000) == pytest.approx(4.0)
     with pytest.raises(ValueError):
         pricing_preset("nope")
+
+
+def test_deepseek_pricing_over_a_span_is_peak_if_any_part_is():
+    p = pricing_preset("deepseek-flash", cny_per_usd=7.0)
+
+    def at(day, hour, minute=0):
+        return datetime(2026, 10, day, hour, minute, tzinfo=BEIJING).timestamp()
+
+    peak, off = 2 / 7.0, 1 / 7.0  # 1M uncached input tokens, Monday 2026-10-12 onwards
+    assert p.cost(1_000_000, 0, ts=at(12, 17, 30), until=at(12, 18, 30)) == pytest.approx(peak)  # ends off-peak
+    assert p.cost(1_000_000, 0, ts=at(12, 11, 59), until=at(12, 13)) == pytest.approx(peak)
+    assert p.cost(1_000_000, 0, ts=at(12, 12, 10), until=at(12, 13, 50)) == pytest.approx(off)  # lunch only
+    assert p.cost(1_000_000, 0, ts=at(12, 18, 30), until=at(13, 8, 59)) == pytest.approx(off)  # overnight
+    assert p.cost(1_000_000, 0, ts=at(12, 18, 30), until=at(13, 9)) == pytest.approx(peak)
+    assert p.cost(1_000_000, 0, ts=at(16, 19), until=at(19, 8)) == pytest.approx(off)  # Friday night to Monday
+    assert p.cost(1_000_000, 0, ts=at(16, 19), until=at(19, 9, 30)) == pytest.approx(peak)

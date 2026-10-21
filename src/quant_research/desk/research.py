@@ -408,7 +408,7 @@ class ResearchLoop:
                 research = None
         u = (run.usage if run else None) or usage_from_transcripts(run_dir / TRANSCRIPT_DIR)
         cost, cost_source = self._cost(run, u, meta.get("reserved_usd"),
-                                       self._maybe_called(run_dir, egress_records, crash))
+                                       self._maybe_called(run_dir, egress_records, crash), meta["started_at"])
         failure, details = self._classify(run, audit, egress, harness_error, research, crash)
         if self.stop_requested and failure not in ("none", "audit.failed"):
             failure, details = "desk.stopped", ["desk stop requested during the session", *details]
@@ -531,7 +531,7 @@ class ResearchLoop:
         egress = summarize(egress_records) if (self.isolate_network and egress_records) else None
         u = (run.usage if run else None) or usage_from_transcripts(run_dir / TRANSCRIPT_DIR)
         cost, cost_source = self._cost(run, u, meta.get("reserved_usd"),
-                                       self._maybe_called(run_dir, egress_records, crash))
+                                       self._maybe_called(run_dir, egress_records, crash), meta["started_at"])
         draft, problem = read_draft(run_dir / "workspace")
         no_model = run is None or run.usage is None or (run.usage.input_tokens + run.usage.output_tokens) == 0
         if crash:
@@ -599,14 +599,17 @@ class ResearchLoop:
         return result
 
     def _cost(self, run: AgentRun | None, u, reserved: float | None = None,
-              maybe_called: bool = True) -> tuple[float, str]:
-        """Booked cost and its source. Without a price or without any usage report, a run that may have called the
+              maybe_called: bool = True, started: float | None = None) -> tuple[float, str]:
+        """Booked cost and its source. Usage is priced over the run's whole span (peak if any part of it is), since
+        the time of each call is unknown. Without a price or without any usage report, a run that may have called the
         model is booked at the CLI's estimate or else its reservation, and `_book_stop` stops the loop."""
         models = (run.extra.get("models") if run else None) or (u.model.split(",") if u and u.model else [])
         pricing = budget.price_for(self.cfg, models)
         if u and pricing:
-            return round(pricing.cost(u.input_tokens, u.output_tokens, u.cache_read_tokens, ts=time.time()), 6), \
-                "priced_usage"
+            now = self.clock()
+            cost = pricing.cost(u.input_tokens, u.output_tokens, u.cache_read_tokens,
+                                ts=now if started is None else started, until=now)
+            return round(cost, 6), "priced_usage"
         if u is not None and (u.input_tokens + u.output_tokens) == 0:
             return 0.0, "no_tokens"
         estimate = run.cli_cost_usd if run is not None else None

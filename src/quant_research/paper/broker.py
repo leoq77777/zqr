@@ -39,7 +39,7 @@ class SimulatedBroker:
     capabilities = {"order_types": ["market"], "client_order_id": True, "query_by_client_order_id": True,
                     "partial_fills": True, "simulated": True}
 
-    def __init__(self, product: ProductSpec, balances: dict[str, Decimal], fee_rate: Decimal = Decimal("0.006"),
+    def __init__(self, product: ProductSpec, balances: dict[str, Decimal], fee_rate: Decimal = Decimal("0.002"),
                  slippage_bps: Decimal = Decimal("5"), faults: list[str] | None = None):
         self.product = product
         self._balances = {k: Decimal(v) for k, v in balances.items()}

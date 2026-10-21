@@ -237,7 +237,8 @@ Since release 4d the research loop no longer calls `promote` (D8); `zqr desk pro
 
 ### 5.4 Paper fleet (`paper/fleet.py`)
 
-- The roster (`desk/roster.json`) holds the default fee rate 0.006 and slippage 5 bps, `RiskLimits` and the
+- The roster (`desk/roster.json`) holds the default fee rate 0.002 and slippage 2 bps
+  (`coinbase-lf-allin-v1`; see `docs/investment-policy.md` §6), `RiskLimits` and the
   entries. An entry may set its own `fee_rate`, `slippage_bps` and `min_trade_notional` (promoted candidates
   do). Defaults are created from `desk/presets.json`: 16 entries, 8 rules × 2 products.
 - The fleet reloads the roster when its mtime changes:
@@ -788,7 +789,8 @@ exactly the production layout (volumes, control network, sibling containers) on 
 
 - **Research outcome so far:** about 26 sessions and no candidate has passed. The agent's rejections looked
   sound: the best dev Sharpe was about 1.0 with drawdowns past −40% and DSR 0.05–0.08. Hourly long/cash with a
-  1.3% round trip is a hard target.
+  ~1.3% round trip (retail-taker-v0) was a hard target; deployable baseline is now
+  `coinbase-lf-allin-v1` (~0.44% RT) with `costs_x2` still required.
 - **Trial accumulation:** the topic loop added about 100 trials per split per hour. Since 4d trials are bounded by
   campaign caps (at most 80 per campaign), family quotas (100 per family per split) and 12 sessions per day.
 - **Campaign generation is manual:** `zqr campaign generate` runs only when someone runs it; nothing generates

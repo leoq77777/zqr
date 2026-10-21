@@ -4,6 +4,10 @@ Decided by the human on 2026-10-13, answering section 8 of
 `docs/superpowers/specs/2026-10-13-research-library-portfolio-design.md`. These values replace the provisional ones
 in that section. Items under "To define" must be settled, in the phase named, before code depends on them.
 
+**Amendment 2026-10-19:** §4 benchmark costs and §6 fee baseline — authoritative profile
+`coinbase-lf-allin-v1`; former 0.60%+5 bps retained as `coinbase-retail-taker-v0` stress/contrast.
+See §6 and `docs/superpowers/specs/2026-10-19-cost-profiles-mandate.md`.
+
 ## 1. Capital and currency
 
 - Quote currency USD. Total paper capital $20,000: BTC-USD portfolio $10,000, ETH-USD portfolio $10,000. The
@@ -58,7 +62,8 @@ Decided 2026-10-15 (phase 3, D3):
 
 ## 4. Benchmark and cash
 
-- Benchmark: 50/50 buy and hold with the same initial capital and the same costs (0.6% taker plus 5 bps).
+- Benchmark: 50/50 buy and hold with the same initial capital and the **same cost profile as the
+  mandate under test** (default deployable profile: `coinbase-lf-allin-v1`, see §6).
 - Cash earns 0. Any future USDC interest is outside the measured return.
 
 ## 5. Research budget
@@ -81,10 +86,72 @@ Decided 2026-10-15 (phase 4, D7; `docs/superpowers/plans/2026-10-15-phase4-campa
   dev), a second of $2 when it passes gate 2 (do no harm on validation); never more than $5. No other top-ups.
 - Daily cap $5 (was $20), so that one bad day cannot spend two months of budget.
 
-## 6. Fees
+## 6. Fees (cost profiles)
 
-- 0.6% taker per side plus 5 bps slippage (0.65% per side, 1.30% per round trip).
-- Verified by the human on 2026-10-15 against the Coinbase Advanced Trade fee schedule: the lowest volume tier
-  (30-day volume below $10,000) is taker 0.60% / maker 0.40%; the taker rate falls to 0.40% only above $10,000.
-  The account's tier matches the assumption, so `fee_rate`, the mandates and every gate threshold stay as they
-  are.
+Decided 2026-10-19 (human approval; design note in
+`docs/superpowers/plans/2026-10-19-next-features.md` §4 and mandate template
+`docs/superpowers/specs/2026-10-19-cost-profiles-mandate.md`).
+
+Research and paper use a **fixed conservative baseline** per mandate. Live venue fees, spreads and
+impact are floating; the backtest does **not** model volume-tier schedules or order-book queues.
+Costs are environment assumptions with a named profile and a labelled `source`—not strategy
+hyperparameters to grid-search.
+
+### 6.1 Authoritative deployable baseline — `coinbase-lf-allin-v1`
+
+| Field | Value | Meaning |
+|---|---|---|
+| `fee_rate` | **0.0020** (0.20% per side) | All-in commission proxy |
+| `slippage_bps` | **2.0** (0.02% per side) | Residual spread / impact buffer |
+| Per side | **0.22%** | fee + slippage |
+| Round trip | **≈ 0.44%** | 2 × 0.22% |
+
+**Semantic honesty.** The accounting engine still fills at the next bar open with market-style
+certainty (`docs/contracts-v2.md` §4). This profile is **not** a maker fill simulator. It is an
+**all-in low-frequency rebalancing friction proxy**: a single constant that packs steady-state
+maker-biased Coinbase Advanced Trade economics (after normal personal volume crosses the published
+tiers), occasional taker cleanup, tight BTC/ETH spreads, and a conservative buffer. The `source`
+string on every mandate and experiment must say so explicitly (template in the cost-profiles
+mandate spec).
+
+**Why these numbers (calibration sketch, not a live fee API).** For ~$20k paper capital and a few
+rebalances per year, 30-day notional typically clears the lowest Coinbase volume tier; maker-biased
+execution for hour/day/week cadence is the intended path. A constant near 0.20% fee + 2 bps slip is
+a 1.2–1.3× cushion over a plausible steady maker blend, without claiming queue priority or fill
+guarantees the engine does not model.
+
+### 6.2 Worst-case retail taker reference — `coinbase-retail-taker-v0`
+
+| Field | Value | Meaning |
+|---|---|---|
+| `fee_rate` | **0.0060** (0.60% per side) | Coinbase lowest-tier public taker (verified 2026-10-15) |
+| `slippage_bps` | **5.0** (0.05% per side) | Prior default slip |
+| Per side | **0.65%** | |
+| Round trip | **≈ 1.30%** | |
+
+Former system default (policy 2026-10-13 / 2026-10-15). Retained as a **stress / contrast**
+profile: “what if every rebalance were worst-case retail market-taking?” Results under this profile
+must be labelled; they are not the deployable admission world unless a mandate explicitly chooses
+this profile as its base.
+
+### 6.3 Sensitivity and mixing rules
+
+- Mandate acceptance keeps **`require_costs_x2`**: still profitable when the mandate’s **base**
+  profile costs are doubled (for `coinbase-lf-allin-v1`, about **0.44% per side / ≈ 0.88% round
+  trip**).
+- Optional human-run contrast: re-evaluate a frozen candidate under `coinbase-retail-taker-v0`
+  without mixing those trials into the deployable profile’s DSR bucket.
+- **Do not** mix cost profiles in one split’s research DSR without a new mandate (and normally a
+  new split or a recorded mandate change). Profile id and `costs.source` are part of experiment
+  identity via `engine_config`.
+- Changing the authoritative baseline again requires a dated amendment here, new mandates, and an
+  explicit desk/code default change—not a silent host edit.
+
+### 6.4 Historical note
+
+- 2026-10-15: verified Coinbase Advanced Trade lowest tier taker 0.60% / maker 0.40% below $10k
+  30-day volume; policy then locked 0.60% + 5 bps as the sole baseline because the account matched
+  that tier under a taker assumption.
+- 2026-10-19: baseline replaced by `coinbase-lf-allin-v1`; `coinbase-retail-taker-v0` demoted to
+  reference/stress. Prior experiments under 0.60% + 5 bps remain valid evidence **for that cost
+  world** only.

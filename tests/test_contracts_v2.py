@@ -7,7 +7,11 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
+from quant_research.backtest.costs import RETAIL_TAKER_PROFILE, cost_config
 from quant_research.backtest.engine import EngineConfig, run_backtest
+
+# Golden cases in contracts-v2 §4 were hand-worked under the retail-taker fee schedule.
+_G1_ENGINE = EngineConfig(costs=cost_config(RETAIL_TAKER_PROFILE))
 from quant_research.experiments.replay import replay_experiment
 from quant_research.experiments.runner import ExperimentRequest, run_experiment
 from quant_research.portfolio.policy import (
@@ -31,7 +35,7 @@ def _close(a, b, tol=1e-6):
 
 
 def test_g1_hand_worked_fills():
-    bt = run_backtest(BARS, G1_TARGETS, EngineConfig())
+    bt = run_backtest(BARS, G1_TARGETS, _G1_ENGINE)
     buy, sell = bt.fills.iloc[0], bt.fills.iloc[1]
     assert (buy.bar_index, buy.side) == (1, "buy") and _close(buy.qty, 99.35390158, 1e-8)
     assert _close(buy.price, 100.05) and _close(buy.notional, 9940.357853) and _close(buy.fee, 59.642147)
@@ -44,7 +48,7 @@ def test_g1_hand_worked_fills():
 
 
 def test_g2_quantity_rounding_and_liquidation_equity():
-    bt = run_backtest(BARS, G1_TARGETS, EngineConfig(base_increment=0.01))
+    bt = run_backtest(BARS, G1_TARGETS, _G1_ENGINE.model_copy(update={"base_increment": 0.01}))
     assert _close(bt.fills.qty.iloc[0], 99.35) and _close(bt.fills.notional.iloc[0], 9939.9675)
     assert _close(bt.fills.qty.iloc[1], 49.67) and _close(bt.fills.notional.iloc[1], 4964.5165)
     last = bt.equity.iloc[-1]
@@ -54,7 +58,7 @@ def test_g2_quantity_rounding_and_liquidation_equity():
 
 
 def test_g3_insufficient_cash_caps_the_rebalance():
-    bt = run_backtest(BARS, np.array([0.5, 1.0, 1.0, 1.0]), EngineConfig())
+    bt = run_backtest(BARS, np.array([0.5, 1.0, 1.0, 1.0]), _G1_ENGINE)
     assert _close(bt.fills.notional.iloc[0], 5000.0) and _close(bt.fills.fee.iloc[0], 30.0)
     # at b2 the wanted buy is 4970 but only 4970 / 1.006 is affordable after the fee
     assert _close(bt.fills.notional.iloc[1], 4940.357853) and _close(bt.fills.fee.iloc[1], 29.642147)
@@ -62,18 +66,18 @@ def test_g3_insufficient_cash_caps_the_rebalance():
 
 
 def test_delay_and_adverse_fill():
-    delayed = run_backtest(BARS, G1_TARGETS, EngineConfig(execution_delay_bars=1))
+    delayed = run_backtest(BARS, G1_TARGETS, _G1_ENGINE.model_copy(update={"execution_delay_bars": 1}))
     assert list(delayed.fills.bar_index) == [2] and _close(delayed.fills.price.iloc[0], 110.055)
-    adverse = run_backtest(BARS, G1_TARGETS, EngineConfig(adverse_fill=True))
+    adverse = run_backtest(BARS, G1_TARGETS, _G1_ENGINE.model_copy(update={"adverse_fill": True}))
     # sell at b3: reference is min(open 100, decision close 99) before slippage
     assert _close(adverse.fills.price.iloc[1], 99 * 0.9995) and _close(adverse.fills.notional.iloc[1], 4915.559119)
-    cfg = EngineConfig()
+    cfg = _G1_ENGINE
     assert cfg.sensitivity("delay_1_adverse").execution_delay_bars == 1
     assert cfg.sensitivity("costs_x2").costs.fee_rate == 2 * cfg.costs.fee_rate
 
 
 def test_nan_target_sends_no_order():
-    bt = run_backtest(BARS, np.array([1.0, np.nan, 0.0, np.nan]), EngineConfig())
+    bt = run_backtest(BARS, np.array([1.0, np.nan, 0.0, np.nan]), _G1_ENGINE)
     assert list(bt.fills.bar_index) == [1, 3]
 
 

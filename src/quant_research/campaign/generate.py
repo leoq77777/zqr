@@ -9,10 +9,12 @@ the written family archives, the conclusions and the family quotas (P1). Diagnos
 - concentration: the largest family share of the reference's P&L above an equal share, or the mean residual
   correlation between the sleeves' representatives; an exploration campaign;
 - cost: a family whose representative's dev Sharpe falls at doubled costs; gap = the relative fall;
-- open question: an unresolved question in a conclusion of the family; gap 0.3;
+- open question: an unresolved question in a conclusion of the family; gap 0.3. Dropped when the question needs
+  Gate 2 / validation measures denied to agents (A6), or when it is a parameter retry to re-pass Gate 2 after that
+  family already failed Gate 2 on the split (or an ancestor);
 - unmapped cluster: an open new-family proposal of the clustering; exploration; gap = size / 50 (at most 1).
 
-Score = gap x room left in the family's quota; ties by key. About 20% of each batch is exploration. A proposal
+Score = gap x room left in the family's quota; ties by key. About a third of each batch is exploration. A proposal
 whose key is already proposed, queued or running is not repeated.
 """
 
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -34,8 +37,29 @@ from quant_research.paths import Paths
 from quant_research.portfolio.evaluate import _summary, gate1_reference, version_periods
 from quant_research.timeutil import parse_time
 
-EXPLORATION_SHARE = 0.2
+EXPLORATION_SHARE = 0.35
 OPEN_QUESTION_GAP = 0.3
+
+# A6: agents see only that Gate 2 failed, never which check or any validation measure.
+_UNANSWERABLE = re.compile(
+    r"(?i)"
+    r"(?:which\s+gate[-\s]?2\s+component"
+    r"|which\s+(?:of\s+)?(?:the\s+)?(?:three\s+)?(?:sharpe|drawdown|turnover)\b.{0,80}(?:fail|failed|failing)"
+    r"|gate[-\s]?2\s+component\s+failed"
+    r"|binding\s+gate[-\s]?2\s+constraint"
+    r"|validation\s+(?:sharpe|drawdown|turnover|metric|measure)"
+    r"|(?:sharpe|drawdown|turnover)\s+(?:on\s+)?(?:the\s+)?validation\b)"
+)
+
+# Open questions that treat Gate 2 as a retargetable objective for a parameter tweak.
+_GATE2_RETRY = re.compile(
+    r"(?i)"
+    r"(?:survive|survives|pass|passes|passing|clear|clears)\s+(?:a\s+)?gate[-\s]?2"
+    r"|gate[-\s]?2[-\s]?style"
+    r"|pass\s+a\s+gate[-\s]?2"
+    r"|would\s+.{0,200}\s+(?:survive|pass|clear)\s+gate[-\s]?2"
+    r"|re-?(?:register|run|try|submit).{0,40}gate\s*2"
+)
 
 
 def _years(start: int, end: int) -> list[int]:
@@ -49,6 +73,32 @@ def _archives(paths: Paths) -> dict[str, dict[str, Any]]:
 
 def _r(x: float) -> float:
     return round(float(x), 4)
+
+
+def unanswerable_open_question(q: str) -> bool:
+    """True when answering needs Gate 2 / validation internals denied to agents (A6)."""
+    return bool(_UNANSWERABLE.search(q))
+
+
+def gate2_retry_open_question(q: str) -> bool:
+    """True when the question frames a variant/parameter tweak as another attempt to pass Gate 2."""
+    return bool(_GATE2_RETRY.search(q))
+
+
+def gate2_failed_families(store: ExperimentStore, split_id: str) -> set[str]:
+    """Sleeve families with a Gate 2 failure on this split or an ancestor (A13.8 revalidations inherit)."""
+    from quant_research.hypothesis.store import HypothesisStore
+
+    splits = {split_id, *store.split_ancestors(split_id)}
+    return {h["family"] for h in HypothesisStore(store).list()
+            if h["split_id"] in splits and h["state"] == "gate2_failed"}
+
+
+def open_question_allowed(q: str, family: str, failed: set[str]) -> bool:
+    """Whether an unresolved conclusion question may become a campaign (dev-answerable, not a Gate 2 collision)."""
+    if unanswerable_open_question(q):
+        return False
+    return not (family in failed and gate2_retry_open_question(q))
 
 
 def diagnostics(paths: Paths, store: ExperimentStore, product: str) -> dict[str, Any]:
@@ -136,11 +186,14 @@ def candidates(paths: Paths, store: ExperimentStore, product: str) -> list[dict[
                 cites=[c for c in (rep.get("experiment_id"), cost.get("experiment_id")) if c],
                 data={"sharpe_1x": s1, "sharpe_2x": s2})
 
+    failed = gate2_failed_families(store, split_id)
     for c in conclusions(store):
         fam = c["family_id"]
         if c["product"] != product or fam not in sleeves:
             continue
         for i, q in enumerate(c["body"].get("unresolved") or []):
+            if not open_question_allowed(str(q), fam, failed):
+                continue
             ids = [e for e in c["body"].get("experiment_ids") or []
                    if (r := store.get_experiment(e)) is not None and r["split_id"] == split_id
                    and r["segment"] == "dev"]
@@ -160,7 +213,7 @@ def candidates(paths: Paths, store: ExperimentStore, product: str) -> list[dict[
 
 
 def batch(paths: Paths, store: ExperimentStore, product: str, n: int = 6) -> list[dict[str, Any]]:
-    """The next batch: new keys only, about 20% exploration, best scores first."""
+    """The next batch: new keys only, about a third exploration, best scores first."""
     cs = CampaignStore(store)
     live = {r["source"].get("key") for r in cs.list(product) if r["state"] in ("proposed", "queued", "running")}
     pool = [c for c in candidates(paths, store, product) if c["key"] not in live]

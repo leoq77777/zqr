@@ -16,6 +16,18 @@ def deepseek_peak(ts: float) -> bool:
     return t.weekday() < 5 and (9 <= t.hour < 12 or 14 <= t.hour < 18)
 
 
+def deepseek_peak_between(start: float, end: float) -> bool:
+    """Whether any moment of [start, end] is peak: a run is charged peak if any of its calls may have been."""
+    if deepseek_peak(start) or deepseek_peak(end):
+        return True
+    day = datetime.fromtimestamp(start, BEIJING).replace(hour=0, minute=0, second=0, microsecond=0)
+    while day.timestamp() <= end:
+        if day.weekday() < 5 and any(start <= day.replace(hour=h).timestamp() <= end for h in (9, 14)):
+            return True
+        day += timedelta(days=1)
+    return False
+
+
 class ModelPricing(BaseModel):
     """Vendor price per million tokens for the model actually used; cost() returns USD."""
 
@@ -28,17 +40,20 @@ class ModelPricing(BaseModel):
     schedule: Literal["flat", "deepseek"] = "flat"  # deepseek: off-peak is half the listed (peak) price
     source: str = ""
 
-    def multiplier(self, ts: float | None = None) -> float:
+    def multiplier(self, ts: float | None = None, until: float | None = None) -> float:
+        """At `ts`, or over [ts, until] when the calls' times within a run are unknown (peak if any part is)."""
         if self.schedule == "deepseek":
-            return 1.0 if deepseek_peak(time.time() if ts is None else ts) else 0.5
+            ts = time.time() if ts is None else ts
+            peak = deepseek_peak(ts) if until is None else deepseek_peak_between(ts, until)
+            return 1.0 if peak else 0.5
         return 1.0
 
     def cost(self, input_tokens: int, output_tokens: int, cache_read_tokens: int = 0,
-             ts: float | None = None) -> float:
+             ts: float | None = None, until: float | None = None) -> float:
         cache = self.input_per_mtok if self.cache_read_per_mtok is None else self.cache_read_per_mtok
         native = (input_tokens * self.input_per_mtok + cache_read_tokens * cache
                   + output_tokens * self.output_per_mtok) / 1e6
-        return native * self.multiplier(ts) * self.usd_per_unit
+        return native * self.multiplier(ts, until) * self.usd_per_unit
 
 
 DEEPSEEK_PRICES_URL = "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/"
