@@ -148,19 +148,84 @@ def _summary(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def gate1_reference(store: ExperimentStore, product: str, split_id: str) -> str | None:
-    """The version recorded as gate 1's reference `R_p` for a product on a split (D4), if any."""
+    """The version recorded as gate 1's reference `R_p` for a product on a split (D4), if any.
+
+    The latest `gate1_reference=true` event wins, so a human baseline migration can replace `R_p`
+    without deleting earlier designations.
+    """
     VersionStore(store)
     rows = store.query("SELECT e.version_id FROM portfolio_events e JOIN portfolio_versions v ON v.id = e.version_id "
                        "WHERE v.product=? AND v.split_id=? AND json_extract(e.evidence, '$.gate1_reference') = 1 "
-                       "ORDER BY e.id LIMIT 1", (product, split_id))
+                       "ORDER BY e.id DESC LIMIT 1", (product, split_id))
     return rows[0]["version_id"] if rows else None
+
+
+def _completed_portfolio_dev(store: ExperimentStore, vid: str, split_id: str) -> dict[str, Any] | None:
+    rows = store.query("SELECT id FROM experiments WHERE candidate_hash=? AND kind='portfolio' AND split_id=? AND "
+                       "status='completed' ORDER BY created_at DESC LIMIT 1", (vid, split_id))
+    return store.get_experiment(rows[0]["id"]) if rows else None
+
+
+def set_gate1_reference(paths: Paths, store: ExperimentStore, vid: str, note: str) -> dict[str, Any]:
+    """Human: point gate 1's `R_p` at `vid`, replacing the current designation on that product/split.
+
+    First-time registration stays `zqr portfolio dev --reference`. This path is the baseline migration:
+    research must be off, the version must sit on the desk mandate's dataset/split with matching costs,
+    and a completed no-ladder dev run must already exist. Existing hypotheses keep the `reference_id`
+    frozen at registration.
+    """
+    from quant_research.desk.config import load_config
+    from quant_research.memory.returns import research_equity_file
+    from quant_research.research.mandate import Mandate
+
+    if not note.strip():
+        raise VersionError("switching gate 1's reference needs a note")
+    cfg = load_config(paths)
+    if cfg.research_enabled:
+        raise VersionError("research is enabled; set research_enabled to false before switching gate 1's reference")
+    vs = VersionStore(store)
+    row = vs.get(vid)
+    if row is None:
+        raise VersionError(f"unknown portfolio version {vid}")
+    if row["state"] == "retired":
+        raise VersionError(f"{vid} is retired")
+    version = vs.version(vid)
+    mandate_id = cfg.mandates.get(row["product"])
+    if mandate_id is None:
+        raise VersionError(f"no desk mandate for {row['product']}")
+    rec = store.get_mandate(mandate_id)
+    if rec is None:
+        raise VersionError(f"desk mandate {mandate_id} of {row['product']} is not stored")
+    mandate = Mandate.model_validate(rec["body"])
+    if mandate.split_id != row["split_id"] or mandate.dataset_id != version.dataset_id:
+        raise VersionError(f"{vid} is not on the desk mandate's dataset/split")
+    want, got = mandate.engine_config.costs, version.engine_config.costs
+    if (want.fee_rate, want.slippage_bps) != (got.fee_rate, got.slippage_bps):
+        raise VersionError(f"{vid} costs {got.fee_rate}/{got.slippage_bps} do not match desk mandate {mandate_id} "
+                           f"({want.fee_rate}/{want.slippage_bps})")
+    dev = _completed_portfolio_dev(store, vid, row["split_id"])
+    if dev is None:
+        raise VersionError(f"{vid} has no completed portfolio dev run")
+    if research_equity_file(paths, dev) is None:
+        raise VersionError(f"{vid} has no research equity for its dev run")
+    current = gate1_reference(store, row["product"], row["split_id"])
+    if current == vid:
+        return {"version_id": vid, "changed": False, "previous": current, "gate1_reference": vid,
+                "dev_experiment": dev["id"], "split_id": row["split_id"]}
+    if current is not None:
+        vs.record(current, "human", {"gate1_reference": False, "superseded_by": vid}, note)
+    vs.record(vid, "human", {"gate1_reference": True, "previous": current, "dev_experiment": dev["id"],
+                             "reason": "baseline_migration"}, note)
+    return {"version_id": vid, "changed": True, "previous": current, "gate1_reference": vid,
+            "dev_experiment": dev["id"], "split_id": row["split_id"]}
 
 
 def run_dev(paths: Paths, store: ExperimentStore, vid: str, reference: bool = False,
             sandbox=None) -> dict[str, Any]:
     """The dev run alone: a trial, archived, no validation use; the state does not change (E1, F4).
 
-    `reference` records the version as gate 1's reference for its product and split; a second one is refused.
+    `reference` records the version as gate 1's reference for its product and split; a second one is
+    refused. Replace an existing `R_p` with `set_gate1_reference` (human).
     """
     vs = VersionStore(store)
     row = vs.get(vid)

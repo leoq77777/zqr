@@ -61,6 +61,12 @@ def cmd_dev(args) -> None:
     _run(args, lambda paths, store: run_dev(paths, store, args.version_id, args.reference, _sandbox(args)))
 
 
+def cmd_reference(args) -> None:
+    from quant_research.portfolio.evaluate import set_gate1_reference
+
+    _run(args, lambda paths, store: set_gate1_reference(paths, store, args.version_id, args.note))
+
+
 def cmd_periods(args) -> None:
     from quant_research.portfolio.evaluate import version_periods
     from quant_research.timeutil import parse_time
@@ -134,7 +140,7 @@ def cmd_resume(args) -> None:
 
 def register(sub) -> None:
     pf = sub.add_parser("portfolio", help="portfolio versions: seed, validate, freeze, holdout, approve, shadow, "
-                        "resume")
+                        "resume, reference")
     pf = pf.add_subparsers(dest="pcmd", required=True)
     p = pf.add_parser("seed", help="define the seed portfolio of a product from the library (a draft version)")
     p.add_argument("--product", required=True)
@@ -146,11 +152,15 @@ def register(sub) -> None:
     p.set_defaults(fn=cmd_validate)
     p = pf.add_parser("dev", help="the dev run alone (a trial; no validation use; the state does not change)")
     p.add_argument("version_id")
-    p.add_argument("--reference", action="store_true", help="record it as gate 1's reference for its product and "
-                   "split (D4; one per product and split)")
+    p.add_argument("--reference", action="store_true", help="record it as gate 1's first reference for its product "
+                   "and split (D4); replace an existing R_p with `zqr portfolio reference`")
     p.add_argument("--sandbox", choices=("docker", "none"), default="none",
                    help="docker runs plugin members (template-only versions need none)")
     p.set_defaults(fn=cmd_dev)
+    p = pf.add_parser("reference", help="point gate 1's R_p at this version (human; replaces the current reference)")
+    p.add_argument("version_id")
+    p.add_argument("--note", required=True)
+    p.set_defaults(fn=cmd_reference)
     p = pf.add_parser("periods", help="statistics of the version's dev run per period (from the recorded equity)")
     p.add_argument("version_id")
     p.add_argument("--cut", action="append", default=[], help="period boundary (UTC), repeatable")

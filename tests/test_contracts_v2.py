@@ -9,9 +9,6 @@ from pydantic import ValidationError
 
 from quant_research.backtest.costs import RETAIL_TAKER_PROFILE, cost_config
 from quant_research.backtest.engine import EngineConfig, run_backtest
-
-# Golden cases in contracts-v2 §4 were hand-worked under the retail-taker fee schedule.
-_G1_ENGINE = EngineConfig(costs=cost_config(RETAIL_TAKER_PROFILE))
 from quant_research.experiments.replay import replay_experiment
 from quant_research.experiments.runner import ExperimentRequest, run_experiment
 from quant_research.portfolio.policy import (
@@ -24,6 +21,9 @@ from quant_research.portfolio.policy import (
     vol_scale,
 )
 from quant_research.strategy.plugin import register_plugin
+
+# Golden cases in contracts-v2 §4 were hand-worked under the retail-taker fee schedule.
+_G1_ENGINE = EngineConfig(costs=cost_config(RETAIL_TAKER_PROFILE))
 
 BARS = pd.DataFrame({"bar_open_time": pd.to_datetime([0, 3600, 7200, 10800], unit="s", utc=True),
                      "open": [100.0, 100.0, 110.0, 100.0], "close": [100.0, 110.0, 99.0, 100.0]})

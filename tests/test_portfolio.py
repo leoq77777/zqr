@@ -517,6 +517,38 @@ def test_dev_alone_is_a_trial_without_validation_and_marks_one_reference(paths, 
         run_dev(paths, store, other, reference=True)
 
 
+def test_human_can_replace_the_gate1_reference_when_research_is_off(paths, store, dataset, capsys):
+    import json
+
+    from quant_research.cli import main
+    from quant_research.desk.config import load_config, save_config
+    from quant_research.hypothesis.gates import _reference_dev
+    from quant_research.portfolio.evaluate import gate1_reference, run_dev, set_gate1_reference
+
+    first = _seeded(paths, store, dataset)
+    vs = VersionStore(store)
+    second = vs.put(vs.version(first).model_copy(update={"notes": "lf-allin seed"}))
+    run_dev(paths, store, first, reference=True)
+    run_dev(paths, store, second)
+    split_id = dataset[1].split_id
+    assert gate1_reference(store, "BTC-USD", split_id) == first
+    with pytest.raises(VersionError, match="research is enabled"):
+        set_gate1_reference(paths, store, second, "D4 baseline")
+    save_config(paths, load_config(paths).model_copy(update={"research_enabled": False}))
+    with pytest.raises(VersionError, match="needs a note"):
+        set_gate1_reference(paths, store, second, "  ")
+    main(["--home", str(paths.root), "portfolio", "reference", second, "--note", "D4: lf-allin baseline"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["changed"] and out["previous"] == first and out["gate1_reference"] == second
+    assert gate1_reference(store, "BTC-USD", split_id) == second
+    assert _reference_dev(store, second)["id"] == out["dev_experiment"]
+    again = set_gate1_reference(paths, store, second, "already current")
+    assert again["changed"] is False and gate1_reference(store, "BTC-USD", split_id) == second
+    superseded = [json.loads(e["evidence"]) for e in vs.events(first)
+                  if e["evidence"] and "superseded_by" in json.loads(e["evidence"])]
+    assert superseded[-1]["superseded_by"] == second
+
+
 def test_period_stats_split_a_recorded_run_and_compose():
     from quant_research.data.bars import to_utc
     from quant_research.evaluation.periods import period_stats

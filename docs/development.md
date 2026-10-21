@@ -410,8 +410,12 @@ Rules: `docs/investment-policy.md` (D1-D3) and appendix A14 (D4-D7). Plan:
   read (A13.6: the return archive, gate 1's `R_p`, gate 2), since a backtest never resumes after a liquidation.
   `zqr portfolio validate` applies the seed standard: validation daily Sharpe ≥ 0.5 and max drawdown ≥ −25%.
   A failed version is recorded, not adjusted and retried (A6). `zqr portfolio dev <vid> [--reference]` runs dev
-  alone (no validation use, state unchanged); `--reference` records the version as gate 1's reference for its
-  product and split (D4, one per product and split). `zqr portfolio periods <vid> --cut D` splits the dev run's
+  alone (no validation use, state unchanged); `--reference` records the version as gate 1's **first** `R_p` for
+  its product and split (D4). A later baseline change (new costs, new seed on the same split) uses
+  `zqr portfolio reference <vid> --note` (human; research must be off; the version must match the desk
+  mandate's dataset, split and costs and already have a completed no-ladder dev run). The latest
+  `gate1_reference=true` event is `R_p`; earlier designations stay in `portfolio_events`. Registered hypotheses
+  keep the `reference_id` frozen at registration. `zqr portfolio periods <vid> --cut D` splits the dev run's
   statistics by period, with buy and hold and ladder time, and again without the ladder.
 - **Seed portfolio** (`seed.py`). Every non-retired seed-catalog member of the product's sleeve families plus the
   `vol_overlay` entry, with the desk mandate's engine config (rebalance tolerance 0), dataset and split. Library
@@ -699,7 +703,8 @@ a one-off container with the same mounts while the desk is stopped).
 | `zqr extend-dataset --dataset D --start T [--fill-policy ffill_flat]` | Freeze earlier candles (fetched first with `zqr fetch-data`) followed by D's bars, copied verbatim; isolated prints are kept and listed, isolated opens corrected (A13.8, as in every research freeze) |
 | `zqr create-split --dataset D --like S` / `zqr split-lineage --split C --parent S --note` | A split with S's validation and holdout windows / human: name its parent (A13.4 extends, A13.8 revalidates: K, trials, family quotas and closure inherited) |
 | `zqr desk use-mandate --product P --mandate M --note` | Human: point a desk product at another stored mandate (research disabled; history in `desk/mandate_history.jsonl`) |
-| `zqr portfolio dev <vid> [--reference] [--sandbox docker]` / `periods <vid> --cut D` / `zqr library periods --product P --cut D` | Dev run alone, optionally gate 1's reference / per-period statistics of recorded dev runs |
+| `zqr portfolio dev <vid> [--reference] [--sandbox docker]` / `periods <vid> --cut D` / `zqr library periods --product P --cut D` | Dev run alone, optionally the first gate 1 reference / per-period statistics of recorded dev runs |
+| `zqr portfolio reference <vid> --note` | Human: replace gate 1's `R_p` on this product/split (research off; costs must match the desk mandate) |
 | `zqr hypothesis register --file F --note` / `list [--product] [--state]` / `show <id>` | Human: register a hypothesis (immutable; A6, A13.7) / list / body, events, gate evidence |
 | `zqr hypothesis test <id> [--sandbox docker\|none]` / `marginal <exp>` | Controller: gate 1 then gate 2 / gate 1's regression for any dev experiment, without a verdict |
 | `zqr campaign list [--product] [--state]` / `show <id>` / `quotas --product P` | Campaigns; one campaign with events, sessions, caps, usage, verdict and conclusion; trials per family against the quotas |

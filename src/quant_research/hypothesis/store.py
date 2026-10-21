@@ -67,7 +67,7 @@ class HypothesisStore:
         reference = gate1_reference(self.store, product, split_id)
         if reference is None:
             raise HypothesisError(f"no gate 1 reference for {product} on {split_id} "
-                                  "(`zqr portfolio dev <vid> --reference`)")
+                                  "(`zqr portfolio dev <vid> --reference` or `zqr portfolio reference`)")
         self._check_family(paths, hypothesis.family)
         from quant_research.campaign.store import CampaignStore
 
