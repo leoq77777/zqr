@@ -96,7 +96,7 @@ B05 不要求一定获得负 Sharpe，也不要求所有随机赢家都拒绝；
 
 ## 发布任务 prompt的方式
 
-共同角色 prompt 见 role_prompt.md，task brief逐例从 tasks.json提取。底层 framework要求的 AGENTS.md/CLAUDE.md可装载同一内容，但必须记录有效 prompt的差异；不能把该文件当权限控制。
+共同角色 prompt 见 role_prompt.md，写入工作区为 `CLAUDE.md`（Claude Code 的项目指令）；task brief 逐例从 tasks.json 提取为 `TASK.md`。不能把 `CLAUDE.md` 当权限控制。
 
 先运行不计分的开发任务，修复纯适配问题；正式冻结后不针对已见测试答案优化。当前任务是公开开发套件。正式选择另生成未见参数/种子/来源/故障顺序；一旦泄露 golden 就换测试版本。不能把这套公开开发夹具声称为保密最终测试。
 

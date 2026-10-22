@@ -161,10 +161,15 @@ promotes single candidates (phase 4 D8; that code stays for controls and benchma
      `exhausted`;
    - the reservation (`session_reserve_usd`) does not fit under the day, the month, or the sessions per day;
    - no model, or a model without a price.
-2. The workspace receives `ROLE.md`, `research.schema.json` (with the required `notes` and an optional
-   `conclusion`), `fixtures/strategy_contract.md` and the campaign brief as `TASK.md`.
+2. The workspace receives `CLAUDE.md` (the portable role prompt; Claude Code injects it as project
+   instructions, so the launch prompt does not ask the agent to `Read` it), `research.schema.json` (with the
+   required `notes` and an optional `conclusion`), `fixtures/strategy_contract.md` and the campaign brief as
+   `TASK.md`. Inbox drafting workspaces stay without `CLAUDE.md`.
 3. The agent runs `claude -p` with tools `Read Write Edit Glob Grep mcp__quant`. These tools are denied:
-   `Bash WebFetch WebSearch Task NotebookEdit`. A campaign's `model` overrides the default for its sessions.
+   `Bash WebFetch WebSearch Task NotebookEdit` (M5: no shell, no nested agents, no extra network). The container
+   gets `CLAUDE_CODE_EFFORT_LEVEL=max` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW=327680` (320k tokens; the 1M model
+   window is not used as the compact threshold). `/home/node` is a 1g tmpfs. A campaign's `model` overrides the
+   default for its sessions.
 4. When the run ends:
    - The workspace is frozen.
    - The audit checks that every experiment has a matching tool event and that egress logged no denials other
@@ -664,7 +669,10 @@ Desk mandate defaults (`desk/setup.py`):
 
 Model: the agent harness is Claude Code (pinned in `Dockerfile.agent`; currently 2.1.112). `ANTHROPIC_BASE_URL`
 selects the provider through an Anthropic-compatible API. The current provider is DeepSeek (`deepseek-flash`).
-Changing provider changes the egress allowlist host, so re-run `zqr desk check`.
+Changing provider changes the egress allowlist host, so re-run `zqr desk check`. Effort `max` falls back to
+`high` when the model does not offer `max`; DeepSeek's Anthropic-compatible API may ignore effort. Compact at
+320k is the cap even when the model advertises a 1M window. `get_experiment` returns metrics and a fills
+summary, not the equity series.
 
 ## 9. Commands
 

@@ -61,7 +61,8 @@ research_id: `{run_id}`  task_id: `{task.id}`
 ## Inputs
 
 {fixtures}
-- Role prompt: `/workspace/ROLE.md`. Output schema: `/workspace/research.schema.json`.
+- Role prompt: `/workspace/CLAUDE.md` (Claude Code project instructions).
+- Output schema: `/workspace/research.schema.json`.
 
 ## Budget (enforced by the controller)
 
@@ -108,7 +109,7 @@ def prepare(paths: Paths, store: ExperimentStore, task: BenchTask, run_id: str,
     sid = ResearchController(paths, store, ManualRunner()).create_session(cfg)
     ws = Path(store.get_session(sid)["workspace"])
     (ws / "fixtures").mkdir()
-    shutil.copyfile(root / "role_prompt.md", ws / "ROLE.md")
+    shutil.copyfile(root / "role_prompt.md", ws / "CLAUDE.md")
     shutil.copyfile(root / "v0.2" / "research.schema.json", ws / "research.schema.json")
     for name in task.visible_fixtures:
         src = root / CONTRACT_V02 if name == "strategy_contract.md" else root / "fixtures" / name

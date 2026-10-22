@@ -244,6 +244,8 @@ class ToolGateway:
         return {"replayed": False, **self.get_experiment(res.experiment_id)}
 
     def get_experiment(self, experiment_id: str) -> dict[str, Any]:
+        """Identity, scalars and a fills summary. Full equity/fills stay in result_dir on the host, not in the
+        agent's context (M5: the worker output is not a chat transcript)."""
         rec = self._visible(experiment_id)
         out: dict[str, Any] = {
             "experiment_id": rec["id"], "status": rec["status"], "kind": rec["kind"], "segment": rec["segment"],

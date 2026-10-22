@@ -173,8 +173,12 @@ def test_gateway_idempotency_paths_and_sanitized_output(paths, store, dataset):
     with pytest.raises(GatewayError, match="idempotency_key"):
         gw.submit_experiment("momentum", {}, None, None)
 
-    text = json.dumps(gw.get_experiment(first["experiment_id"]), default=str)
+    rec = gw.get_experiment(first["experiment_id"])
+    text = json.dumps(rec, default=str)
     assert str(paths.root) not in text and "result_dir" not in text
+    assert set(rec["fills"]) <= {"count", "first", "last", "equity_start", "equity_end"}
+    assert isinstance(rec["fills"]["first"], list) and len(rec["fills"]["first"]) <= 5
+    assert "equity" not in rec and "returns" not in rec
     assert json.dumps(gw.history(), default=str).count(str(paths.root)) == 0
     info = gw.inspect_dataset()
     assert list(info["allowed_segments"]) == ["dev"] and str(paths.root) not in json.dumps(info)

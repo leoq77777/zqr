@@ -22,11 +22,12 @@ MODEL_ENV = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", 
              "ANTHROPIC_SMALL_FAST_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
              "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL", "API_TIMEOUT_MS"]
 ALLOWED_TOOLS = "Read Write Edit Glob Grep mcp__quant"
-DENIED_TOOLS = "Bash WebFetch WebSearch Task NotebookEdit"
-PROMPT = ("You are running benchmark task research inside /workspace. Read /workspace/ROLE.md (your role) and "
-          "/workspace/TASK.md (the task, budget, tools and deliverables), then complete the task using only the "
-          "`quant` MCP tools for experiments. Write all deliverables under /workspace and validate research.json "
-          "with the write_report tool before you finish.")
+DENIED_TOOLS = "Bash WebFetch WebSearch Task NotebookEdit"  # M5: no shell, no nested agents, no network
+EFFORT_LEVEL = "max"  # Claude Code falls back to high when the model does not offer max
+AUTO_COMPACT_WINDOW = "327680"  # 320k tokens; not the model's 1M window and not the 160k default
+PROMPT = ("Complete the benchmark task specified in /workspace/TASK.md. Follow /workspace/CLAUDE.md and use only "
+          "the `quant` MCP tools for experiments. Write all deliverables under /workspace and validate "
+          "research.json with the write_report tool before you finish.")
 
 
 @dataclass
@@ -72,7 +73,7 @@ class ClaudeContainerAdapter:
         cmd = ["docker", "run", "--rm", "--name", name, "--init", "--label", f"quant-research.run={label or name}",
                "--memory", self.memory, "--cpus", self.cpus, "--pids-limit", "512",
                "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
-               "--tmpfs", "/tmp:size=256m", "--tmpfs", "/home/node:size=256m,uid=1000,gid=1000",
+               "--tmpfs", "/tmp:size=256m", "--tmpfs", "/home/node:size=1g,uid=1000,gid=1000",
                *mount(workspace, "/workspace"), *mount(mcp_dir, "/etc/quant", readonly=True)]
         if transcript_dir is not None:
             cmd += mount(transcript_dir, "/home/node/.claude/projects")
@@ -84,6 +85,8 @@ class ClaudeContainerAdapter:
                 cmd += ["-e", f"{k}={v}"]
         for var in MODEL_ENV:
             cmd += ["-e", var]
+        cmd += ["-e", f"CLAUDE_CODE_EFFORT_LEVEL={EFFORT_LEVEL}",
+                "-e", f"CLAUDE_CODE_AUTO_COMPACT_WINDOW={AUTO_COMPACT_WINDOW}"]
         cmd += [self.image, "claude", "-p", self.prompt, "--output-format", "json",
                 "--mcp-config", "/etc/quant/mcp.json", "--strict-mcp-config",
                 "--permission-mode", "dontAsk", "--allowedTools", ALLOWED_TOOLS, "--disallowedTools", DENIED_TOOLS]

@@ -30,8 +30,12 @@ def test_mcp_tools_audit_and_timeout_fault(paths, store, dataset):
 
     async def scenario():
         async with Client(server) as c:
-            names = {t.name for t in (await c.list_tools()).tools}
+            tools = {t.name: (t.description or "") for t in (await c.list_tools()).tools}
+            names = set(tools)
             assert {"submit_experiment", "get_experiment", "write_report", "inspect_dataset"} <= names
+            assert '{"lookback": 24}' in tools["submit_experiment"]
+            assert '[{"artifact": "/workspace/momentum.py"' in tools["register_hypothesis"]
+            assert "fills summary" in tools["get_experiment"] and "equity series" in tools["get_experiment"]
             args = {"artifact": "momentum", "parameters": {"lookback": 24}, "idempotency_key": "k1"}
             first = await c.call_tool("submit_experiment", args)
             assert first.is_error and "timeout" in first.content[0].text

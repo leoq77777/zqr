@@ -10,7 +10,13 @@ import httpx
 import numpy as np
 import pytest
 
-from quant_research.bench.adapter import AgentRun
+from quant_research.bench.adapter import (
+    AUTO_COMPACT_WINDOW,
+    DENIED_TOOLS,
+    EFFORT_LEVEL,
+    AgentRun,
+    ClaudeContainerAdapter,
+)
 from quant_research.bench.audit import audit_session, recover_session
 from quant_research.bench.fixtures import HOLDOUT_BARS, ingest, load_fixture
 from quant_research.bench.grader import golden_exposures
@@ -63,8 +69,11 @@ def test_ingest_appends_private_holdout_and_splits_at_fixture_bounds(paths):
 def test_workspace_has_only_agent_material(paths, store):
     prep = prepare(paths, store, load_tasks()["B05"], "b05-test", SUB)
     files = sorted(str(p.relative_to(prep.workspace)) for p in prep.workspace.rglob("*") if p.is_file())
-    assert files == ["ROLE.md", "TASK.md", "fixtures/strategy_contract.md", "fixtures/synthetic_unknown.jsonl",
+    assert files == ["CLAUDE.md", "TASK.md", "fixtures/strategy_contract.md", "fixtures/synthetic_unknown.jsonl",
                      "fixtures/synthetic_unknown.manifest.json", "research.schema.json", "summary.json"]
+    role = (prep.workspace / "CLAUDE.md").read_text()
+    assert "量化策略研究员" in role and "Read /workspace/ROLE.md" not in (prep.workspace / "TASK.md").read_text()
+    assert "/workspace/CLAUDE.md" in (prep.workspace / "TASK.md").read_text()
     assert "generate_exposures" in (prep.workspace / "fixtures/strategy_contract.md").read_text()
     assert "final_artifact" in json.loads((prep.workspace / "research.schema.json").read_text())["required"]
     text = " ".join((prep.workspace / f).read_text() for f in files if not f.endswith(".jsonl"))
@@ -284,6 +293,21 @@ def test_classify_model_unreachable_and_killed():
     reached = {"model_tunnels": 1, "denied": [], "upstream_errors": []}
     assert classify(run=killed_silent, g=None, audit=audit, faults=["agent_killed"], egress=reached,
                     harness_error=None, has_research=False)[:2] == ("incomplete", "agent.killed")
+
+
+def test_claude_adapter_aligns_with_native_workspace_and_keeps_m5_denials(tmp_path):
+    ws, mcp = tmp_path / "ws", tmp_path / "mcp"
+    ws.mkdir()
+    mcp.mkdir()
+    adapter = ClaudeContainerAdapter(image="zqr-agent:dev")
+    cmd = adapter.command("qr-agent-x", ws, mcp)
+    assert "Task" in DENIED_TOOLS and "Bash" in DENIED_TOOLS
+    assert DENIED_TOOLS in cmd
+    assert f"CLAUDE_CODE_EFFORT_LEVEL={EFFORT_LEVEL}" in cmd
+    assert f"CLAUDE_CODE_AUTO_COMPACT_WINDOW={AUTO_COMPACT_WINDOW}" in cmd
+    assert any(x.startswith("/home/node:size=1g") for x in cmd)
+    assert "ROLE.md" not in adapter.prompt and "CLAUDE.md" in adapter.prompt
+    assert adapter.prompt.startswith("Complete the benchmark task specified in /workspace/TASK.md")
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="docker not installed")

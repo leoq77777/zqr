@@ -73,7 +73,9 @@ def build_server(gw: ToolGateway, faults: list[str] | None = None) -> MCPServer:
 
     @server.tool(description="Run one recorded experiment on the fixed engine. artifact: a template name or a .py "
                              "file under /workspace. idempotency_key: unique per intended experiment; reuse it "
-                             "when retrying after a timeout so the experiment is not run twice.")
+                             "when retrying after a timeout so the experiment is not run twice. Example: "
+                             'artifact="/workspace/s.py", parameters={"lookback": 24}, '
+                             'idempotency_key="lookback-24".')
     def submit_experiment(artifact: str, idempotency_key: str, parameters: dict[str, Any] | None = None,
                           plan_id: str | None = None, segment: str = "dev") -> dict[str, Any]:
         args = {"artifact": artifact, "parameters": parameters, "plan_id": plan_id,
@@ -89,8 +91,9 @@ def build_server(gw: ToolGateway, faults: list[str] | None = None) -> MCPServer:
                             "not have been recorded")
         return out
 
-    @server.tool(description="Full record of one experiment of this session: identity, metrics, benchmarks, "
-                             "statistics, diagnosis, fills summary, errors.")
+    @server.tool(description="Compact record of one experiment of this session: identity, metrics, benchmarks, "
+                             "statistics, diagnosis, a fills summary (count and a 5-row sample, not the equity "
+                             "series), errors.")
     def get_experiment(experiment_id: str) -> dict[str, Any]:
         return call("get_experiment", {"experiment_id": experiment_id}, lambda: gw.get_experiment(experiment_id))
 
@@ -122,8 +125,9 @@ def build_server(gw: ToolGateway, faults: list[str] | None = None) -> MCPServer:
 
     @server.tool(description="Register the campaign's one hypothesis (immutable). prior: text; citations: "
                              '[{"kind": "published" | "experiment", "ref": "..."}]; variants: 1-3 of '
-                             '{"artifact": template name or /workspace/*.py, "parameters": {...}}. The controller '
-                             "runs the gates after the session; you get the verdict only.")
+                             '{"artifact": template name or /workspace/*.py, "parameters": {...}}. Example '
+                             'variants: [{"artifact": "/workspace/momentum.py", "parameters": {"lookback": 24}}]. '
+                             "The controller runs the gates after the session; you get the verdict only.")
     def register_hypothesis(prior: str, citations: list[dict[str, Any]],
                             variants: list[dict[str, Any]]) -> dict[str, Any]:
         args = {"prior": prior, "citations": citations, "variants": variants}

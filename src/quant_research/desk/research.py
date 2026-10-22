@@ -54,9 +54,8 @@ log = logging.getLogger(__name__)
 ENV_FAILURES = {"environment.model_unreachable", "environment.docker", "harness.error"}
 INBOX_TOPIC = "inbox"
 NO_TOOLS = {"mcpServers": {}}
-PROMPT = ("You are the research desk's strategy researcher working inside /workspace. Read /workspace/ROLE.md "
-          "(your role) and /workspace/TASK.md (the campaign, budget, tools and deliverables), then do the research "
-          "using only the `quant` MCP tools for experiments. Write all deliverables under /workspace and validate "
+PROMPT = ("Complete the research campaign specified in /workspace/TASK.md. Follow /workspace/CLAUDE.md and use "
+          "only the `quant` MCP tools for experiments. Write all deliverables under /workspace and validate "
           "research.json with the write_report tool before you finish.")
 CAMPAIGN_FIELDS = {
     "notes": {"type": "string", "minLength": 1,
@@ -376,7 +375,7 @@ class ResearchLoop:
     def _workspace(self, ws: Path, brief: str) -> None:
         root = benchmark_dir()
         (ws / "fixtures").mkdir(exist_ok=True)
-        shutil.copyfile(root / "role_prompt.md", ws / "ROLE.md")
+        shutil.copyfile(root / "role_prompt.md", ws / "CLAUDE.md")
         schema = json.loads((root / "v0.2" / "research.schema.json").read_text())
         schema["properties"] |= CAMPAIGN_FIELDS
         schema["required"] = [*schema["required"], "notes"]
