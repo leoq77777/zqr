@@ -1,7 +1,8 @@
 """The desk's research loop: one isolated agent session at a time, taken from the campaign queue (design 6.3, D4).
 
-Each step: the running campaign, or the next one the human approved (idle, with no model calls, when there is
-none) -> the budget reservation against the campaign, the UTC day and the month (D7) -> a fresh session on the
+Each step: the running campaign, or the next queued one (generator campaigns are auto-queued when fewer than
+`QUEUE_FLOOR` wait; inbox campaigns still need the human) -> the budget reservation against the campaign, the
+UTC day and the month (D7) -> a fresh session on the
 product's real-data mandate (agent tools see `dev` only) with the campaign brief -> agent container behind the M5
 egress proxy and tool gateway -> freeze the workspace -> audit -> book the cost -> the session's notes go to the
 campaign; a registered hypothesis goes through the gates of release 4c; a written conclusion, or a cap reached,
@@ -34,7 +35,7 @@ from quant_research.bench.runner import TRANSCRIPT_DIR, freeze_submission
 from quant_research.bench.tasks import CONTRACT_V02, benchmark_dir
 from quant_research.campaign import budget
 from quant_research.campaign.model import VERDICTS, Conclusion
-from quant_research.campaign.store import CampaignStore
+from quant_research.campaign.store import QUEUE_FLOOR, CampaignStore
 from quant_research.controller.agent import ManualRunner, usage_from_transcripts
 from quant_research.controller.controller import ResearchController, SessionConfig, SessionState
 from quant_research.desk import softstop
@@ -159,6 +160,42 @@ class ResearchLoop:
                                  resume_at=self.clock() + seconds)
         return {"ran": False, "status": status, "reason": reason, "wait": seconds}
 
+    def _session_model(self, camp: dict[str, Any], lim: dict[str, float]) -> tuple[str | None, float]:
+        """Campaign body model, else design_model on session 1, else the desk default (A13.11)."""
+        explicit = camp["body"].get("model")
+        finished = sum(1 for s in self.campaigns.sessions(camp["id"]) if s.get("finished_at"))
+        use_design = explicit is None and finished == 0 and self.cfg.design_model
+        model = explicit or (self.cfg.design_model if use_design else budget.default_model(self.cfg))
+        reserve = self.cfg.design_session_reserve_usd if use_design else lim["session_reserve_usd"]
+        return model, reserve
+
+    def _replenish_queue(self, now: float) -> None:
+        """Keep at least QUEUE_FLOOR generator campaigns queued while the daily session cap allows (A13.11).
+        Inbox and human-added campaigns stay proposed until the human approves them."""
+        from quant_research.campaign.generate import generate, unanswerable_open_question
+
+        lim, day = budget.limits(self.cfg), utc_day(now)
+        if sum(r.get("day") == day for r in read_ledger(self.paths) if r.get("topic") != INBOX_TOPIC) \
+                >= lim["sessions_per_day"]:
+            return
+        if len(self.campaigns.list(state="queued")) >= QUEUE_FLOOR:
+            return
+        for product in self.cfg.products:
+            if product not in self.cfg.mandates:
+                continue
+            try:
+                generate(self.paths, self.store, product, n=QUEUE_FLOOR)
+            except Exception:  # noqa: BLE001 - no reference or quota; try the other product
+                continue
+        for row in self.campaigns.list(state="proposed"):
+            if row["source"].get("kind") != "generator":
+                continue
+            if unanswerable_open_question(row["body"].get("goal") or ""):
+                continue
+            if len(self.campaigns.list(state="queued")) >= QUEUE_FLOOR:
+                return
+            self.campaigns.transition(row["id"], "queued", "controller", "auto-replenish")
+
     def _cap_reason(self, cid: str) -> str | None:
         """Why the campaign cannot run another session (P1, P3), if it cannot."""
         rem = self.campaigns.remaining(cid)
@@ -199,9 +236,11 @@ class ResearchLoop:
             return self._settled(camp["id"], self._settle(camp["id"]))
         if (item := self._inbox_item(now)) is not None:
             return self._after(self.run_inbox(item, budget.default_model(self.cfg), self.cfg.inbox_reserve_usd))
+        self._replenish_queue(now)
         camp = camp or self.campaigns.next_queued()
         if camp is None:
-            return self._wait("idle", "no running or queued campaign (`zqr campaign generate`, then approve)", 600)
+            return self._wait("idle", "no running or queued campaign (generator found nothing that fits the quota)",
+                              600)
         cid = camp["id"]
         mid = self.cfg.mandates.get(camp["product"])
         if mid is None:
@@ -215,7 +254,7 @@ class ResearchLoop:
         if (reason := self._cap_reason(cid)) is not None:
             return self._settled(cid, self._settle(cid, reason))
         lim, day = budget.limits(self.cfg), utc_day(now)
-        reserve = lim["session_reserve_usd"]
+        model, reserve = self._session_model(camp, lim)
         spent = spent_on(self.paths, day)
         if spent + reserve > lim["daily_usd"]:
             return self._wait("cost_cap", f"daily cap: {spent:.2f} booked + {reserve:.2f} reserved > "
@@ -227,7 +266,6 @@ class ResearchLoop:
         if sum(r.get("day") == day for r in read_ledger(self.paths) if r.get("topic") != INBOX_TOPIC) \
                 >= lim["sessions_per_day"]:
             return self._wait("cost_cap", f"sessions per day ({lim['sessions_per_day']:.0f}) reached", 3600)
-        model = camp["body"].get("model") or budget.default_model(self.cfg)
         if model is None:
             return self._wait("blocked", "no model configured (desk config `model` or ANTHROPIC_MODEL)", 600)
         if budget.price_for(self.cfg, [model]) is None:
@@ -310,6 +348,16 @@ class ResearchLoop:
                 self.campaigns.topup(cid, "gate1")
             if gates["state"] == "admitted":
                 self.campaigns.topup(cid, "gate2")
+                vid = (gates.get("gate2") or {}).get("version_id")
+                if vid:
+                    try:
+                        from quant_research.portfolio.paper import start_shadow
+                        out["shadow"] = start_shadow(self.paths, self.store, vid, "admitted auto-shadow",
+                                                     actor="controller")
+                    except Exception as exc:  # noqa: BLE001 - paper attach is not a gate failure
+                        out["shadow_error"] = f"{type(exc).__name__}: {exc}"
+                        self.campaigns.record(cid, "shadow_error", "controller",
+                                              {"version_id": vid, "error": out["shadow_error"][:500]})
         written = self.campaigns.event(cid, "conclusion_written")
         if written is not None:
             out["end"] = finish_campaign(self.paths, self.store, cid, "concluded",
@@ -361,7 +409,7 @@ class ResearchLoop:
         self.state = _save_state(self.paths, self.state, sessions_started=n + 1, current_run=run_id,
                                  status="running", reason=f"session {run_id} ({cid}, {camp['family']})")
         if hasattr(self.adapter, "model"):
-            self.adapter.model = camp["body"].get("model") or self.adapter_model
+            self.adapter.model = model or self.adapter_model
         allow = [model_endpoint()]
         run: AgentRun | None = None
         harness_error, egress_records = None, []

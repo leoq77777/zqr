@@ -234,7 +234,8 @@ def test_gate2_rule_each_condition_alone():
     ref = {"sharpe": 1.0, "max_drawdown": -0.20, "turnover": 10.0}
     ok = {"sharpe": 1.0, "max_drawdown": -0.22, "turnover": 12.5}
     assert all(gate2_checks(ref, ok).values())
-    assert gate2_checks(ref, ok | {"sharpe": 0.99}) == {"sharpe_not_lower": False, "drawdown_within_2_points": True,
+    assert all(gate2_checks(ref, ok | {"sharpe": 0.95}).values())  # A13.9 slack 0.05
+    assert gate2_checks(ref, ok | {"sharpe": 0.94}) == {"sharpe_not_lower": False, "drawdown_within_2_points": True,
                                                        "turnover_within_25_percent": True}
     assert not gate2_checks(ref, ok | {"max_drawdown": -0.2201})["drawdown_within_2_points"]
     assert not gate2_checks(ref, ok | {"turnover": 12.51})["turnover_within_25_percent"]
@@ -277,8 +278,9 @@ def test_gate2_builds_the_candidate_counts_validation_and_sets_the_state(paths, 
     assert "reference" not in gates.verdict(store, hid)
 
 
-def test_admitted_versions_cannot_be_frozen_shadowed_or_approved(paths, store, dataset, monkeypatch):
+def test_admitted_versions_cannot_be_frozen_or_approved(paths, store, dataset, monkeypatch):
     from quant_research.hypothesis import gates
+    from quant_research.paper.fleet import load_roster
     from quant_research.portfolio.paper import approve, start_shadow
 
     hid = _passed_gate1(paths, store, dataset, monkeypatch)
@@ -289,9 +291,11 @@ def test_admitted_versions_cannot_be_frozen_shadowed_or_approved(paths, store, d
     with pytest.raises(VersionError):
         vs.transition(vid, "frozen", "human")
     with pytest.raises(VersionError):
-        start_shadow(paths, store, vid, "x")
-    with pytest.raises(VersionError):
         approve(paths, store, vid, "x")
+    out = start_shadow(paths, store, vid, "forward")
+    assert out["roster_name"].startswith("shadow-btc-usd-admitted-")
+    entry = next(e for e in load_roster(paths.desk / "roster.json").entries if e.name == out["roster_name"])
+    assert entry.shadow and entry.portfolio_version == vid
     lines = gates.report_lines(store, "2027-10-12")
     assert any(hid in line and "admitted" in line and vid in line for line in lines)
     assert any("2027-10-12" in line for line in lines)

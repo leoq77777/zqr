@@ -156,6 +156,26 @@ def test_vol_target_matches_reference_and_caps_at_one():
     assert (out[at][31:] == 1.0).all()  # a 500% target never binds
 
 
+def test_vol_squeeze_stays_flat_until_a_squeezed_breakout():
+    bars = hourly(400, seed=8, vol=0.002)
+    out = get_template("vol_squeeze")(bars, {"window": 24, "squeeze_lookback": 96, "squeeze_pct": 0.2}).to_numpy()
+    assert set(out).issubset({0.0, 1.0}) and (out == 0.0).any()
+    get_template("vol_squeeze").validate({"window": 48, "squeeze_lookback": 168, "squeeze_pct": 0.15})
+    with pytest.raises(ValueError, match="squeeze_lookback"):
+        get_template("vol_squeeze").validate({"window": 100, "squeeze_lookback": 50, "squeeze_pct": 0.2})
+
+
+def test_calendar_filter_is_flat_on_weekends():
+    bars = hourly(24 * 10)  # starts Monday 00:00 UTC
+    out = get_template("calendar_filter")(bars, {"skip_weekend": True, "hour_start": 0, "hour_end": 24}).to_numpy()
+    hours = pd.to_datetime(bars["bar_open_time"], utc=True)
+    assert (out[hours.dt.dayofweek < 5] == 1.0).all()
+    assert (out[hours.dt.dayofweek >= 5] == 0.0).all()
+    us = get_template("calendar_filter")(bars, {"skip_weekend": False, "hour_start": 13, "hour_end": 21}).to_numpy()
+    assert (us[(hours.dt.hour >= 13) & (hours.dt.hour < 21)] == 1.0).all()
+    assert (us[(hours.dt.hour < 13) | (hours.dt.hour >= 21)] == 0.0).all()
+
+
 def test_daily_templates_need_whole_days():
     with pytest.raises(ValueError, match="whole number of days"):
         get_template("ewma_trend").validate({"fast": 100, "slow": 576, "vol_window": 2160, "norm_window": 8760})

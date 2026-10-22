@@ -22,7 +22,7 @@ from quant_research.research.mandate import Mandate
 from quant_research.strategy.sandbox import SandboxConfig
 from quant_research.timeutil import parse_time
 
-GATE2 = {"max_drawdown_slack": 0.02, "max_turnover_ratio": 1.25}
+GATE2 = {"max_drawdown_slack": 0.02, "max_turnover_ratio": 1.25, "sharpe_slack": 0.05}
 PERIOD_CUTS = ("2021-01-01",)  # the long-dev review's periods (A13.7 diagnostic)
 MIN_DAYS = 30
 
@@ -180,15 +180,15 @@ def _measures(summary: dict[str, Any]) -> dict[str, Any]:
 
 def gate2_checks(ref: dict[str, float], cand: dict[str, float]) -> dict[str, bool]:
     return {
-        "sharpe_not_lower": cand["sharpe"] >= ref["sharpe"],
+        "sharpe_not_lower": cand["sharpe"] >= ref["sharpe"] - GATE2["sharpe_slack"],
         "drawdown_within_2_points": cand["max_drawdown"] >= ref["max_drawdown"] - GATE2["max_drawdown_slack"],
         "turnover_within_25_percent": cand["turnover"] <= ref["turnover"] * GATE2["max_turnover_ratio"],
     }
 
 
 def gate2(paths: Paths, store: ExperimentStore, hid: str, sandbox: SandboxConfig | None = None) -> dict[str, Any]:
-    """Both portfolios on validation without the ladder (A13.6); pass only if Sharpe is not lower, the drawdown at
-    most 2 points worse and turnover at most 25% higher. Runs once per hypothesis."""
+    """Both portfolios on validation without the ladder (A13.6); pass if Sharpe is at most `sharpe_slack` lower,
+    the drawdown at most 2 points worse and turnover at most 25% higher (A13.9). Runs once per hypothesis."""
     hs = HypothesisStore(store)
     row = hs.get(hid)
     if row is None:
@@ -240,8 +240,8 @@ def report_lines(store: ExperimentStore, next_split: str) -> list[str]:
                    f"{f'{max(ars):.3f}' if ars else '-'} | {g2.get('version_id', '-')} |")
     admitted = [r for r in rows if r["state"] == "admitted"]
     if admitted:
-        out.append(f"- Admitted versions ({len(admitted)}) wait for the next split, earliest {next_split} "
-                   "(design D5); they are not frozen, approved or shadowed on this split.")
+        out.append(f"- Admitted versions ({len(admitted)}) wait for the next split's holdout, earliest {next_split} "
+                   "(design D5); they are not frozen or paper-approved on this split. They run as named shadows.")
     return out
 
 

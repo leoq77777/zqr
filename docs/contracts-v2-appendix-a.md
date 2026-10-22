@@ -492,6 +492,57 @@ changes the hash; a guarded buy at a 0.06 open fills at the previous close and a
 previous close, a genuine fall is not guarded; a revalidated split inherits trials and its ancestors; a family's
 quota counts the parent split.
 
+### A13.9 Gate 2 Sharpe slack of 0.05 (approved 2026-10-22)
+
+**Problem.** A6 and A13.7 require the candidate's validation Sharpe not to be lower than the reference's. The
+current validation window is about 1.16 years, so the standard error of a daily Sharpe is large; a 0.01 gap from
+turnover noise fails a variant that passed gate 1 on 8.9 years of dev.
+
+**Amended rule (replaces the Sharpe clause of A6 Gate 2 and of A13.7 Gate 2).** Pass if all three hold:
+
+- candidate Sharpe ≥ reference Sharpe − 0.05
+- candidate maximum drawdown ≥ reference maximum drawdown − 0.02
+- candidate turnover ≤ 1.25 × reference turnover
+
+Drawdown and turnover bounds are unchanged. Agents still see only the verdict. Gate 2 still runs once per
+hypothesis; earlier `gate2_failed` records are not replayed.
+
+**Implementation.** `GATE2["sharpe_slack"]` in `hypothesis/gates.py`. Tests: 0.95 vs 1.00 passes; 0.94 fails.
+
+### A13.10 Admitted versions run as named shadows (approved 2026-10-22; amends A13.7 outcome)
+
+**Problem.** A13.7 forbids freeze, paper approval and shadow of an `admitted` version until the next split
+(earliest 2027-10-12). That blocks the only unseen evidence that can accrue now. Holdout on the current split stays
+closed (A13.3).
+
+**Amended rule.** `admitted` versions still cannot be frozen, holdout-tested or approved for paper on the split
+where they were admitted. They **can** run as shadow paper:
+
+- Roster name `shadow-<product>-admitted-<vid>` (the 8-character hash of the version id), so they sit beside the
+  seed `shadow-<product>` of D2.
+- The version state stays `admitted`; library statuses do not change.
+- Shadows stay out of the combined account and the soft stop.
+- The controller starts the shadow when gate 2 passes; the human can also run `zqr portfolio shadow`.
+- Plugin members still cannot paper (unchanged).
+
+**Implementation.** `SHADOW_STATES` includes `admitted`; `admitted_shadow_name`; `ResearchLoop._settle` calls
+`start_shadow(..., actor="controller")`. Tests: admitted can shadow under a unique name; freeze and approve still
+fail.
+
+### A13.11 Generator campaigns auto-queue (approved 2026-10-22; amends P5)
+
+**Problem.** The research loop idles when the queue is empty. Generation and `zqr campaign approve` were human
+steps, so the desk stopped with unused daily budget.
+
+**Amended rule.** While fewer than 3 campaigns are `queued` and the day's session cap is not reached, the
+controller generates a batch per desk product and queues `proposed` campaigns whose source is `generator`. Inbox
+and human-added campaigns stay `proposed` until the human approves them (I6). The human can still `approve` and
+`cancel`. Session 1 of a campaign uses `design_model` when that field is set and the campaign body has no `model`;
+later sessions use the desk default. The design session reserves `design_session_reserve_usd`.
+
+**Implementation.** `QUEUE_FLOOR`; `("proposed", "queued")` allows `controller`; `ResearchLoop._replenish_queue`
+and `_session_model`. Tests: a generator `proposed` campaign is queued and run; a human `proposed` campaign is not.
+
 ## A14. Portfolio layer decisions (approved 2026-10-15)
 
 Decided with the phase 3 plan (`docs/superpowers/plans/2026-10-15-phase3-portfolio.md`, D4-D7); the investment

@@ -1,5 +1,5 @@
 """`zqr campaign ...` subcommands. `add`, `approve`, `cancel` and `budget-stop clear` are the human's (P5, D7);
-`generate` acts as the controller and writes `proposed` campaigns only."""
+`generate` writes `proposed` campaigns; the loop auto-queues generator ones when the queue is short (A13.11)."""
 
 from __future__ import annotations
 

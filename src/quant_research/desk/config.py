@@ -52,6 +52,8 @@ class DeskConfig(BaseModel):
     report_hour_utc: int = Field(0, ge=0, le=23)
     report_minute_utc: int = Field(5, ge=0, le=59)
     model: str | None = None
+    design_model: str | None = None  # first session of a campaign; later sessions use `model`
+    design_session_reserve_usd: PositiveFloat = 0.75
     cny_per_usd: PositiveFloat = 7.1
     agent_memory: str = "2g"
     agent_cpus: str = "2"

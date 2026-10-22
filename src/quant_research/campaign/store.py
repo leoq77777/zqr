@@ -1,8 +1,9 @@
 """Campaigns in the experiment database: the record, its state history, its sessions and the family quotas (P1).
 
-States (design 6.1, P5): `proposed` -> `queued` (the human approves) -> `running` -> `concluded` | `exhausted`
-(a cap reached first, P3); `cancelled` by the human from any state before the end. One campaign runs at a time.
-The body never changes; caps grow only by the top-ups of D7, recorded as events.
+States (design 6.1, P5, A13.11): `proposed` -> `queued` (the human approves, or the controller auto-queues a
+generator campaign when the queue is short) -> `running` -> `concluded` | `exhausted` (a cap reached first, P3);
+`cancelled` by the human from any state before the end. Inbox campaigns stay proposed until the human approves.
+One campaign runs at a time. The body never changes; caps grow only by the top-ups of D7, recorded as events.
 """
 
 from __future__ import annotations
@@ -46,8 +47,9 @@ UNCOUNTED = ("environment.model_unreachable", "environment.docker", "harness.err
 
 FAMILY_QUOTA = 100  # trials per family per product split (P1)
 EXPLORATION_SHARE = 0.25  # of the split's family quotas (P1)
+QUEUE_FLOOR = 3  # auto-queue generator campaigns while fewer than this are queued (A13.11)
 TRANSITIONS: dict[tuple[str, str], set[str]] = {
-    ("proposed", "queued"): {"human"},
+    ("proposed", "queued"): {"human", "controller"},
     ("proposed", "cancelled"): {"human"},
     ("queued", "cancelled"): {"human"},
     ("queued", "running"): {"controller"},

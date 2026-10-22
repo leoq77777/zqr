@@ -181,8 +181,9 @@ def test_drafting_comes_before_the_next_campaign_session(paths, store, dataset):
     assert TEXT not in agent.briefs[0]
 
 
-def test_the_daily_limit_and_budget_hold_items_back(paths, store, dataset):
+def test_the_daily_limit_and_budget_hold_items_back(paths, store, dataset, monkeypatch):
     _reference(paths, store, dataset)
+    monkeypatch.setattr("quant_research.campaign.generate.generate", lambda *a, **k: [])
     loop, clock = _inbox_loop(paths, store, [{"verdict": "infeasible", "reason": "shorting"}],
                               inbox_drafts_per_day=1)
     a, b = _add(paths, store, "one"), _add(paths, store, "two")
@@ -238,8 +239,9 @@ def test_environment_failures_and_crashes_put_the_item_back(paths, store, datase
     assert loop.step()["result"]["inbox_state"] == "infeasible"
 
 
-def test_without_a_drafter_items_wait(paths, store, dataset):
+def test_without_a_drafter_items_wait(paths, store, dataset, monkeypatch):
     _reference(paths, store, dataset)
+    monkeypatch.setattr("quant_research.campaign.generate.generate", lambda *a, **k: [])
     _add(paths, store)
     loop, _ = _loop(paths, store, FakeAgent(paths, store))
     assert loop.step()["status"] == "idle"

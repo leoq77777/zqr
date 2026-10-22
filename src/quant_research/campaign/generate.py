@@ -227,7 +227,7 @@ def batch(paths: Paths, store: ExperimentStore, product: str, n: int = 6) -> lis
 
 
 def generate(paths: Paths, store: ExperimentStore, product: str, n: int = 6) -> list[dict[str, Any]]:
-    """Write the batch as `proposed` campaigns (the human approves each, P5)."""
+    """Write the batch as `proposed` campaigns (the human or the auto-replenish loop queues them, A13.11)."""
     cs = CampaignStore(store)
     out = []
     for c in batch(paths, store, product, n):

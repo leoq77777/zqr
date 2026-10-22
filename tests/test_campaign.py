@@ -55,6 +55,7 @@ class FakeAgent:
 
     def __init__(self, paths, store, script=("explore",), model="deepseek-v4-flash", tokens=20_000):
         self.paths, self.store, self.script, self.model, self.tokens = paths, store, list(script), model, tokens
+        self.usage_model = None
         self.calls, self.briefs, self.outputs, self.reports, self.refusals = 0, [], [], [], []
 
     def run(self, workspace, mcp_config, timeout_s, network=None, label=None, transcript_dir=None):
@@ -99,9 +100,10 @@ class FakeAgent:
             doc["notes"] = f"session {self.calls}: ran {eid}"
         (workspace / "research.json").write_text(json.dumps(doc))
         self.reports.append(gw.build_report())
+        used = self.usage_model or self.model
         return AgentRun(adapter="fake", harness_version="fake", exit_code=0, timed_out=False, wall_seconds=1.0,
-                        usage=TokenUsage(model=self.model, input_tokens=self.tokens, output_tokens=3_000),
-                        extra={"models": [self.model]})
+                        usage=TokenUsage(model=used, input_tokens=self.tokens, output_tokens=3_000),
+                        extra={"models": [used]})
 
 
 class Clock:
@@ -142,14 +144,17 @@ def test_campaign_states_need_the_right_actor_and_one_runs_at_a_time(paths, stor
     cs = CampaignStore(store)
     row = cs.add(paths, _spec(), {"kind": "human", "note": "x"}, "human")
     assert row["state"] == "proposed" and row["split_id"] == dataset[1].split_id
-    with pytest.raises(CampaignError, match="for the human"):
-        cs.transition(row["id"], "queued", "controller")
     with pytest.raises(CampaignError, match="needs a note"):
         cs.transition(row["id"], "queued", "human", " ")
+    auto = cs.add(paths, _spec(family="ewma_trend", goal="Auto-queue a generator campaign for the floor."),
+                  {"kind": "generator", "key": "t"}, "controller")
+    cs.transition(auto["id"], "queued", "controller")
+    assert cs.require(auto["id"])["state"] == "queued"
+    cs.transition(auto["id"], "cancelled", "human", "not this test")
     with pytest.raises(CampaignError, match="cannot become running"):
         cs.transition(row["id"], "running", "controller")
     cs.transition(row["id"], "queued", "human", "ok")
-    other = _queued(paths, store, family="ewma_trend")
+    other = _queued(paths, store, family="trend_filter")
     assert cs.next_queued()["id"] == row["id"]
     cs.transition(row["id"], "running", "controller")
     with pytest.raises(CampaignError, match="one campaign runs at a time"):
@@ -204,6 +209,7 @@ def test_campaign_end_to_end_registration_gates_conclusion_and_archive(paths, st
     _reference(paths, store, dataset)
     _archive(paths)
     _force_gates(monkeypatch)
+    monkeypatch.setattr("quant_research.campaign.generate.generate", lambda *a, **k: [])
     cid = _queued(paths, store)
     agent = FakeAgent(paths, store, ["explore", "register", "conclude"])
     loop, _ = _loop(paths, store, agent)
@@ -247,8 +253,9 @@ def test_campaign_end_to_end_registration_gates_conclusion_and_archive(paths, st
     assert not out["ran"] and out["status"] == "idle" and agent.calls == 3
 
 
-def test_session_cap_exhausts_the_campaign_with_a_controller_conclusion(paths, store, dataset):
+def test_session_cap_exhausts_the_campaign_with_a_controller_conclusion(paths, store, dataset, monkeypatch):
     _reference(paths, store, dataset)
+    monkeypatch.setattr("quant_research.campaign.generate.generate", lambda *a, **k: [])
     cid = _queued(paths, store)
     agent = FakeAgent(paths, store, ["explore"])
     loop, _ = _loop(paths, store, agent)
@@ -317,13 +324,38 @@ def test_registration_reserves_room_for_every_variant(paths, store, dataset, mon
     assert HypothesisStore(store).register(paths, _hyp(), "human")["state"] == "registered"
 
 
-def test_idle_without_a_campaign_makes_no_model_call(paths, store, dataset):
+def test_idle_without_a_campaign_makes_no_model_call(paths, store, dataset, monkeypatch):
     _reference(paths, store, dataset)
+    monkeypatch.setattr("quant_research.campaign.generate.generate", lambda *a, **k: [])
     agent = FakeAgent(paths, store)
     loop, _ = _loop(paths, store, agent)
     CampaignStore(store).add(paths, _spec(), {"kind": "human"}, "human")  # proposed, not approved
     out = loop.step()
     assert out["status"] == "idle" and agent.calls == 0
+
+
+def test_first_session_uses_the_design_model(paths, store, dataset, monkeypatch):
+    _reference(paths, store, dataset)
+    monkeypatch.setattr("quant_research.campaign.generate.generate", lambda *a, **k: [])
+    _queued(paths, store)
+    agent = FakeAgent(paths, store)
+    loop, _ = _loop(paths, store, agent, design_model="deepseek-v4-pro")
+    res = loop.step()["result"]
+    assert agent.model == "deepseek-v4-pro" and res["reserved_usd"] == 0.75
+
+
+def test_generator_campaigns_auto_queue_when_the_floor_is_empty(paths, store, dataset, monkeypatch):
+    _reference(paths, store, dataset)
+    monkeypatch.setattr("quant_research.campaign.generate.generate", lambda *a, **k: [])
+    cs = CampaignStore(store)
+    cid = cs.add(paths, _spec(), {"kind": "generator", "key": "regime:2017"}, "controller")["id"]
+    human = cs.add(paths, _spec(family="trend_filter", goal="A human-added campaign stays proposed."),
+                   {"kind": "human", "note": "x"}, "human")["id"]
+    agent = FakeAgent(paths, store)
+    loop, _ = _loop(paths, store, agent)
+    out = loop.step()
+    assert out["ran"] and cs.require(cid)["state"] == "running" and cs.require(human)["state"] == "proposed"
+    assert agent.calls == 1
 
 
 # -- D3 budget -----------------------------------------------------------------------------------------------
@@ -375,7 +407,7 @@ def test_overrun_and_unpriced_calls_stop_the_loop_until_cleared(paths, store, da
     with pytest.raises(ValueError, match="needs a note"):
         budget.clear_stop(paths, "")
     assert budget.clear_stop(paths, "reserve raised")["status"] == "cleared"
-    agent.tokens, loop.adapter_model = 20_000, "mystery-model"
+    agent.tokens, agent.usage_model = 20_000, "mystery-model"
     res = loop.step()["result"]
     assert res["cost_source"] == "unpriced" and res["cost_usd"] == res["reserved_usd"] == 0.25
     assert "mystery-model" in budget.active_stop(paths)["reason"]

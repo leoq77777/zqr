@@ -18,9 +18,9 @@ from quant_research.paper.ledger import Ledger
 from quant_research.paper.portfolio_trader import LIQUIDATED_KEY, RESUME_FILE, RESUME_WAIT_SECONDS, STATE_KEY
 from quant_research.paths import Paths
 from quant_research.portfolio.blend import has_plugin
-from quant_research.portfolio.version import VersionError, VersionStore
+from quant_research.portfolio.version import Actor, VersionError, VersionStore
 
-SHADOW_STATES = {"validated", "failed_validation", "failed_final"}
+SHADOW_STATES = {"validated", "failed_validation", "failed_final", "admitted"}
 MIN_REVIEW_CHARS = 200
 
 
@@ -30,6 +30,12 @@ def entry_name(product: str) -> str:
 
 def shadow_name(product: str) -> str:
     return f"shadow-{product.lower()}"
+
+
+def admitted_shadow_name(product: str, vid: str) -> str:
+    """A unique roster name so admitted shadows sit next to the seed `shadow-<product>` (A13.10)."""
+    tail = vid.split("-", 1)[-1][:8]
+    return f"shadow-{product.lower()}-admitted-{tail}"
 
 
 def _entry(version, vid: str, name: str, shadow: bool) -> RosterEntry:
@@ -49,10 +55,12 @@ def _paper_ready(vs: VersionStore, vid: str):
     return version
 
 
-def start_shadow(paths: Paths, store: ExperimentStore, vid: str, note: str) -> dict[str, Any]:
-    """Run a version that is not approved for paper as the shadow trader `shadow-<product>` (phase 4, D2): forward
-    evidence only. The version's state and the library statuses do not change; the start is a version event."""
-    if not note.strip():
+def start_shadow(paths: Paths, store: ExperimentStore, vid: str, note: str,
+                 actor: Actor = "human") -> dict[str, Any]:
+    """Run a version that is not approved for paper as a shadow trader (phase 4 D2, A13.10): forward evidence
+    only. Seed / failed versions use `shadow-<product>`; admitted versions use a unique
+    `shadow-<product>-admitted-<vid>`. The version's state and the library statuses do not change."""
+    if actor == "human" and not note.strip():
         raise VersionError("a shadow start needs a note")
     vs = VersionStore(store)
     row = vs.get(vid)
@@ -61,12 +69,13 @@ def start_shadow(paths: Paths, store: ExperimentStore, vid: str, note: str) -> d
     if row["state"] not in SHADOW_STATES:
         raise VersionError(f"a shadow runs a version in {sorted(SHADOW_STATES)} ({vid} is {row['state']})")
     version = _paper_ready(vs, vid)
-    name = shadow_name(version.product)
+    name = (admitted_shadow_name(version.product, vid) if row["state"] == "admitted"
+            else shadow_name(version.product))
     path = roster_path(paths)
     if path.exists() and any(e.name == name for e in load_roster(path).entries):
         raise VersionError(f"the roster already has {name}")
     add_entry(path, _entry(version, vid, name, shadow=True))
-    vs.record(vid, "human", {"shadow": name}, note)
+    vs.record(vid, actor, {"shadow": name}, note.strip() or "admitted auto-shadow")
     return {"version_id": vid, "state": row["state"], "roster_name": name, "shadow": True}
 
 

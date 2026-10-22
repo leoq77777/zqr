@@ -110,7 +110,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `runtime.py` | Resources, version, image names, sibling-container mounts, scratch dirs, control network |
 | `release.py` | `zqr release`: build, cross-build, ship and start images on a host |
 | `data/` | Coinbase REST client (`coinbase.py`), bar normalisation, validation, snapshots, synthetic data |
-| `strategy/` | `StrategySpec`, templates (`buy_and_hold`, `cash`, `sma_cross`, `momentum`, `breakout`, and the seed templates `tsmom`, `ma_filter`, `ewma_trend`, `vol_target`), decision cadence (`cadence.py`), agent plugins, sandbox (subprocess or Docker) |
+| `strategy/` | `StrategySpec`, templates (`buy_and_hold`, `cash`, `sma_cross`, `momentum`, `breakout`, seed `tsmom`/`ma_filter`/`ewma_trend`/`vol_target`, plus `vol_squeeze` and `calendar_filter`), decision cadence (`cadence.py`), agent plugins, sandbox (subprocess or Docker) |
 | `library/` | Strategy library: seed catalog (`seeds.yaml`, reviewed in `docs/library/seeds.md`), catalog validation, library tables in `experiments.db`, `zqr library` commands |
 | `campaign/` | Campaigns (`model.py`, `store.py`: tables `campaigns`, `campaign_events`, `campaign_sessions`), research budget (`budget.py`), generator (`generate.py`), session brief (`brief.py`), conclusions (`conclude.py`), report lines, `zqr campaign` commands (section 5.11) |
 | `hypothesis/` | Registered hypotheses (`model.py`, `store.py`: tables `hypotheses`, `hypothesis_events`), gates 1 and 2 (`gates.py`), `zqr hypothesis` commands (section 5.10) |
@@ -438,11 +438,12 @@ Rules: `docs/investment-policy.md` (D1-D3) and appendix A14 (D4-D7). Plan:
   next bar (still the same liquidation, review intact), applies it once and logs an ALERT, or renames it
   `resume.rejected-<ts>.json`. Portfolio entries do not count against the candidate paper slots.
 - **Shadow portfolios** (phase 4, D2). `zqr portfolio shadow <vid> --note` (human) runs a version in `validated`,
-  `failed_validation` or `failed_final` as the roster entry `shadow-<product>` (`shadow: true`), the same
-  `PortfolioTrader` with the version's capital and costs, for forward evidence only. The version's state and the
-  library statuses do not change; the start is a version event with from_state = to_state. The `shadow` flag is not
-  part of the identity hash. Reports show shadows in their own table, labelled not approved; they are excluded
-  from the combined account and the soft stop.
+  `failed_validation`, `failed_final` or `admitted` as a shadow roster entry (`shadow: true`), the same
+  `PortfolioTrader` with the version's capital and costs, for forward evidence only. Seed / failed versions use
+  `shadow-<product>`; admitted versions use `shadow-<product>-admitted-<vid>` so both can run (A13.10). Gate 2
+  starts the admitted shadow automatically. The version's state and the library statuses do not change; the start
+  is a version event with from_state = to_state. The `shadow` flag is not part of the identity hash. Reports show
+  shadows in their own table, labelled not approved; they are excluded from the combined account and the soft stop.
 - **Parity** (`portfolio_parity`). Per decision: blend recomputed from the bar store, decider re-run from the
   recorded `pre_state` with the marked equity and position, order side and size; path: `run_portfolio` from the
   first decision's account and state.
@@ -477,12 +478,13 @@ Rules: appendix A6 and A13.7. Plan: `docs/superpowers/plans/2026-10-15-phase4-ca
   `candidate`, source `hypothesis:<id>`) becomes a draft version; both run on validation; measures without the
   ladder: Sharpe not lower, drawdown at most 2 points worse, turnover (`turnover_no_ladder`) at most 25% higher.
   The reference's validation run is counted once per split, each candidate's every time. The version goes to
-  `admitted` or `failed_validation`; event `gate2` on the hypothesis. Runs once per hypothesis.
+  `admitted` or `failed_validation`; event `gate2` on the hypothesis. Runs once per hypothesis. Sharpe may be up
+  to 0.05 below the reference (A13.9); drawdown and turnover bounds are unchanged.
 - **`zqr hypothesis test <id> [--sandbox docker|none]`** (controller) runs gate 1, then gate 2 if a variant
   passed. `gates.verdict` is what agents will see (state and failed gate only). States: registered, gate1_failed,
-  gate2_failed, admitted. Admitted versions wait for the next split (design D5): no freeze, holdout, approval or
-  shadow on their split. The daily report's research section lists every hypothesis with gate 1's best AR and the
-  admitted version.
+  gate2_failed, admitted. Admitted versions wait for the next split's holdout (design D5): no freeze, holdout or
+  paper approval on their split; they auto-shadow under `shadow-<product>-admitted-<vid>` (A13.10). The daily
+  report's research section lists every hypothesis with gate 1's best AR and the admitted version.
 
 ### 5.11 Campaigns and the research budget (`campaign/`, phase 4 release 4d)
 
@@ -493,9 +495,10 @@ Rules: design section 6 (campaigns), investment policy 5 (budget), plan D1-D8 an
   research on one family (a sleeve family, or `exploration`): `goal`, `prior` and `citations` (checked like a
   hypothesis's), an optional `model`, and its source (`human`, or `generator` with the diagnostic). The split is
   the product's desk mandate split when it is added (a closed holdout is no obstacle: admitted versions wait for
-  the next split); an unknown family, an unpriced model or a family at quota is refused. States: `proposed` → `queued` (human `approve`, P5) → `running` (controller) →
-  `concluded` | `exhausted` (controller); `cancelled` by the human from `proposed`, `queued` or `running`. One
-  campaign runs at a time; queued campaigns start in approval order.
+  the next split); an unknown family, an unpriced model or a family at quota is refused. States: `proposed` → `queued` (human `approve`, or the controller auto-queues a generator campaign when fewer than 3 are queued, A13.11) → `running` (controller) →
+  `concluded` | `exhausted` (controller); `cancelled` by the human from `proposed`, `queued` or `running`. Inbox
+  and human-added campaigns stay `proposed` until the human approves them. One campaign runs at a time; queued
+  campaigns start in approval order.
 - **Caps** (P3). $1, 4 sessions and 40 experiments at the start; +$2, +2 sessions and +20 experiments after a gate 1
   pass and again after a gate 2 pass; at most $5, 8 sessions and 80 experiments. A running session counts at its
   reservation. Sessions that fail for environment reasons, crashes or stops do not count.
@@ -510,9 +513,9 @@ Rules: design section 6 (campaigns), investment policy 5 (budget), plan D1-D8 an
   ladder and the family archives: regime gaps (a year where the reference lagged its mean exposure to the market, as
 a log shortfall; the years go round the sleeve families), concentration of the
   reference's P&L in one family, cost sensitivity (archive `sharpe_2x` against `sharpe`), open questions in
-  conclusions, and unmapped clusters (exploration). Ranking is gap × room left in the family quota, deterministic;
+  conclusions, and unmapped clusters (exploration).   Ranking is gap × room left in the family quota, deterministic;
   about 20% of a batch is exploration; keys of live campaigns are skipped. `zqr campaign generate` writes them as
-  `proposed`; nothing runs until the human approves.
+  `proposed`. The research loop auto-queues generator campaigns while fewer than 3 are queued (A13.11).
 - **Budget** (D7, `budget.py`). Before each session the loop reserves `session_reserve_usd` against the campaign,
   the UTC day and the month; the booked cost replaces it afterwards. The day ($5), month ($83.33) and sessions per
   day (12) are ceilings in code: the desk config may lower them, not raise them. A session that costs more than
@@ -637,6 +640,8 @@ The fields of `DeskConfig` (`desk/config.json`), with defaults:
 | `daily_cost_cap_usd` | 5 | No session whose reservation does not fit under this spend (UTC day); at most 5 (code ceiling) |
 | `monthly_cost_cap_usd` | 83.33 | The same per calendar month (UTC); at most 83.33 |
 | `session_reserve_usd` | 0.25 | Reserved before each session; a session above it stops the loop (budget stop) |
+| `design_model` | none | First session of a campaign uses this model when the campaign body has no `model` |
+| `design_session_reserve_usd` | 0.75 | Reservation for that first session |
 | `max_sessions_per_day` | 12 | Session cap per UTC day; at most 12 |
 | `campaign_models` | {} | Model name → price preset (`deepseek-flash`, `deepseek-v4-pro`); a campaign's `model` must be one of these (no `model` means the default) |
 | `session_wall_seconds` | 1800 | Agent wall clock per session |
@@ -644,7 +649,7 @@ The fields of `DeskConfig` (`desk/config.json`), with defaults:
 | `backoff_base_seconds` / `backoff_max_seconds` | 300 / 3600 | Environment-failure pause |
 | `poll_seconds` | 30 | Fleet poll interval |
 | `report_hour_utc` / `report_minute_utc` | 0 / 5 | Daily report time |
-| `model` | none | Passes `--model` to Claude Code. When unset, `ANTHROPIC_MODEL` applies |
+| `model` | none | Passes `--model` to Claude Code for sessions after the first. When unset, `ANTHROPIC_MODEL` applies |
 | `agent_memory` / `agent_cpus` | 2g / 2 | Agent container limits |
 | `research_enabled` | true | Master switch for research |
 | `network` | docker_desktop, 127.0.0.1, host.docker.internal | Development only: gateway bind and proxy forward host, picked by `desk check`. The release container always uses `container` mode, computed at run time |
@@ -798,8 +803,8 @@ exactly the production layout (volumes, control network, sibling containers) on 
   `coinbase-lf-allin-v1` (~0.44% RT) with `costs_x2` still required.
 - **Trial accumulation:** the topic loop added about 100 trials per split per hour. Since 4d trials are bounded by
   campaign caps (at most 80 per campaign), family quotas (100 per family per split) and 12 sessions per day.
-- **Campaign generation is manual:** `zqr campaign generate` runs only when someone runs it; nothing generates
-  after a campaign ends or daily. Every batch waits for the human's approval (P5).
+- **Campaign generation:** the loop auto-queues generator campaigns when fewer than 3 are queued. Inbox drafts
+  still wait for the human (I6).
 - **Model and harness attribution:** each session records `zqr_version`, `harness` and `model`, but the daily
   report does not yet break results down by them. Model comparisons (for example DeepSeek pro against flash)
   should use the benchmark controls, not desk outcomes.

@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, PositiveFloat, PositiveInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt, model_validator
 
 from quant_research.strategy.cadence import BARS_PER_DAY, boundaries, daily_closes, days, sample_and_hold
 
@@ -90,6 +90,34 @@ class VolTargetParams(_Params):
         _whole_days(self.window)
         if days(self.window) < 2:
             raise ValueError("window needs at least 2 days")
+        return self
+
+
+class VolSqueezeParams(_Params):
+    """Donchian width in the lower tail, then a close above the prior channel high."""
+
+    window: PositiveInt
+    squeeze_lookback: PositiveInt
+    squeeze_pct: float = Field(gt=0.0, lt=1.0)
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.squeeze_lookback < self.window:
+            raise ValueError("squeeze_lookback must be >= window")
+        return self
+
+
+class CalendarFilterParams(_Params):
+    """Long only inside a UTC hour window; optionally flat on Saturday and Sunday."""
+
+    skip_weekend: bool = True
+    hour_start: int = Field(0, ge=0, le=23)
+    hour_end: int = Field(24, ge=1, le=24)
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.hour_start >= self.hour_end:
+            raise ValueError("hour_start must be < hour_end")
         return self
 
 
@@ -181,6 +209,34 @@ def _vol_target(bars: pd.DataFrame, p: VolTargetParams) -> pd.Series:
     return _on_daily(bars, daily)
 
 
+def _vol_squeeze(bars: pd.DataFrame, p: VolSqueezeParams) -> pd.Series:
+    upper = bars["high"].rolling(p.window, min_periods=p.window).max().shift(1)
+    lower = bars["low"].rolling(p.window, min_periods=p.window).min().shift(1)
+    mid = (upper + lower) / 2.0
+    width = (upper - lower) / mid.replace(0.0, np.nan)
+    thresh = width.rolling(p.squeeze_lookback, min_periods=p.squeeze_lookback).quantile(p.squeeze_pct)
+    close = bars["close"].to_numpy()
+    up, lo, squeezed = upper.to_numpy(), lower.to_numpy(), (width <= thresh).to_numpy()
+    out = np.zeros(len(close))
+    pos = 0.0
+    for i in range(len(close)):
+        if pos == 0.0 and squeezed[i] and not np.isnan(up[i]) and close[i] > up[i]:
+            pos = 1.0
+        elif pos == 1.0 and not np.isnan(lo[i]) and close[i] < lo[i]:
+            pos = 0.0
+        out[i] = pos
+    return pd.Series(out, index=bars.index)
+
+
+def _calendar_filter(bars: pd.DataFrame, p: CalendarFilterParams) -> pd.Series:
+    t = pd.to_datetime(bars["bar_open_time"], utc=True)
+    hour = t.dt.hour.to_numpy()
+    long = (hour >= p.hour_start) & (hour < p.hour_end)
+    if p.skip_weekend:
+        long = long & (t.dt.dayofweek.to_numpy() < 5)
+    return pd.Series(long.astype(float), index=bars.index)
+
+
 @dataclass(frozen=True)
 class Template:
     name: str
@@ -212,6 +268,10 @@ TEMPLATES: dict[str, Template] = {
                  "Baz et al. EWMA crossover with response function on daily closes, exposure max(0, u)"),
         Template("vol_target", "1", VolTargetParams, _vol_target,
                  "min(1, target_vol / realised vol of daily returns over window); the portfolio overlay"),
+        Template("vol_squeeze", "1", VolSqueezeParams, _vol_squeeze,
+                 "long on a close above the prior Donchian high only while channel width is in its lower tail"),
+        Template("calendar_filter", "1", CalendarFilterParams, _calendar_filter,
+                 "long inside a UTC hour window; optionally flat on Saturday and Sunday"),
     )
 }
 
