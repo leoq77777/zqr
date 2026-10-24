@@ -12,6 +12,7 @@ ends the campaign. Every session leaves `desk/sessions/<run_id>/result.json` and
 Guards: the reservation caps, a per-session wall clock and experiment allowance, exponential backoff on failures,
 a pause with the reason shown in `desk status` when the environment (model, Docker) is at fault, and the budget
 stop (an unpriced model call, or a session costing more than its reservation) until the human clears it.
+Idle and cap waits sleep until `resume_at`, so a late slice or a jumped clock does not keep the loop in yesterday.
 """
 
 from __future__ import annotations
@@ -309,10 +310,11 @@ class ResearchLoop:
             if out["ran"]:
                 ran += 1
                 continue
-            waited = 0.0
-            while not self.stop_requested and waited < out["wait"]:
-                self.sleep(min(5.0, out["wait"] - waited))
-                waited += 5.0
+            deadline = self.state.get("resume_at")
+            if deadline is None:
+                deadline = self.clock() + float(out.get("wait") or 0)
+            while not self.stop_requested and self.clock() < deadline:
+                self.sleep(min(5.0, max(0.0, deadline - self.clock())))
         self.state = _save_state(self.paths, self.state, status="stopped", current_run=None)
 
     # -- campaign bookkeeping --------------------------------------------------------------------

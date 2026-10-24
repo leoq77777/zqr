@@ -161,6 +161,7 @@ promotes single candidates (phase 4 D8; that code stays for controls and benchma
      `exhausted`;
    - the reservation (`session_reserve_usd`) does not fit under the day, the month, or the sessions per day;
    - no model, or a model without a price.
+   `run()` then sleeps until `resume_at` on the wall clock (5 s slices), not for a counted number of slices.
 2. The workspace receives `CLAUDE.md` (the portable role prompt; Claude Code injects it as project
    instructions, so the launch prompt does not ask the agent to `Read` it), `research.schema.json` (with the
    required `notes` and an optional `conclusion`), `fixtures/strategy_contract.md` and the campaign brief as

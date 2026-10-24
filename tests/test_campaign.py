@@ -381,6 +381,31 @@ def test_day_month_and_session_caps_are_ceilings(paths, store, dataset):
     assert loop.step()["ran"]
 
 
+def test_run_wakes_when_the_clock_passes_resume_at(paths, store, dataset):
+    """A long cost-cap wait is until resume_at, not a counted number of 5 s sleeps."""
+    _reference(paths, store, dataset)
+    _queued(paths, store)
+    agent = FakeAgent(paths, store)
+    clock = Clock()
+    n = {"sleeps": 0}
+
+    def sleep(seconds):
+        n["sleeps"] += 1
+        if n["sleeps"] == 1:
+            clock.t = rl.load_state(paths)["resume_at"] + 60
+        else:
+            clock.t += seconds
+
+    cfg = load_config(paths).model_copy(update={"model": "deepseek-v4-flash"})
+    loop = rl.ResearchLoop(paths, store, cfg, agent, sandbox=SandboxConfig(isolation="subprocess"),
+                           allow_weak_isolation=True, isolate_network=False, require_check=False,
+                           clock=clock, sleep=sleep)
+    rl.ledger_path(paths).write_text(json.dumps({"day": rl.utc_day(clock.t), "cost_usd": 4.8,
+                                                "topic": "campaign"}) + "\n")
+    loop.run(max_sessions=1)
+    assert agent.calls == 1 and n["sleeps"] == 1
+
+
 def test_campaign_dollar_cap_refuses_a_reservation_that_does_not_fit(paths, store, dataset):
     _reference(paths, store, dataset)
     cid = _queued(paths, store)
