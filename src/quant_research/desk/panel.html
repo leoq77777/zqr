@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZQR desk · tape</title>
+  <style>
+    :root {
+      --ink: #efe6d4;
+      --mute: #8a8070;
+      --paper: #12100c;
+      --rail: #1c1914;
+      --line: #2a261e;
+      --gold: #c4a574;
+      --up: #3dba7a;
+      --down: #e24b4b;
+      --bh: #6e8cff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink);
+      font-family: "Iowan Old Style", Palatino, "Palatino Linotype", "Times New Roman", serif; }
+    body { display: grid; grid-template-rows: auto 1fr auto; min-height: 100%; }
+    body::before {
+      content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .03;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+    header {
+      display: flex; flex-direction: column; gap: .35rem; padding: .7rem 1.2rem .55rem;
+      border-bottom: 1px solid var(--line); background: var(--rail);
+    }
+    header h1 { margin: 0; font-size: 1.15rem; font-weight: 600; letter-spacing: .04em; color: var(--gold); }
+    header h1 span { color: var(--mute); font-weight: 400; margin-left: .4rem; font-size: .85rem; }
+    .tape { display: flex; gap: 1.4rem; flex-wrap: wrap; font-family: "SF Mono", Menlo, Consolas, monospace;
+      font-size: .72rem; color: var(--mute); }
+    .tape b { color: var(--ink); font-weight: 500; }
+    .up { color: var(--up); } .down { color: var(--down); }
+    main { display: grid; grid-template-columns: 280px 1fr; min-height: 0; }
+    nav { border-right: 1px solid var(--line); overflow: auto; background: #100e0a; }
+    nav button {
+      display: grid; grid-template-columns: 1fr auto; gap: .15rem .6rem; width: 100%;
+      padding: .55rem .8rem; border: 0; border-bottom: 1px solid var(--line);
+      background: transparent; color: inherit; text-align: left; cursor: pointer;
+      font: inherit;
+    }
+    nav button:hover { background: #1a1712; }
+    nav button.on { background: #241f16; box-shadow: inset 3px 0 0 var(--gold); }
+    nav .nm { font-size: .82rem; }
+    nav .meta { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: .65rem; color: var(--mute); }
+    nav .px { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: .78rem; }
+    section { display: grid; grid-template-rows: auto 1fr 180px; min-width: 0; min-height: 0; }
+    .stat {
+      display: flex; gap: 1.6rem; flex-wrap: wrap; padding: .7rem 1rem .4rem;
+      font-family: "SF Mono", Menlo, Consolas, monospace; font-size: .78rem;
+    }
+    .stat i { font-style: normal; color: var(--mute); display: block; font-size: .62rem;
+      letter-spacing: .08em; text-transform: uppercase; }
+    canvas { width: 100%; height: 100%; display: block; }
+    .chart { position: relative; min-height: 220px; border-top: 1px solid var(--line); }
+    .tip {
+      position: absolute; pointer-events: none; display: none; padding: .35rem .5rem;
+      background: #0c0b09; border: 1px solid var(--line); color: var(--ink);
+      font-family: "SF Mono", Menlo, Consolas, monospace; font-size: .68rem;
+    }
+    .blotter { overflow: auto; border-top: 1px solid var(--line); font-family: "SF Mono", Menlo, Consolas, monospace;
+      font-size: .7rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; color: var(--mute); font-weight: 400; padding: .35rem .7rem;
+      border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--rail); }
+    td { padding: .32rem .7rem; border-bottom: 1px solid #1a1712; }
+    footer { padding: .4rem 1.2rem .5rem; border-top: 1px solid var(--line); color: var(--mute);
+      font-family: "SF Mono", Menlo, Consolas, monospace; font-size: .65rem; }
+    .err { padding: 2rem; color: var(--down); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ZQR tape<span id="ver"></span></h1>
+    <div class="tape" id="tape"></div>
+  </header>
+  <main>
+    <nav id="list"></nav>
+    <section>
+      <div class="stat" id="stat"></div>
+      <div class="chart">
+        <canvas id="c"></canvas>
+        <div class="tip" id="tip"></div>
+      </div>
+      <div class="blotter">
+        <table>
+          <thead><tr><th>time</th><th>side</th><th>qty</th><th>price</th><th>fee</th></tr></thead>
+          <tbody id="fills"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <footer id="foot">loading ledgers…</footer>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const pct = (x) => (x == null || !isFinite(x)) ? "—" : ((x >= 0 ? "+" : "") + (x * 100).toFixed(2) + "%");
+    const usd = (x) => (x >= 0 ? "+" : "") + x.toFixed(2);
+    const cls = (x) => x >= 0 ? "up" : "down";
+    const when = (t) => new Date(t * 1000).toISOString().replace("T", " ").slice(0, 16);
+
+    let snap = null, pick = 0, hover = null;
+
+    function renderTape() {
+      const r = snap.research || {};
+      const hy = r.hypotheses || {};
+      $("ver").textContent = snap.version || "";
+      $("tape").innerHTML = [
+        ["research $", (r.total_cost_usd ?? "—") + "  /  today " + (r.today_cost_usd ?? "—") + " of " + (r.daily_cap_usd ?? "")],
+        ["sessions", (r.sessions_started ?? "—") + "  ·  today " + (r.today_sessions ?? "—")],
+        ["gates", `admit ${r.admitted ?? 0}  ·  g1fail ${hy.gate1_failed ?? 0}  ·  g2fail ${hy.gate2_failed ?? 0}`],
+        ["sleeves P&L", usd(snap.sleeves_pnl || 0)],
+        ["shadow P&L", usd(snap.shadows_pnl || 0)],
+      ].map(([k, v], i) => {
+        const n = (i === 3 ? snap.sleeves_pnl : i === 4 ? snap.shadows_pnl : null);
+        return `<span>${k} <b class="${n == null ? "" : cls(n)}">${v}</b></span>`;
+      }).join("");
+      $("foot").textContent = `snapshot ${new Date(snap.generated_at * 1000).toISOString()}  ·  ${snap.sleeves_n} sleeves  ·  ${snap.shadows_n} shadows`;
+    }
+
+    function renderList() {
+      $("list").innerHTML = snap.books.map((b, i) => `
+        <button data-i="${i}" class="${i === pick ? "on" : ""}">
+          <span>
+            <div class="nm">${b.name}</div>
+            <div class="meta">${b.product}${b.shadow ? " · shadow" : ""} · ${b.fills_n} fills</div>
+          </span>
+          <span class="px ${cls(b.ret)}">${pct(b.ret)}</span>
+        </button>`).join("");
+      $("list").onclick = (e) => {
+        const btn = e.target.closest("button");
+        if (!btn) return;
+        pick = +btn.dataset.i;
+        renderList(); renderBook();
+      };
+    }
+
+    function renderBook() {
+      const b = snap.books[pick];
+      if (!b) return;
+      $("stat").innerHTML = [
+        ["equity", b.equity.toFixed(2)],
+        ["return", pct(b.ret)],
+        ["buy & hold", pct(b.bh_ret)],
+        ["vs B&H", pct(b.vs_bh)],
+        ["cash", b.quote.toFixed(2)],
+        ["coin", b.base.toFixed(6)],
+        ["mark", b.last_price.toFixed(2)],
+        ["last bar", b.last_bar],
+      ].map(([k, v], i) => {
+        const n = i === 1 ? b.ret : i === 2 ? b.bh_ret : i === 3 ? b.vs_bh : null;
+        return `<div><i>${k}</i><b class="${n == null ? "" : cls(n)}">${v}</b></div>`;
+      }).join("");
+      $("fills").innerHTML = (b.fills || []).slice().reverse().map(f => `
+        <tr>
+          <td>${when(f.t)}</td>
+          <td class="${f.side === "buy" ? "up" : "down"}">${f.side}</td>
+          <td>${Number(f.qty).toFixed(6)}</td>
+          <td>${Number(f.price).toFixed(2)}</td>
+          <td>${Number(f.fee).toFixed(4)}</td>
+        </tr>`).join("") || `<tr><td colspan="5">no fills</td></tr>`;
+      draw();
+    }
+
+    function draw() {
+      const b = snap.books[pick];
+      const c = $("c"), ctx = c.getContext("2d");
+      const dpr = devicePixelRatio || 1;
+      const w = c.clientWidth, h = c.clientHeight;
+      c.width = w * dpr; c.height = h * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      const eq = b.equity_series, bh = b.bh_series;
+      if (!eq.length) return;
+      const pad = { l: 72, r: 16, t: 18, b: 28 };
+      const ys = eq.concat(bh).map(p => p[1]);
+      let ymin = Math.min(...ys), ymax = Math.max(...ys);
+      if (ymin === ymax) { ymin -= 1; ymax += 1; }
+      const t0 = eq[0][0], t1 = eq[eq.length - 1][0];
+      const X = (t) => pad.l + (t - t0) / (t1 - t0 || 1) * (w - pad.l - pad.r);
+      const Y = (v) => pad.t + (1 - (v - ymin) / (ymax - ymin)) * (h - pad.t - pad.b);
+      ctx.strokeStyle = "#2a261e"; ctx.lineWidth = 1;
+      for (let i = 0; i < 4; i++) {
+        const y = pad.t + i * (h - pad.t - pad.b) / 3;
+        ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+        ctx.fillStyle = "#8a8070"; ctx.font = "11px SF Mono, Menlo, monospace";
+        ctx.fillText((ymax - (ymax - ymin) * i / 3).toFixed(0), 8, y + 3);
+      }
+      const line = (pts, color, width) => {
+        ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = width;
+        pts.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1])));
+        ctx.stroke();
+      };
+      line(bh, "#6e8cff", 1.2);
+      line(eq, b.ret >= 0 ? "#3dba7a" : "#e24b4b", 1.8);
+      (b.fills || []).forEach(f => {
+        const x = X(f.t), buy = f.side === "buy";
+        ctx.fillStyle = buy ? "#3dba7a" : "#e24b4b";
+        ctx.beginPath();
+        ctx.moveTo(x, pad.t + 6);
+        ctx.lineTo(x - 4, pad.t);
+        ctx.lineTo(x + 4, pad.t);
+        ctx.closePath();
+        ctx.fill();
+      });
+      if (hover != null) {
+        const p = eq[hover];
+        ctx.strokeStyle = "#c4a574"; ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.moveTo(X(p[0]), pad.t); ctx.lineTo(X(p[0]), h - pad.b); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = "#efe6d4";
+        ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 3, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.fillStyle = "#8a8070"; ctx.font = "11px Iowan Old Style, Palatino, serif";
+      ctx.fillText("equity", pad.l, 12);
+      ctx.fillStyle = "#6e8cff"; ctx.fillText("buy & hold", pad.l + 52, 12);
+    }
+
+    $("c").onmousemove = (e) => {
+      if (!snap) return;
+      const b = snap.books[pick], eq = b.equity_series;
+      if (!eq.length) return;
+      const rect = $("c").getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const t0 = eq[0][0], t1 = eq[eq.length - 1][0];
+      const padL = 72, padR = 16;
+      const t = t0 + (x - padL) / (rect.width - padL - padR) * (t1 - t0);
+      let best = 0, d = 1e18;
+      eq.forEach((p, i) => { const a = Math.abs(p[0] - t); if (a < d) { d = a; best = i; } });
+      hover = best;
+      const p = eq[best], bh = b.bh_series[Math.min(best, b.bh_series.length - 1)];
+      const tip = $("tip");
+      tip.style.display = "block";
+      tip.style.left = Math.min(e.clientX - rect.left + 12, rect.width - 160) + "px";
+      tip.style.top = "20px";
+      tip.innerHTML = `${when(p[0])}<br>eq ${p[1].toFixed(2)}<br>bh ${(bh ? bh[1] : 0).toFixed(2)}`;
+      draw();
+    };
+    $("c").onmouseleave = () => { hover = null; $("tip").style.display = "none"; draw(); };
+    window.onresize = () => snap && draw();
+
+    fetch("/api/snapshot").then(r => r.json()).then(data => {
+      snap = data;
+      if (!snap.books || !snap.books.length) {
+        $("foot").textContent = "no paper ledgers";
+        $("list").innerHTML = `<div class="err">roster has no marked books</div>`;
+        return;
+      }
+      renderTape(); renderList(); renderBook();
+    }).catch(err => { $("foot").textContent = String(err); });
+  </script>
+</body>
+</html>

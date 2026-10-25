@@ -1,5 +1,6 @@
 """Standing authorization: a human pre-approves the desk to freeze validated candidates and put holdout-passing
-ones on paper. It never covers live trading.
+ones on paper. Super mode (`auto_paper_admitted`) also puts Gate-2-admitted versions on paper immediately
+(A13.12). It never covers live trading.
 
 `desk/authorization.json` is written only by `zqr desk setup` / `zqr desk authorize` after an interactive
 confirmation. Every desk transition records the file's hash as evidence.
@@ -29,6 +30,7 @@ class Authorization(BaseModel):
     expires_at: float
     created_by: str = "human"
     note: str = ""
+    auto_paper_admitted: bool = False  # A13.12: Gate 1+2 pass starts paper; no per-version human, no next split
     scope: list[str] = Field(default_factory=lambda: [f"{a}->{b}" for a, b in DESK_TRANSITIONS])
     hash: str = ""
 
@@ -52,10 +54,11 @@ class Authorization(BaseModel):
 
 
 def create(products: list[str], max_paper_strategies: int, days: float, note: str = "",
-           now: float | None = None) -> Authorization:
+           now: float | None = None, auto_paper_admitted: bool = False) -> Authorization:
     now = time.time() if now is None else now
     return Authorization(products=products, max_paper_strategies=max_paper_strategies, created_at=now,
-                         expires_at=now + days * 86400, note=note).sealed()
+                         expires_at=now + days * 86400, note=note,
+                         auto_paper_admitted=auto_paper_admitted).sealed()
 
 
 def save(path: Path, auth: Authorization) -> None:

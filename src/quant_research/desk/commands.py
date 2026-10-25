@@ -40,16 +40,18 @@ def authorization_summary(auth: auth_mod.Authorization | None, now: float | None
 
 
 def interactive_authorize(paths, products: list[str], max_paper: int, days: float, note: str,
-                          assume_yes: bool) -> dict:
+                          assume_yes: bool, auto_paper_admitted: bool = False) -> dict:
     print("Standing authorization for the research desk:\n"
           f"  products:                 {', '.join(products)}\n"
           f"  candidate paper slots:    {max_paper}\n"
           f"  valid for:                {days:g} days\n"
+          f"  auto paper admitted:      {auto_paper_admitted} (A13.12 super)\n"
           "  allows:  validated -> frozen, final_evaluated -> paper_approved (paper trading only)\n"
+          "  super:   admitted -> paper now (no holdout, no next split, no per-version human)\n"
           "  never:   live trading\n", file=sys.stderr)
     if not _confirm("Type 'authorize' to sign: ", assume_yes):
         raise SystemExit("not authorized")
-    auth = auth_mod.create(products, max_paper, days, note=note)
+    auth = auth_mod.create(products, max_paper, days, note=note, auto_paper_admitted=auto_paper_admitted)
     auth_mod.save(promotion.authorization_path(paths), auth)
     return authorization_summary(auth)
 
@@ -65,7 +67,7 @@ def cmd_authorize(args) -> None:
         _out(authorization_summary(auth_mod.load(path)))
         return
     _out(interactive_authorize(paths, args.products.split(","), args.max_paper, args.days, args.note or "",
-                               args.yes))
+                               args.yes, auto_paper_admitted=args.super))
 
 
 def _store(paths):
@@ -254,6 +256,16 @@ def cmd_status(args) -> None:
           f"network {c['network']}")
     if s["last_report_error"]:
         print(f"report:     last error {s['last_report_error']}")
+
+
+def cmd_panel(args) -> None:
+    from quant_research.desk.panel import serve, snapshot
+
+    paths = get_paths(args.home)
+    if args.json:
+        _out(snapshot(paths) if not args.snapshot else json.loads(Path(args.snapshot).read_text()))
+        return
+    serve(paths, args.host, args.port, snapshot_path=args.snapshot)
 
 
 def cmd_logs(args) -> None:
@@ -480,5 +492,13 @@ def register(sub) -> None:
     p.add_argument("--max-paper", type=int, default=6, help="max candidate strategies on paper at once")
     p.add_argument("--days", type=float, default=30)
     p.add_argument("--note")
+    p.add_argument("--super", action="store_true",
+                   help="A13.12: admitted versions go to paper immediately")
     p.add_argument("--yes", action="store_true", help="confirm without the interactive prompt")
     p.set_defaults(fn=cmd_authorize)
+    p = desk.add_parser("panel", help="paper blotter: equity, fills and research spend in a local page")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--json", action="store_true", help="print the snapshot and exit")
+    p.add_argument("--snapshot", type=Path, help="serve a saved snapshot instead of live ledgers")
+    p.set_defaults(fn=cmd_panel)

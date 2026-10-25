@@ -15,6 +15,7 @@
 #   zqr setup [ARGS]          `zqr desk setup ARGS` (data, mandates, authorization; credentials if missing)
 #   zqr logs [-f]             container output; components: `zqr desk logs research -f`
 #   zqr shell                 bash inside the desk container
+#   zqr panel                 paper blotter at http://127.0.0.1:8765 (Ctrl-C to stop)
 #   zqr ARGS...               `zqr ARGS` inside the desk container (a one-off container when the desk is stopped)
 set -euo pipefail
 
@@ -92,7 +93,8 @@ cmd_up() {
   ensure_network
   desk_args "$img" "$NAME" ":ro"
   docker run -d --name "$NAME" --init --restart unless-stopped --stop-timeout 300 --label zqr.version="$v" \
-    --log-opt max-size=20m --log-opt max-file=3 "${DESK_ARGS[@]}" "$img" zqr desk supervise >/dev/null
+    --log-opt max-size=20m --log-opt max-file=3 -p 127.0.0.1:8765:8765 \
+    "${DESK_ARGS[@]}" "$img" zqr desk supervise >/dev/null
   record "$v"
   echo "zqr-desk started: $v"
   sleep 5
@@ -164,6 +166,7 @@ case "${1:-}" in
   setup) shift; one_off "" zqr desk setup "$@" ;;
   logs) shift; docker logs "$@" "$NAME" ;;
   shell) if running; then docker exec -it "$NAME" bash; else one_off ":ro" bash; fi ;;
+  panel) shift; running || die "zqr-desk is not running"; docker exec $(tty_flags) "$NAME" zqr desk panel --host 0.0.0.0 "$@" ;;
   ""|-h|--help|help) sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//' ;;
   *) if running; then docker exec $(tty_flags) "$NAME" zqr "$@"; else one_off ":ro" zqr "$@"; fi ;;
 esac

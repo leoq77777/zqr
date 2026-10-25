@@ -301,6 +301,49 @@ def test_admitted_versions_cannot_be_frozen_or_approved(paths, store, dataset, m
     assert any("2027-10-12" in line for line in lines)
 
 
+def test_super_authorization_puts_admitted_on_paper_now(paths, store, dataset, monkeypatch):
+    from quant_research.desk import promotion
+    from quant_research.hypothesis import gates
+    from quant_research.paper.fleet import load_roster
+    from quant_research.portfolio.paper import ensure_admitted_paper, start_admitted_paper
+    from quant_research.research import authorization as auth_mod
+
+    hid = _passed_gate1(paths, store, dataset, monkeypatch)
+    monkeypatch.setattr(gates, "gate2_checks", lambda r, c: {"ok": True})
+    vid = gates.run_gates(paths, store, hid)["gate2"]["version_id"]
+    with pytest.raises(VersionError, match="super authorization"):
+        start_admitted_paper(paths, store, vid)
+    auth = auth_mod.create(["BTC-USD"], 2, days=7, auto_paper_admitted=True)
+    auth_mod.save(promotion.authorization_path(paths), auth)
+    out = start_admitted_paper(paths, store, vid, authorization=auth)
+    assert out["shadow"] is False and out["roster_name"].startswith("paper-btc-usd-admitted-")
+    assert VersionStore(store).get(vid)["state"] == "admitted"
+    entry = next(e for e in load_roster(paths.desk / "roster.json").entries if e.name == out["roster_name"])
+    assert not entry.shadow and entry.portfolio_version == vid
+    again = start_admitted_paper(paths, store, vid, authorization=auth)
+    assert again.get("already") and again["roster_name"] == out["roster_name"]
+    assert ensure_admitted_paper(paths, store)[0].get("already")
+
+
+def test_super_authorization_upgrades_an_admitted_shadow(paths, store, dataset, monkeypatch):
+    from quant_research.desk import promotion
+    from quant_research.hypothesis import gates
+    from quant_research.paper.fleet import load_roster
+    from quant_research.portfolio.paper import start_admitted_paper, start_shadow
+    from quant_research.research import authorization as auth_mod
+
+    hid = _passed_gate1(paths, store, dataset, monkeypatch)
+    monkeypatch.setattr(gates, "gate2_checks", lambda r, c: {"ok": True})
+    vid = gates.run_gates(paths, store, hid)["gate2"]["version_id"]
+    shadow = start_shadow(paths, store, vid, "forward")
+    auth = auth_mod.create(["BTC-USD"], 2, days=7, auto_paper_admitted=True)
+    auth_mod.save(promotion.authorization_path(paths), auth)
+    out = start_admitted_paper(paths, store, vid, authorization=auth)
+    assert out.get("upgraded") and out["roster_name"] == shadow["roster_name"]
+    entry = next(e for e in load_roster(paths.desk / "roster.json").entries if e.portfolio_version == vid)
+    assert not entry.shadow
+
+
 def test_hypothesis_commands_end_to_end(paths, store, dataset, capsys, monkeypatch, tmp_path):
     from quant_research.cli import main
     from quant_research.hypothesis import gates

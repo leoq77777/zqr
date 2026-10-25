@@ -543,6 +543,33 @@ later sessions use the desk default. The design session reserves `design_session
 **Implementation.** `QUEUE_FLOOR`; `("proposed", "queued")` allows `controller`; `ResearchLoop._replenish_queue`
 and `_session_model`. Tests: a generator `proposed` campaign is queued and run; a human `proposed` campaign is not.
 
+### A13.12 Super authorization: admitted goes to paper now (approved 2026-10-25; amends A13.7 and A13.10)
+
+**Problem.** A13.7 / A13.10 keep `admitted` versions off official paper until the next split (earliest
+2027-10-12). Waiting a year for holdout is not usable as a live research loop. The standing authorization only
+covers the retired single-candidate path (`validated -> frozen -> holdout -> paper_approved`). Per-version human
+approve is too slow. Shadows already trade but stay out of the combined account, so admitted work never “goes
+live” on paper.
+
+**Amended rule.** A standing authorization with `auto_paper_admitted` (signed once via
+`zqr desk authorize --renew --super`) is a super permission:
+
+- When Gate 1 and Gate 2 pass, the controller starts official paper immediately. No per-version human, no
+  holdout on this split, no wait for the next split.
+- The version state stays `admitted`. Freeze and holdout on this split stay closed (A13.3). Paper is the
+  unseen evidence.
+- Official paper entries are not shadows: they join the combined account and the soft stop. An admitted
+  shadow already running for that version is upgraded in place.
+- Roster name for a new slot is `paper-<product>-admitted-<vid>`. The authorization’s `max_paper_strategies`
+  caps how many admitted papers may run.
+- Plugin members still cannot paper (unchanged). The attach error is recorded; the gate verdict is not
+  reversed.
+- Live trading stays out of scope.
+
+**Implementation.** `Authorization.auto_paper_admitted`; `start_admitted_paper` / `ensure_admitted_paper`;
+`ResearchLoop._attach_admitted` and a step() backfill. Tests: without the flag only shadow; with the flag a
+non-shadow paper entry; existing shadow is upgraded; plugin still refused.
+
 ## A14. Portfolio layer decisions (approved 2026-10-15)
 
 Decided with the phase 3 plan (`docs/superpowers/plans/2026-10-15-phase3-portfolio.md`, D4-D7); the investment

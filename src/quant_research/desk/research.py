@@ -231,6 +231,8 @@ class ResearchLoop:
         if self.state.get("status") in ("paused", "backoff") and now < resume_at:
             return {"ran": False, "status": self.state["status"], "reason": self.state.get("reason"),
                     "wait": resume_at - now}
+        from quant_research.portfolio.paper import ensure_admitted_paper
+        ensure_admitted_paper(self.paths, self.store)
         camp = self.campaigns.running()
         if camp is not None and self._pending_gates(camp["id"]):
             return self._settled(camp["id"], self._settle(camp["id"]))
@@ -329,6 +331,25 @@ class ResearchLoop:
         g1 = hs.event(hid, "gate1")
         return hid if g1 is None or (g1["evidence"]["passed"] and hs.event(hid, "gate2") is None) else None
 
+    def _attach_admitted(self, cid: str, vid: str) -> dict[str, Any]:
+        """Shadow by default; super authorization puts the version on official paper now (A13.12)."""
+        from quant_research.desk.promotion import authorization_path
+        from quant_research.portfolio.paper import start_admitted_paper, start_shadow
+        from quant_research.research.authorization import load as load_authorization
+
+        auth = load_authorization(authorization_path(self.paths))
+        attached: dict[str, Any] = {}
+        starter = start_admitted_paper if auth is not None and auth.auto_paper_admitted else start_shadow
+        key, label = ("paper", "admitted auto-paper") if starter is start_admitted_paper else (
+            "shadow", "admitted auto-shadow")
+        try:
+            attached[key] = starter(self.paths, self.store, vid, label, actor="controller")
+        except Exception as exc:  # noqa: BLE001 - paper attach is not a gate failure
+            attached[f"{key}_error"] = f"{type(exc).__name__}: {exc}"
+            self.campaigns.record(cid, f"{key}_error", "controller",
+                                  {"version_id": vid, "error": attached[f"{key}_error"][:500]})
+        return attached
+
     def _settle(self, cid: str, cap_reason: str | None = None) -> dict[str, Any]:
         """Gates for a registered hypothesis (with top-ups on passes), then the end of the campaign if a session
         wrote a conclusion or a cap is reached."""
@@ -351,14 +372,7 @@ class ResearchLoop:
                 self.campaigns.topup(cid, "gate2")
                 vid = (gates.get("gate2") or {}).get("version_id")
                 if vid:
-                    try:
-                        from quant_research.portfolio.paper import start_shadow
-                        out["shadow"] = start_shadow(self.paths, self.store, vid, "admitted auto-shadow",
-                                                     actor="controller")
-                    except Exception as exc:  # noqa: BLE001 - paper attach is not a gate failure
-                        out["shadow_error"] = f"{type(exc).__name__}: {exc}"
-                        self.campaigns.record(cid, "shadow_error", "controller",
-                                              {"version_id": vid, "error": out["shadow_error"][:500]})
+                    out.update(self._attach_admitted(cid, vid))
         written = self.campaigns.event(cid, "conclusion_written")
         if written is not None:
             out["end"] = finish_campaign(self.paths, self.store, cid, "concluded",

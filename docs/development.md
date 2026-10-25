@@ -489,8 +489,11 @@ Rules: appendix A6 and A13.7. Plan: `docs/superpowers/plans/2026-10-15-phase4-ca
 - **`zqr hypothesis test <id> [--sandbox docker|none]`** (controller) runs gate 1, then gate 2 if a variant
   passed. `gates.verdict` is what agents will see (state and failed gate only). States: registered, gate1_failed,
   gate2_failed, admitted. Admitted versions wait for the next split's holdout (design D5): no freeze, holdout or
-  paper approval on their split; they auto-shadow under `shadow-<product>-admitted-<vid>` (A13.10). The daily
-  report's research section lists every hypothesis with gate 1's best AR and the admitted version.
+  paper approval on their split unless a super authorization is in force (A13.12):
+  `zqr desk authorize --renew --super` sets `auto_paper_admitted`. Then Gate 1+2 pass starts official paper
+  immediately (`paper-<product>-admitted-<vid>`, or an existing admitted shadow is upgraded). Without the flag
+  they still auto-shadow under `shadow-<product>-admitted-<vid>` (A13.10). Plugin members still cannot paper.
+  The daily report's research section lists every hypothesis with gate 1's best AR and the admitted version.
 
 ### 5.11 Campaigns and the research budget (`campaign/`, phase 4 release 4d)
 
@@ -690,15 +693,17 @@ a one-off container with the same mounts while the desk is stopped).
 | `zqr secrets set\|import\|status` | Model credentials into volume `zqr-secrets`: hidden input / `KEY=VALUE` lines on stdin / names only |
 | `zqr setup [ARGS]` | `zqr desk setup` in a one-off container (data, mandates, roster, authorization) |
 | `zqr logs [-f]`, `zqr shell` | Container output, a shell inside the desk |
+| `zqr panel` | Paper blotter; the desk publishes `127.0.0.1:8765`. On the laptop: `ssh -L 8765:127.0.0.1:8765 quant-wsl` then open that URL |
 
 | Desk command | Purpose |
 |---|---|
 | `zqr desk setup [--skip-images] [--rekey] [--yes]` | Images (development: builds `zqr:dev`), data, mandates, roster, credentials, authorization |
 | `zqr desk check [--json]` | Docker, images, Coinbase clock skew, disk, credentials (names only), model endpoint, mandates, authorization, isolation probe |
 | `zqr desk status [--json]` | Version, supervisor, children, research state and spend, fleet health, authorization, check |
+| `zqr desk panel [--json] [--snapshot FILE]` | Paper blotter in the browser (`http://127.0.0.1:8765`); `--json` dumps the snapshot |
 | `zqr desk logs [supervisor\|fleet\|research\|events] [-f]` | Component logs |
 | `zqr desk report [--day YYYY-MM-DD] [--print]` | Write or print the daily report |
-| `zqr desk authorize [--renew\|--revoke]` | Show, renew or revoke the standing authorization |
+| `zqr desk authorize [--renew\|--revoke] [--super]` | Show, renew or revoke the standing authorization; `--super` is A13.12 auto paper on admit |
 | `zqr desk secrets [--stdin\|--status]` | Write the credentials file (what `zqr secrets` runs) |
 | `zqr desk up` / `down` | Development checkout only: background supervisor. Refused inside the release container |
 | `zqr desk research-loop`, `zqr paper fleet` | Supervisor children (foreground, for debugging) |
