@@ -47,6 +47,14 @@
     nav .nm { font-size: .82rem; }
     nav .meta { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: .65rem; color: var(--mute); }
     nav .px { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: .78rem; }
+    nav .g { padding: .5rem .8rem .15rem; color: var(--gold); font-size: .62rem;
+      letter-spacing: .12em; text-transform: uppercase; }
+    nav details { border-bottom: 1px solid var(--line); }
+    nav details summary {
+      padding: .5rem .8rem; color: var(--mute); cursor: pointer; font-size: .72rem;
+      letter-spacing: .04em;
+    }
+    nav details[open] summary { color: var(--gold); }
     section { display: grid; grid-template-rows: auto 1fr 180px; min-width: 0; min-height: 0; }
     .stat {
       display: flex; gap: 1.6rem; flex-wrap: wrap; padding: .7rem 1rem .4rem;
@@ -111,28 +119,48 @@
         ["research $", (r.total_cost_usd ?? "—") + "  /  today " + (r.today_cost_usd ?? "—") + " of " + (r.daily_cap_usd ?? "")],
         ["sessions", (r.sessions_started ?? "—") + "  ·  today " + (r.today_sessions ?? "—")],
         ["gates", `admit ${r.admitted ?? 0}  ·  g1fail ${hy.gate1_failed ?? 0}  ·  g2fail ${hy.gate2_failed ?? 0}`],
-        ["sleeves P&L", usd(snap.sleeves_pnl || 0)],
+        ["research P&L", usd(snap.research_pnl || 0)],
+        ["baseline P&L", usd(snap.baseline_pnl || 0)],
         ["shadow P&L", usd(snap.shadows_pnl || 0)],
       ].map(([k, v], i) => {
-        const n = (i === 3 ? snap.sleeves_pnl : i === 4 ? snap.shadows_pnl : null);
+        const n = i === 3 ? snap.research_pnl : i === 4 ? snap.baseline_pnl : i === 5 ? snap.shadows_pnl : null;
         return `<span>${k} <b class="${n == null ? "" : cls(n)}">${v}</b></span>`;
       }).join("");
-      $("foot").textContent = `snapshot ${new Date(snap.generated_at * 1000).toISOString()}  ·  ${snap.sleeves_n} sleeves  ·  ${snap.shadows_n} shadows`;
+      $("foot").textContent = `snapshot ${new Date(snap.generated_at * 1000).toISOString()}  ·  research ${snap.research_n ?? 0}  ·  baseline ${snap.sleeves_n - (snap.research_n ?? 0)}  ·  shadows ${snap.shadows_n}`;
     }
 
     function renderList() {
-      $("list").innerHTML = snap.books.map((b, i) => `
+      const groups = {};
+      snap.books.forEach((b, i) => {
+        const g = b.role || "other";
+        (groups[g] = groups[g] || []).push({b, i});
+      });
+      const labels = {combined: "research book", research: "admitted", thermometer: "thermometer",
+                      baseline: "baseline", shadow: "shadow", other: "other"};
+      const order = ["combined", "research", "thermometer", "baseline", "shadow", "other"];
+      const btn = ({b, i}) => `
         <button data-i="${i}" class="${i === pick ? "on" : ""}">
           <span>
             <div class="nm">${b.name}</div>
             <div class="meta">${b.product}${b.shadow ? " · shadow" : ""} · ${b.fills_n} fills</div>
           </span>
           <span class="px ${cls(b.ret)}">${pct(b.ret)}</span>
-        </button>`).join("");
+        </button>`;
+      let html = "";
+      for (const g of order) {
+        const rows = groups[g];
+        if (!rows) continue;
+        if (g === "baseline") {
+          html += `<details><summary>${labels[g]} · ${rows.length}</summary>${rows.map(btn).join("")}</details>`;
+        } else {
+          html += `<div class="g">${labels[g]}</div>${rows.map(btn).join("")}`;
+        }
+      }
+      $("list").innerHTML = html;
       $("list").onclick = (e) => {
-        const btn = e.target.closest("button");
-        if (!btn) return;
-        pick = +btn.dataset.i;
+        const btnEl = e.target.closest("button");
+        if (!btnEl) return;
+        pick = +btnEl.dataset.i;
         renderList(); renderBook();
       };
     }

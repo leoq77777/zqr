@@ -5,16 +5,20 @@ from __future__ import annotations
 import json
 from importlib import resources
 
+from quant_research.backtest.costs import AUTHORITATIVE_PROFILE, cost_config
 from quant_research.paper.fleet import Roster, RosterEntry
 from quant_research.paper.risk import RiskLimits
 
 
 def preset_roster() -> Roster:
     data = json.loads(resources.files("quant_research.desk").joinpath("presets.json").read_text())
+    costs = cost_config(AUTHORITATIVE_PROFILE)
     entries = [
         RosterEntry(name=f"{product.split('-')[0].lower()}-{s['key']}", product=product,
                     granularity=data["granularity"], strategy_ref=s["strategy_ref"], parameters=s["parameters"],
-                    initial_cash=data["initial_cash"], source="preset")
+                    initial_cash=data["initial_cash"], source="preset",
+                    fee_rate=costs.fee_rate, slippage_bps=costs.slippage_bps)
         for product in data["products"] for s in data["strategies"]
     ]
-    return Roster(entries=entries, risk=RiskLimits(max_order_notional=data["initial_cash"]))
+    return Roster(entries=entries, fee_rate=costs.fee_rate, slippage_bps=costs.slippage_bps,
+                  risk=RiskLimits(max_order_notional=data["initial_cash"]))

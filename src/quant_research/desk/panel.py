@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import pandas as pd
+
 from quant_research.desk.promotion import roster_path
 from quant_research.paper.fleet import Roster, RosterEntry, entry_costs, load_roster
 from quant_research.paper.ledger import Ledger
@@ -18,6 +20,8 @@ from quant_research.runtime import version
 
 PANEL_HTML = Path(__file__).with_name("panel.html")
 MAX_POINTS = 800
+THERMOMETER_TAILS = frozenset({"buy_and_hold", "cash"})
+ROLE_ORDER = ("combined", "research", "thermometer", "baseline", "shadow", "other")
 
 
 def _downsample(xs: list[list[float]], n: int = MAX_POINTS) -> list[list[float]]:
@@ -68,7 +72,54 @@ def _book(paths: Paths, roster: Roster, entry: RosterEntry) -> dict[str, Any] | 
         "equity_series": _downsample([[float(t), float(v)] for t, v in zip(ts, equity, strict=True)]),
         "bh_series": _downsample([[float(t), float(v)] for t, v in zip(ts, bh, strict=True)]),
         "price_series": _downsample([[float(t), float(v)] for t, v in zip(ts, price, strict=True)]),
-        "fills": fills[-80:],
+        "fills": fills[-80:], "role": book_role(entry),
+    }
+
+
+def book_role(entry: RosterEntry) -> str:
+    """research = official portfolio paper; thermometer = cash / buy-and-hold; baseline = other presets."""
+    if entry.shadow:
+        return "shadow"
+    if entry.source == "portfolio":
+        return "research"
+    if entry.source == "preset":
+        tail = entry.name.split("-", 1)[-1]
+        return "thermometer" if tail in THERMOMETER_TAILS else "baseline"
+    return "other"
+
+
+def combine_books(books: list[dict[str, Any]], name: str = "research combined") -> dict[str, Any] | None:
+    """Sum official research books into one tape row so the default view is not the preset pile."""
+    if not books:
+        return None
+    idx = pd.Index([])
+    eq_parts, bh_parts = [], []
+    for b in books:
+        eq = pd.Series({float(t): float(v) for t, v in b["equity_series"]})
+        bh = pd.Series({float(t): float(v) for t, v in b["bh_series"]})
+        eq_parts.append((b, eq))
+        bh_parts.append((b, bh))
+        idx = idx.union(eq.index).union(bh.index)
+    idx = idx.sort_values()
+    eq = sum((s.reindex(idx).ffill().fillna(b["initial_cash"]) for b, s in eq_parts), start=pd.Series(0.0, index=idx))
+    bh = sum((s.reindex(idx).ffill().fillna(b["initial_cash"]) for b, s in bh_parts), start=pd.Series(0.0, index=idx))
+    cash = sum(b["initial_cash"] for b in books)
+    last_eq, first_eq = float(eq.iloc[-1]), float(eq.iloc[0])
+    last_bh, first_bh = float(bh.iloc[-1]), float(bh.iloc[0])
+    fills = sorted((f for b in books for f in b["fills"]), key=lambda f: f["t"])[-80:]
+    products = sorted({b["product"] for b in books})
+    return {
+        "name": name, "product": "+".join(products), "source": "combined", "shadow": False,
+        "strategy_ref": "combined:research", "initial_cash": cash, "role": "combined",
+        "combined_of": [b["name"] for b in books],
+        "equity": last_eq, "ret": last_eq / first_eq - 1.0, "bh_ret": last_bh / first_bh - 1.0,
+        "vs_bh": (last_eq / first_eq) / (last_bh / first_bh) - 1.0 if first_bh else 0.0,
+        "fills_n": sum(b["fills_n"] for b in books), "last_bar": max(b["last_bar"] for b in books),
+        "last_price": books[-1]["last_price"], "base": sum(b["base"] for b in books),
+        "quote": sum(b["quote"] for b in books),
+        "equity_series": _downsample([[float(t), float(v)] for t, v in eq.items()]),
+        "bh_series": _downsample([[float(t), float(v)] for t, v in bh.items()]),
+        "price_series": [], "fills": fills,
     }
 
 
@@ -115,17 +166,24 @@ def snapshot(paths: Paths) -> dict[str, Any]:
     rp = roster_path(paths)
     roster = load_roster(rp) if rp.exists() else Roster()
     books = [b for e in roster.entries if e.enabled and (b := _book(paths, roster, e))]
+    research = [b for b in books if b["role"] == "research"]
+    baseline = [b for b in books if b["role"] in ("baseline", "thermometer")]
+    shadows = [b for b in books if b["role"] == "shadow"]
     sleeves = [b for b in books if not b["shadow"]]
-    shadows = [b for b in books if b["shadow"]]
+    combined = combine_books(research)
+    ordered = ([combined] if combined else []) + sorted(books, key=lambda b: ROLE_ORDER.index(b["role"]))
     return {
         "generated_at": time.time(),
         "version": version(),
         "research": _research(paths),
-        "books": books,
+        "books": ordered,
+        "research_pnl": round(sum(b["equity"] - b["initial_cash"] for b in research), 2),
+        "baseline_pnl": round(sum(b["equity"] - b["initial_cash"] for b in baseline), 2),
         "sleeves_pnl": round(sum(b["equity"] - b["initial_cash"] for b in sleeves), 2),
         "shadows_pnl": round(sum(b["equity"] - b["initial_cash"] for b in shadows), 2),
         "sleeves_n": len(sleeves),
         "shadows_n": len(shadows),
+        "research_n": len(research),
     }
 
 

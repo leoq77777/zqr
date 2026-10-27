@@ -246,7 +246,10 @@ Since release 4d the research loop no longer calls `promote` (D8); `zqr desk pro
 - The roster (`desk/roster.json`) holds the default fee rate 0.002 and slippage 2 bps
   (`coinbase-lf-allin-v1`; see `docs/investment-policy.md` §6), `RiskLimits` and the
   entries. An entry may set its own `fee_rate`, `slippage_bps` and `min_trade_notional` (promoted candidates
-  do). Defaults are created from `desk/presets.json`: 16 entries, 8 rules × 2 products.
+  do). Defaults are created from `desk/presets.json`: 16 entries, 8 rules × 2 products, each stamped with
+  the authoritative profile so the thermometer matches the research mandate. Changing costs on a running
+  trader is still refused (`identity_hash`); production presets that were saved at 0.60% need a stop,
+  roster rewrite and `config_hash` clear, then restart.
 - The fleet reloads the roster when its mtime changes:
   - an invalid roster is logged and the running set is kept;
   - removed or disabled entries are detached, and their ledgers are kept;
@@ -700,7 +703,7 @@ a one-off container with the same mounts while the desk is stopped).
 | `zqr desk setup [--skip-images] [--rekey] [--yes]` | Images (development: builds `zqr:dev`), data, mandates, roster, credentials, authorization |
 | `zqr desk check [--json]` | Docker, images, Coinbase clock skew, disk, credentials (names only), model endpoint, mandates, authorization, isolation probe |
 | `zqr desk status [--json]` | Version, supervisor, children, research state and spend, fleet health, authorization, check |
-| `zqr desk panel [--json] [--snapshot FILE]` | Paper blotter in the browser (`http://127.0.0.1:8765`); `--json` dumps the snapshot |
+| `zqr desk panel [--json] [--snapshot FILE]` | Paper blotter; default view is the combined official research book, presets sit under baseline |
 | `zqr desk logs [supervisor\|fleet\|research\|events] [-f]` | Component logs |
 | `zqr desk report [--day YYYY-MM-DD] [--print]` | Write or print the daily report |
 | `zqr desk authorize [--renew\|--revoke] [--super]` | Show, renew or revoke the standing authorization; `--super` is A13.12 auto paper on admit |
