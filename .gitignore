@@ -6,3 +6,6 @@ __pycache__/
 .DS_Store
 # runtime data: raw responses, snapshots, holdout, experiments, paper ledgers
 var/
+# unconfirmed local research (toolchain POC); not part of the desk
+research/
+docs/research/
