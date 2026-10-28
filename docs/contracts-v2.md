@@ -1,7 +1,7 @@
 # M0 Contracts v2
 
 Date: 2026-10-12. Status: approved 2026-10-12 (volatility estimate inclusive of bar t's close; agent isolation
-via container + host gateway). Implements milestone M0 of development-plan-v2.md.
+via container + host gateway). Implements milestone M0 of `docs/development-plan-v2.md`.
 Where the current code (engine 1.0.0) already
 behaves as specified, that is stated; every change is listed in section 11.
 

@@ -2,7 +2,7 @@
 
 Status as of 2026-10-13 (ZQR layout, image-based deployment). This document describes what is implemented and
 running. The repository root is `/Users/leo/code/Quant/ZQR` on the development Mac. Design
-rationale lives in `development-plan-v2.md`; frozen interfaces (timestamps, exposure, accounting, policy,
+rationale lives in `docs/development-plan-v2.md`; frozen interfaces (timestamps, exposure, accounting, policy,
 mandates, registry, protected data) live in `docs/contracts-v2.md`. Where they disagree with the code, the code and
 this guide describe the current behaviour.
 
@@ -137,7 +137,7 @@ workspaces to the agent's uid (1000); the egress proxy and sandbox run as uid 10
 | `.dockerignore` | Allowlist; `var/`, `benchmark/evaluator_private/` and benchmark results never reach the daemon |
 | `benchmark/` | Benchmark tasks, schemas, fixtures; `evaluator_private/` holds answer keys (never mounted for agents, never in an image) |
 | `tests/` | pytest suite (375 tests); Docker-dependent tests skip when Docker or the images are unavailable |
-| `docs/`, `development-plan*.md`, `AGENTS.md` | Contracts, this guide, design plans, agent instructions |
+| `docs/`, `AGENTS.md` | Contracts, this guide, design plans (`docs/development-plan*.md`), agent instructions |
 
 ## 5. Core flows
 

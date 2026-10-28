@@ -17,7 +17,7 @@ Status = Literal["pending", "pass", "fail", "n/a"]
 
 DEFAULT = {
     "coinbase": {
-        "docs_confirmed": {"status": "pass", "evidence": "development-plan.md section 4 (official docs links)"},
+        "docs_confirmed": {"status": "pass", "evidence": "docs/development-plan.md section 4 (official docs links)"},
         "network_measured": {"status": "pending"},
         "account_confirmed": {"status": "pending", "evidence": "account region/KYC/API permissions not confirmed"},
         "sandbox_verified": {"status": "n/a", "evidence": "Coinbase sandbox returns static responses only"},

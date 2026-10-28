@@ -1,6 +1,6 @@
 # Personal Systematic Research Desk — Architecture and Development Plan v2
 
-Date: 2026-10-12. Status: proposed design, not implemented. Supersedes v1 architecture decisions; the original development-plan.md remains the historical API investigation record.
+Date: 2026-10-12. Status: proposed design, not implemented. Supersedes v1 architecture decisions; the original `docs/development-plan.md` remains the historical API investigation record.
 
 ## 1. Objective and scope
 
